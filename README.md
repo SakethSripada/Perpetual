@@ -3,6 +3,8 @@
 AgentManager runs Claude Code and Codex sessions from inside VS Code, preserving
 context across agent switches, usage limits, and runtime changes.
 
+![AgentManager Workbench](media/screenshot-workbench.png)
+
 ## Features
 
 - Chat-first Workbench in the Activity Bar, with an optional wide editor panel.
@@ -57,3 +59,5 @@ npm run package
 
 Use `npm run package:darwin-arm64`, `npm run package:linux-x64`, or
 `npm run package:win32-x64` when publishing platform-specific packages.
+
+See [PUBLISHING.md](PUBLISHING.md) for the full Marketplace checklist.
