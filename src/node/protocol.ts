@@ -1,0 +1,96 @@
+import type {
+  AgentKind,
+  AgentRunDefaults,
+  AgentStatus,
+  AgentThread,
+  AgentThreadDiff,
+  AgentThreadEvent,
+  AgentThreadRepo,
+  AgentThreadUpdate,
+  AgentTurn,
+  AppEvent,
+  ExecutionBackend,
+  GithubAuthStatus,
+  GithubRepository,
+  LimitPolicy,
+  NewAgentThread,
+  NewGithubRepo,
+  NewLocalRepo,
+  PermissionPolicy,
+  Project,
+  QueuedTurn,
+  Repo,
+  SandboxLoginPrompt,
+  SandboxPolicy,
+  SandboxRuntimeStatus,
+} from "./types";
+
+export type DaemonRequest = string | Record<string, unknown>;
+export type DaemonResponse = string | Record<string, unknown>;
+
+export type ServerMessage =
+  | { response: { id: number; ok?: DaemonResponse; err?: string } }
+  | { event: AppEvent };
+
+export function variant(name: string, payload?: unknown): DaemonRequest {
+  return payload === undefined ? name : { [name]: payload };
+}
+
+export function responsePayload<T = any>(response: DaemonResponse, name: string): T {
+  if (typeof response === "object" && response !== null && name in response) {
+    return (response as Record<string, T>)[name];
+  }
+  throw new Error(`Unexpected daemon response; expected ${name}`);
+}
+
+export function expectUnit(response: DaemonResponse): void {
+  if (response !== "unit") {
+    throw new Error("Unexpected daemon response; expected unit");
+  }
+}
+
+export interface DaemonApi {
+  ping(): Promise<void>;
+  ensureWorkbenchProject(): Promise<Project>;
+  connectLocalRepo(input: NewLocalRepo): Promise<Repo>;
+  listRepos(projectId: string): Promise<Repo[]>;
+  githubAuthStatus(token: string): Promise<GithubAuthStatus>;
+  githubListRepositories(token: string): Promise<GithubRepository[]>;
+  connectGithubRepo(token: string, input: NewGithubRepo): Promise<Repo>;
+  detectAgents(): Promise<AgentStatus[]>;
+  agentRunDefaults(): Promise<AgentRunDefaults[]>;
+  getLimitPolicy(): Promise<LimitPolicy>;
+  setLimitPolicy(policy: LimitPolicy): Promise<LimitPolicy>;
+  detectSandboxRuntime(): Promise<SandboxRuntimeStatus>;
+  sandboxLogin(): Promise<SandboxLoginPrompt>;
+  codexSandboxLogin(): Promise<SandboxLoginPrompt>;
+  getSandboxPolicy(): Promise<SandboxPolicy>;
+  setSandboxPolicy(policy: SandboxPolicy): Promise<SandboxPolicy>;
+  listAgentThreads(projectId?: string): Promise<AgentThread[]>;
+  createAgentThread(input: NewAgentThread): Promise<AgentThread>;
+  updateAgentThread(id: string, patch: AgentThreadUpdate): Promise<AgentThread>;
+  deleteAgentThread(id: string, force: boolean): Promise<void>;
+  assignThreadRepos(threadId: string, repoIds: string[]): Promise<AgentThreadRepo[]>;
+  listThreadRepos(threadId: string): Promise<AgentThreadRepo[]>;
+  threadDiff(threadId: string): Promise<AgentThreadDiff>;
+  runAgentThread(
+    threadId: string,
+    agent: AgentKind,
+    permission: PermissionPolicy,
+    message: string | null,
+    executionBackend: ExecutionBackend | null
+  ): Promise<string>;
+  sendThreadMessage(
+    threadId: string,
+    agent: AgentKind,
+    permission: PermissionPolicy,
+    message: string
+  ): Promise<string | null>;
+  stopAgentThread(threadId: string): Promise<void>;
+  listThreadEvents(threadId: string): Promise<AgentThreadEvent[]>;
+  listThreadTurns(threadId: string): Promise<AgentTurn[]>;
+  listQueuedTurns(threadId: string): Promise<QueuedTurn[]>;
+  deleteQueuedTurn(id: string): Promise<void>;
+  updateQueuedTurn(id: string, message: string): Promise<void>;
+  reorderQueuedTurns(threadId: string, orderedIds: string[]): Promise<void>;
+}

@@ -1,0 +1,321 @@
+{
+  "name": "agentmanager-vscode",
+  "displayName": "AgentManager",
+  "description": "Run Codex and Claude Code sessions from VS Code with agent routing, handoffs, GitHub repos, and Docker Sandbox support.",
+  "version": "0.1.0",
+  "publisher": "agentmanager",
+  "license": "SEE LICENSE IN LICENSE",
+  "author": {
+    "name": "AgentManager"
+  },
+  "homepage": "https://github.com/agentmanager/agentmanager",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agentmanager/agentmanager.git",
+    "directory": "vscode-extension"
+  },
+  "bugs": {
+    "url": "https://github.com/agentmanager/agentmanager/issues"
+  },
+  "categories": [
+    "Machine Learning",
+    "Other"
+  ],
+  "keywords": [
+    "agent",
+    "codex",
+    "claude",
+    "claude code",
+    "ai",
+    "github",
+    "docker",
+    "workbench",
+    "handoff"
+  ],
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#101012",
+    "theme": "dark"
+  },
+  "preview": true,
+  "engines": {
+    "vscode": "^1.99.0"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onView:agentmanager.workbench",
+    "onCommand:agentmanager.openWorkbench",
+    "onCommand:agentmanager.newSession",
+    "onCommand:agentmanager.refresh",
+    "onCommand:agentmanager.connectLocalRepo",
+    "onCommand:agentmanager.connectGithubRepo"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "AgentManager can show its view in Restricted Mode, but repository access, local CLI execution, and Docker Sandbox runs require a trusted workspace.",
+      "restrictedConfigurations": [
+        "agentmanager.defaultAgent",
+        "agentmanager.defaultPermission",
+        "agentmanager.defaultExecutionBackend",
+        "agentmanager.daemonPath"
+      ]
+    }
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "agentmanager",
+          "title": "AgentManager",
+          "icon": "media/activity.svg"
+        }
+      ]
+    },
+    "views": {
+      "agentmanager": [
+        {
+          "id": "agentmanager.workbench",
+          "name": "Workbench",
+          "icon": "media/activity.svg",
+          "contextualTitle": "AgentManager Workbench",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "agentmanager.openWorkbench",
+        "title": "Open Workbench Panel",
+        "category": "AgentManager",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "agentmanager.newSession",
+        "title": "New Session",
+        "category": "AgentManager",
+        "icon": "$(add)"
+      },
+      {
+        "command": "agentmanager.refresh",
+        "title": "Refresh",
+        "category": "AgentManager",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "agentmanager.connectLocalRepo",
+        "title": "Connect Local Repository",
+        "category": "AgentManager",
+        "icon": "$(repo)"
+      },
+      {
+        "command": "agentmanager.connectGithubRepo",
+        "title": "Connect GitHub Repository",
+        "category": "AgentManager",
+        "icon": "$(github)"
+      },
+      {
+        "command": "agentmanager.openSettings",
+        "title": "Open Settings",
+        "category": "AgentManager",
+        "icon": "$(settings-gear)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "agentmanager.newSession",
+          "when": "view == agentmanager.workbench",
+          "group": "navigation@1"
+        },
+        {
+          "command": "agentmanager.refresh",
+          "when": "view == agentmanager.workbench",
+          "group": "navigation@2"
+        },
+        {
+          "command": "agentmanager.openWorkbench",
+          "when": "view == agentmanager.workbench",
+          "group": "navigation@3"
+        },
+        {
+          "command": "agentmanager.openSettings",
+          "when": "view == agentmanager.workbench",
+          "group": "navigation@4"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "agentmanager.openWorkbench"
+        },
+        {
+          "command": "agentmanager.newSession"
+        },
+        {
+          "command": "agentmanager.refresh"
+        },
+        {
+          "command": "agentmanager.connectLocalRepo"
+        },
+        {
+          "command": "agentmanager.connectGithubRepo"
+        },
+        {
+          "command": "agentmanager.openSettings"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "AgentManager",
+      "properties": {
+        "agentmanager.defaultAgent": {
+          "type": "string",
+          "enum": [
+            "claude_code",
+            "codex"
+          ],
+          "default": "claude_code",
+          "description": "Default agent for new Workbench sessions."
+        },
+        "agentmanager.defaultPermission": {
+          "type": "string",
+          "enum": [
+            "read_only",
+            "workspace_write",
+            "autonomous"
+          ],
+          "default": "workspace_write",
+          "description": "Default permission mode for new turns."
+        },
+        "agentmanager.defaultExecutionBackend": {
+          "type": "string",
+          "enum": [
+            "host",
+            "docker_sandbox"
+          ],
+          "default": "host",
+          "description": "Default execution backend. Docker Sandbox currently supports Codex only."
+        },
+        "agentmanager.defaultModel": {
+          "type": "string",
+          "default": "",
+          "description": "Optional model override for new sessions. Empty uses the selected agent CLI default."
+        },
+        "agentmanager.defaultReasoning": {
+          "type": "string",
+          "default": "medium",
+          "description": "Optional reasoning-effort override for new sessions."
+        },
+        "agentmanager.autoSwitchOnLimit": {
+          "type": "boolean",
+          "default": true,
+          "description": "Switch to another ready agent when the current agent hits a usage limit."
+        },
+        "agentmanager.switchBackOnRecovery": {
+          "type": "boolean",
+          "default": true,
+          "description": "Switch back to the preferred agent after its usage limit resets."
+        },
+        "agentmanager.fallbackPriority": {
+          "type": "array",
+          "default": [
+            "claude_code",
+            "codex"
+          ],
+          "items": {
+            "type": "string",
+            "enum": [
+              "claude_code",
+              "codex"
+            ]
+          },
+          "description": "Agent fallback order used when the active agent becomes usage-limited or unavailable."
+        },
+        "agentmanager.resumeWithEarliestAgent": {
+          "type": "boolean",
+          "default": true,
+          "description": "When all agents are limited, resume with the first agent that recovers."
+        },
+        "agentmanager.unknownLimitRetrySeconds": {
+          "type": "number",
+          "default": 600,
+          "minimum": 0,
+          "description": "Retry interval when an agent reports a usage limit without a reset time. Set 0 to wait indefinitely."
+        },
+        "agentmanager.sandbox.maxConcurrent": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 8,
+          "description": "Maximum concurrent Docker Sandbox sessions."
+        },
+        "agentmanager.sandbox.cpus": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 16,
+          "description": "CPU limit for each Docker Sandbox run."
+        },
+        "agentmanager.sandbox.memory": {
+          "type": "string",
+          "default": "4g",
+          "description": "Memory limit for each Docker Sandbox run."
+        },
+        "agentmanager.sandbox.networkPreset": {
+          "type": "string",
+          "enum": [
+            "balanced",
+            "open",
+            "locked_down"
+          ],
+          "default": "balanced",
+          "description": "Network policy preset for Docker Sandbox runs."
+        },
+        "agentmanager.daemonPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional path to an am-daemon binary. Empty uses the binary bundled with this extension."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "clean": "node scripts/clean.mjs",
+    "compile": "tsc -p tsconfig.json",
+    "build:extension": "node scripts/esbuild.mjs --production",
+    "build:webview": "vite build --config webview/vite.config.ts",
+    "build": "npm run build:extension && npm run build:webview",
+    "watch:extension": "node scripts/esbuild.mjs --watch",
+    "watch:webview": "vite build --config webview/vite.config.ts --watch",
+    "copy-daemon": "node scripts/copy-daemon.mjs",
+    "vscode:prepublish": "npm run build",
+    "package": "vsce package",
+    "package:darwin-arm64": "npm run copy-daemon -- --target darwin-arm64 && vsce package --target darwin-arm64",
+    "package:darwin-x64": "npm run copy-daemon -- --target darwin-x64 && vsce package --target darwin-x64",
+    "package:linux-x64": "npm run copy-daemon -- --target linux-x64 && vsce package --target linux-x64",
+    "package:win32-x64": "npm run copy-daemon -- --target win32-x64 && vsce package --target win32-x64",
+    "test:unit": "npm run compile && node --test out/test/*.test.js",
+    "test:vscode": "vscode-test",
+    "test": "npm run test:unit"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/vscode": "^1.99.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "@vscode/test-cli": "^0.0.11",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.6.0",
+    "esbuild": "^0.25.5",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}
