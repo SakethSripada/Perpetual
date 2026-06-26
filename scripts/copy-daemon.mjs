@@ -1,4 +1,4 @@
-import { copyFile, mkdir, stat } from "node:fs/promises";
+import { chmod, copyFile, mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
@@ -21,6 +21,9 @@ try {
 
 await mkdir(destinationDir, { recursive: true });
 await copyFile(source, destination);
+if (!target.startsWith("win32")) {
+  await chmod(destination, 0o755);
+}
 console.log(`Copied ${source} -> ${destination}`);
 
 function currentTarget() {

@@ -288,22 +288,21 @@
     "build:extension": "node scripts/esbuild.mjs --production",
     "build:webview": "vite build --config webview/vite.config.ts",
     "build": "npm run build:extension && npm run build:webview",
+    "build:daemon": "cargo build -p am-daemon --release",
     "watch:extension": "node scripts/esbuild.mjs --watch",
     "watch:webview": "vite build --config webview/vite.config.ts --watch",
     "copy-daemon": "node scripts/copy-daemon.mjs",
     "vscode:prepublish": "npm run build",
     "package": "vsce package",
-    "package:darwin-arm64": "npm run copy-daemon -- --target darwin-arm64 && vsce package --target darwin-arm64",
-    "package:darwin-x64": "npm run copy-daemon -- --target darwin-x64 && vsce package --target darwin-x64",
-    "package:linux-x64": "npm run copy-daemon -- --target linux-x64 && vsce package --target linux-x64",
-    "package:win32-x64": "npm run copy-daemon -- --target win32-x64 && vsce package --target win32-x64",
+    "package:darwin-arm64": "npm run build:daemon && npm run copy-daemon -- --target darwin-arm64 && vsce package --target darwin-arm64",
+    "package:darwin-x64": "npm run build:daemon && npm run copy-daemon -- --target darwin-x64 && vsce package --target darwin-x64",
+    "package:linux-x64": "npm run build:daemon && npm run copy-daemon -- --target linux-x64 && vsce package --target linux-x64",
+    "package:linux-arm64": "npm run build:daemon && npm run copy-daemon -- --target linux-arm64 && vsce package --target linux-arm64",
+    "package:win32-x64": "npm run build:daemon && npm run copy-daemon -- --target win32-x64 && vsce package --target win32-x64",
+    "package:win32-arm64": "npm run build:daemon && npm run copy-daemon -- --target win32-arm64 && vsce package --target win32-arm64",
     "test:unit": "npm run compile && node --test out/test/*.test.js",
-    "test:vscode": "vscode-test",
+    "test:vscode": "vscode-test --config vscode-test.mjs",
     "test": "npm run test:unit"
-  },
-  "dependencies": {
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@types/node": "^22.15.3",
@@ -315,6 +314,8 @@
     "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^3.6.0",
     "esbuild": "^0.25.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "typescript": "^5.6.3",
     "vite": "^5.4.11"
   }

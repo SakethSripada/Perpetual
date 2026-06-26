@@ -10,11 +10,10 @@ node_modules/**
 tsconfig.json
 vscode-test.mjs
 **/*.map
+dist/**/*.map
 bin/*/README.md
-!dist/**
-!dist/webview/**
-!media/**
-!bin/**
+media/screenshot-workbench.svg
+.gitignore
 !README.md
 !CHANGELOG.md
 !LICENSE
