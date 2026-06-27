@@ -7,7 +7,6 @@ import type { DaemonManager } from "./daemonManager";
 import type {
   AgentKind,
   AgentThread,
-  AgentThreadUpdate,
   AppEvent,
   ExecutionBackend,
   GithubAuthStatus,
@@ -15,7 +14,6 @@ import type {
   LimitPolicy,
   NewGithubRepo,
   PermissionPolicy,
-  Repo,
   SandboxPolicy,
   WorkbenchDefaults,
   WorkbenchSnapshot,

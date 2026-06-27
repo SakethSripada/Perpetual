@@ -1,6 +1,5 @@
 import { EventEmitter } from "node:events";
 import net from "node:net";
-import type { AppEvent } from "./types";
 import {
   expectUnit,
   responsePayload,
