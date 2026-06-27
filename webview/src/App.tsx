@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import type {
   AgentKind,
   AgentStatus,
@@ -318,6 +319,111 @@ export default function App() {
   );
 }
 
+function Dropdown(props: {
+  value: string;
+  options: { value: string; label: string }[];
+  onChange(value: string): void;
+  ariaLabel?: string;
+  title?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
+
+  // Position the menu against the viewport so it is never clipped by the
+  // composer footer or the edges of the (often short) webview panel.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const reposition = () => {
+      const trigger = triggerRef.current;
+      if (!trigger) return;
+      const rect = trigger.getBoundingClientRect();
+      const margin = 6;
+      const spaceBelow = window.innerHeight - rect.bottom - margin;
+      const spaceAbove = rect.top - margin;
+      const openUp = spaceBelow < 200 && spaceAbove > spaceBelow;
+      const maxHeight = Math.max(96, Math.min(280, openUp ? spaceAbove : spaceBelow));
+      const next: CSSProperties = {
+        position: "fixed",
+        left: rect.left,
+        minWidth: rect.width,
+        maxHeight,
+      };
+      if (openUp) {
+        next.bottom = window.innerHeight - rect.top + margin;
+      } else {
+        next.top = rect.bottom + margin;
+      }
+      setMenuStyle(next);
+    };
+    reposition();
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, true);
+    return () => {
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (!menuRef.current?.contains(target) && !triggerRef.current?.contains(target)) {
+        setOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  const selected = props.options.find((option) => option.value === props.value);
+  return (
+    <div className="dropdown">
+      <button
+        ref={triggerRef}
+        type="button"
+        className="dropdown-trigger"
+        title={props.title}
+        aria-label={props.ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="dropdown-value">{selected?.label ?? props.value}</span>
+        <span className="dropdown-caret" aria-hidden="true">▾</span>
+      </button>
+      {open && (
+        <div ref={menuRef} className="dropdown-menu" style={menuStyle} role="listbox">
+          {props.options.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              role="option"
+              aria-selected={option.value === props.value}
+              className={option.value === props.value ? "dropdown-option selected" : "dropdown-option"}
+              onClick={() => {
+                props.onChange(option.value);
+                setOpen(false);
+              }}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Composer(props: {
   snapshot: WorkbenchSnapshot | null;
   selectedThread: AgentThread | null;
@@ -401,11 +507,16 @@ function Composer(props: {
           </button>
         </div>
 
-        <select value={props.permission} onChange={(event) => props.setPermission(event.target.value as PermissionPolicy)}>
-          <option value="read_only">Read</option>
-          <option value="workspace_write">Write</option>
-          <option value="autonomous">Autonomous</option>
-        </select>
+        <Dropdown
+          ariaLabel="Permission"
+          value={props.permission}
+          onChange={(value) => props.setPermission(value as PermissionPolicy)}
+          options={[
+            { value: "read_only", label: "Read" },
+            { value: "workspace_write", label: "Write" },
+            { value: "autonomous", label: "Autonomous" },
+          ]}
+        />
 
         <div className="segmented">
           <button
@@ -424,12 +535,17 @@ function Composer(props: {
           </button>
         </div>
 
-        <select value={props.reasoning} onChange={(event) => props.setReasoning(event.target.value)}>
-          <option value="">Default</option>
-          <option value="low">Low</option>
-          <option value="medium">Medium</option>
-          <option value="high">High</option>
-        </select>
+        <Dropdown
+          ariaLabel="Reasoning effort"
+          value={props.reasoning}
+          onChange={props.setReasoning}
+          options={[
+            { value: "", label: "Default" },
+            { value: "low", label: "Low" },
+            { value: "medium", label: "Medium" },
+            { value: "high", label: "High" },
+          ]}
+        />
 
         <input
           value={props.model}
