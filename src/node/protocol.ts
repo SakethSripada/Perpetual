@@ -13,9 +13,12 @@ import type {
   GithubAuthStatus,
   GithubRepository,
   LimitPolicy,
+  ContextPacket,
   NewAgentThread,
   NewGithubRepo,
   NewLocalRepo,
+  NewWorkEdge,
+  NewWorkNode,
   PermissionPolicy,
   Project,
   QueuedTurn,
@@ -23,6 +26,12 @@ import type {
   SandboxLoginPrompt,
   SandboxPolicy,
   SandboxRuntimeStatus,
+  WorkEdge,
+  WorkGraph,
+  WorkNode,
+  WorkNodeDiff,
+  WorkNodeRepoBinding,
+  WorkNodeUpdate,
 } from "./types";
 
 export type DaemonRequest = string | Record<string, unknown>;
@@ -66,6 +75,33 @@ export interface DaemonApi {
   codexSandboxLogin(): Promise<SandboxLoginPrompt>;
   getSandboxPolicy(): Promise<SandboxPolicy>;
   setSandboxPolicy(policy: SandboxPolicy): Promise<SandboxPolicy>;
+  getWorkGraph(projectId: string): Promise<WorkGraph>;
+  createWorkNode(input: NewWorkNode): Promise<WorkNode>;
+  updateWorkNode(nodeId: string, patch: WorkNodeUpdate): Promise<WorkNode>;
+  deleteWorkNode(nodeId: string): Promise<void>;
+  moveWorkNode(
+    nodeId: string,
+    parentId: string | null,
+    positionX: number,
+    positionY: number
+  ): Promise<WorkNode>;
+  connectWorkNodes(input: NewWorkEdge): Promise<WorkEdge>;
+  assignWorkNodeRepos(nodeId: string, repoIds: string[]): Promise<WorkNodeRepoBinding[]>;
+  runWorkNode(
+    nodeId: string,
+    agent: AgentKind,
+    permission: PermissionPolicy,
+    executionBackend: ExecutionBackend | null
+  ): Promise<string>;
+  stopWorkNode(nodeId: string): Promise<void>;
+  sendWorkNodeMessage(
+    nodeId: string,
+    agent: AgentKind,
+    permission: PermissionPolicy,
+    message: string
+  ): Promise<string | null>;
+  previewContextPacket(nodeId: string): Promise<ContextPacket>;
+  workNodeDiff(nodeId: string): Promise<WorkNodeDiff>;
   listAgentThreads(projectId?: string): Promise<AgentThread[]>;
   createAgentThread(input: NewAgentThread): Promise<AgentThread>;
   updateAgentThread(id: string, patch: AgentThreadUpdate): Promise<AgentThread>;
