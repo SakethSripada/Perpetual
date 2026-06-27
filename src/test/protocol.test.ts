@@ -17,6 +17,27 @@ test("extracts typed daemon response payloads", () => {
   assert.deepEqual(repos, ["a", "b"]);
 });
 
+test("serializes work graph daemon requests", () => {
+  assert.deepEqual(variant("move_work_node", {
+    node_id: "n1",
+    parent_id: null,
+    position_x: 12,
+    position_y: 24,
+  }), {
+    move_work_node: {
+      node_id: "n1",
+      parent_id: null,
+      position_x: 12,
+      position_y: 24,
+    },
+  });
+});
+
+test("extracts work graph responses", () => {
+  const graph = responsePayload<{ project_id: string }>({ work_graph: { project_id: "p1" } }, "work_graph");
+  assert.equal(graph.project_id, "p1");
+});
+
 test("accepts unit responses only when the daemon returns unit", () => {
   assert.doesNotThrow(() => expectUnit("unit"));
   assert.throws(() => expectUnit("pong"), /expected unit/);

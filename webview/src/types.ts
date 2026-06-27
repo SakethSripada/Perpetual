@@ -5,6 +5,7 @@ export type TaskStatus =
   | "running"
   | "awaiting_approval"
   | "waiting_for_limit"
+  | "waiting_for_network"
   | "paused"
   | "review"
   | "done"

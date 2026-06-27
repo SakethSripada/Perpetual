@@ -151,6 +151,109 @@ export class DaemonClient extends EventEmitter implements DaemonApi {
     return responsePayload(await this.requestRaw(variant("set_sandbox_policy", policy)), "sandbox_policy");
   }
 
+  async getWorkGraph(projectId: string) {
+    return responsePayload(
+      await this.requestRaw(variant("get_work_graph", { project_id: projectId })),
+      "work_graph"
+    );
+  }
+
+  async createWorkNode(input: Parameters<DaemonApi["createWorkNode"]>[0]) {
+    return responsePayload(await this.requestRaw(variant("create_work_node", input)), "work_node");
+  }
+
+  async updateWorkNode(nodeId: string, patch: Parameters<DaemonApi["updateWorkNode"]>[1]) {
+    return responsePayload(
+      await this.requestRaw(variant("update_work_node", { node_id: nodeId, patch })),
+      "work_node"
+    );
+  }
+
+  async deleteWorkNode(nodeId: string) {
+    expectUnit(await this.requestRaw(variant("delete_work_node", { node_id: nodeId })));
+  }
+
+  async moveWorkNode(
+    nodeId: string,
+    parentId: string | null,
+    positionX: number,
+    positionY: number
+  ) {
+    return responsePayload(
+      await this.requestRaw(
+        variant("move_work_node", {
+          node_id: nodeId,
+          parent_id: parentId,
+          position_x: positionX,
+          position_y: positionY,
+        })
+      ),
+      "work_node"
+    );
+  }
+
+  async connectWorkNodes(input: Parameters<DaemonApi["connectWorkNodes"]>[0]) {
+    return responsePayload(await this.requestRaw(variant("connect_work_nodes", input)), "work_edge");
+  }
+
+  async assignWorkNodeRepos(nodeId: string, repoIds: string[]) {
+    return responsePayload(
+      await this.requestRaw(variant("assign_work_node_repos", { node_id: nodeId, repo_ids: repoIds })),
+      "work_node_repo_bindings"
+    );
+  }
+
+  async runWorkNode(
+    nodeId: string,
+    agent: Parameters<DaemonApi["runWorkNode"]>[1],
+    permission: Parameters<DaemonApi["runWorkNode"]>[2],
+    executionBackend: Parameters<DaemonApi["runWorkNode"]>[3]
+  ) {
+    return responsePayload(
+      await this.requestRaw(
+        variant("run_work_node", {
+          node_id: nodeId,
+          agent,
+          permission,
+          execution_backend: executionBackend,
+        })
+      ),
+      "session_id"
+    );
+  }
+
+  async stopWorkNode(nodeId: string) {
+    expectUnit(await this.requestRaw(variant("stop_work_node", { node_id: nodeId })));
+  }
+
+  async sendWorkNodeMessage(
+    nodeId: string,
+    agent: Parameters<DaemonApi["sendWorkNodeMessage"]>[1],
+    permission: Parameters<DaemonApi["sendWorkNodeMessage"]>[2],
+    message: string
+  ) {
+    return responsePayload(
+      await this.requestRaw(
+        variant("send_work_node_message", { node_id: nodeId, agent, permission, message })
+      ),
+      "turn_id_opt"
+    );
+  }
+
+  async previewContextPacket(nodeId: string) {
+    return responsePayload(
+      await this.requestRaw(variant("preview_context_packet", { node_id: nodeId })),
+      "context_packet"
+    );
+  }
+
+  async workNodeDiff(nodeId: string) {
+    return responsePayload(
+      await this.requestRaw(variant("work_node_diff", { node_id: nodeId })),
+      "work_node_diff"
+    );
+  }
+
   async listAgentThreads(projectId?: string) {
     return responsePayload(
       await this.requestRaw(variant("list_agent_threads", { project_id: projectId ?? null })),

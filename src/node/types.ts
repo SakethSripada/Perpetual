@@ -5,11 +5,13 @@ export type TaskStatus =
   | "running"
   | "awaiting_approval"
   | "waiting_for_limit"
+  | "waiting_for_network"
   | "paused"
   | "review"
   | "done"
   | "failed"
   | "cancelled";
+export type TaskPriority = "low" | "medium" | "high" | "urgent";
 export type PermissionPolicy = "read_only" | "workspace_write" | "autonomous";
 export type ExecutionBackend = "host" | "docker_sandbox";
 export type AvailabilityState = "unknown" | "available" | "limited";
@@ -240,10 +242,149 @@ export interface AgentThreadDiff {
   repos: AgentThreadRepoDiff[];
 }
 
+export interface TaskDiff {
+  files: FileChange[];
+  patch: string;
+  repo_id: string | null;
+  repo_name: string | null;
+  remote_url: string | null;
+  branch: string | null;
+  base_ref: string | null;
+  head_ref: string | null;
+  worktree_path: string | null;
+}
+
+export type WorkNodeKind = "group" | "task" | "session" | "milestone";
+export type WorkEdgeKind =
+  | "depends_on"
+  | "blocks"
+  | "handoff"
+  | "shares_context"
+  | "relates_to";
+
+export interface WorkNode {
+  id: string;
+  project_id: string;
+  parent_id: string | null;
+  task_id: string | null;
+  thread_id: string | null;
+  kind: WorkNodeKind;
+  title: string;
+  description: string | null;
+  status: TaskStatus;
+  priority: TaskPriority;
+  primary_agent: AgentKind | null;
+  position_x: number;
+  position_y: number;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NewWorkNode {
+  project_id: string;
+  parent_id?: string | null;
+  kind?: WorkNodeKind | null;
+  title: string;
+  description?: string | null;
+  priority?: TaskPriority;
+  primary_agent?: AgentKind | null;
+  repo_ids?: string[];
+  position_x?: number | null;
+  position_y?: number | null;
+}
+
+export interface WorkNodeUpdate {
+  parent_id?: string | null;
+  title?: string | null;
+  description?: string | null;
+  status?: TaskStatus | null;
+  priority?: TaskPriority | null;
+  primary_agent?: AgentKind | null;
+  position_x?: number | null;
+  position_y?: number | null;
+  sort_order?: number | null;
+}
+
+export interface WorkEdge {
+  id: string;
+  project_id: string;
+  source_id: string;
+  target_id: string;
+  kind: WorkEdgeKind;
+  label: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NewWorkEdge {
+  project_id: string;
+  source_id: string;
+  target_id: string;
+  kind: WorkEdgeKind;
+  label?: string | null;
+}
+
+export interface WorkNodeRepoBinding {
+  node_id: string;
+  repo_id: string;
+  repo_name: string;
+  worktree_path: string | null;
+  branch: string | null;
+  base_ref: string | null;
+  workspace_backend: ExecutionBackend;
+}
+
+export interface WorkRun {
+  id: string;
+  node_id: string;
+  task_id: string | null;
+  thread_id: string | null;
+  agent_kind: AgentKind;
+  run_ref: string;
+  state: string;
+  started_at: string;
+  ended_at: string | null;
+}
+
+export interface ContextInclusion {
+  source_kind: string;
+  entity_id: string | null;
+  title: string;
+  snippet: string;
+  reason: string;
+  score: number;
+  bytes: number;
+}
+
+export interface ContextPacket {
+  id: string;
+  node_id: string;
+  budget_bytes: number;
+  used_bytes: number;
+  summary: string;
+  inclusions: ContextInclusion[];
+  created_at: string;
+}
+
+export interface WorkGraph {
+  project_id: string;
+  nodes: WorkNode[];
+  edges: WorkEdge[];
+  repo_bindings: WorkNodeRepoBinding[];
+}
+
+export interface WorkNodeDiff {
+  task: TaskDiff | null;
+  thread: AgentThreadDiff | null;
+}
+
 export type AppEvent =
   | { type: "agent_thread_created"; data: AgentThread }
   | { type: "agent_thread_updated"; data: AgentThread }
   | { type: "agent_thread_event"; data: AgentThreadEvent }
+  | { type: "work_node_created"; data: WorkNode }
+  | { type: "work_node_updated"; data: WorkNode }
   | { type: "repo_connected"; data: Repo }
   | { type: "activity"; data: unknown }
   | { type: string; data: unknown };
