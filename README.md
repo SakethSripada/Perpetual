@@ -122,3 +122,8 @@ npm run package:darwin-arm64   # or :darwin-x64 / :linux-x64 / :linux-arm64 / :w
 ```
 
 See [PUBLISHING.md](PUBLISHING.md) for the full Marketplace checklist.
+
+## ADDITIONAL:
+```bash
+npm run package:darwin-arm64 && code --install-extension agentmanager-vscode-darwin-arm64-0.1.0.vsix --force
+```
