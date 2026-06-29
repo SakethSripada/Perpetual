@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import type {
   AgentKind,
@@ -152,6 +152,7 @@ export default function App() {
 
   const isRunning = selectedThread?.status === "running";
   const details = navigating ? undefined : snapshot?.details;
+  const changesEventId = details ? latestChangesEventId(details) : null;
 
   // The composer owns its own draft text so typing never re-renders the
   // transcript; it hands us the final text here on submit.
@@ -210,12 +211,8 @@ export default function App() {
     <main className="app-shell">
       <header className="topbar">
         <div className="brand">
-          <span className="brand-mark">
-            <BrandMark size={18} />
-          </span>
           <div className="brand-text">
-            <strong>{selectedThread?.title ?? "AgentManager"}</strong>
-            <span>{selectedThread ? humanize(selectedThread.status) : "Workbench"}</span>
+            <strong>{selectedThread?.title ?? "New session"}</strong>
           </div>
         </div>
         <div className="top-actions">
@@ -259,13 +256,16 @@ export default function App() {
             <EmptyState trusted={snapshot?.trusted ?? true} />
           )}
           {selectedThread &&
-            details?.events.map((event) => <MessageView key={event.id} event={event} agent={agent} />)}
+            details?.events.map((event) => (
+              <Fragment key={event.id}>
+                <MessageView event={event} />
+                {event.id === changesEventId && details.diff && (
+                  <ChangesView diff={details.diff} repos={details.repos} onOpenPath={(target) => vscode.postMessage({ type: "openPath", path: target })} />
+                )}
+              </Fragment>
+            ))}
           {pending.map((item) => (
             <article key={item.id} className="msg user pending">
-              <div className="msg-head">
-                <span className="msg-role">You</span>
-                <Icon name="clock" className="pending-spinner" />
-              </div>
               <div className="msg-body">{item.text}</div>
             </article>
           ))}
@@ -289,16 +289,6 @@ export default function App() {
             !isRunning && <EmptyState trusted={snapshot?.trusted ?? true} compact />}
         </div>
 
-        {selectedThread && details && (
-          <RunDetails
-            details={details}
-            onOpenPath={(target) => vscode.postMessage({ type: "openPath", path: target })}
-            onDeleteQueued={(id) => vscode.postMessage({ type: "deleteQueuedTurn", id })}
-            onMoveQueued={(orderedIds) =>
-              vscode.postMessage({ type: "reorderQueuedTurns", threadId: selectedThread.id, orderedIds })
-            }
-          />
-        )}
       </section>
 
       <Composer
@@ -357,11 +347,12 @@ export default function App() {
 
 // One transcript row. Memoized so a snapshot tick only re-renders the messages
 // that actually changed — an unchanged message keeps its parsed Markdown.
-const MessageView = memo(function MessageView({ event, agent }: { event: AgentThreadEvent; agent: AgentKind }) {
+const MessageView = memo(function MessageView({ event }: { event: AgentThreadEvent }) {
+  // No role label — the user's bubble vs the agent's plain text is enough to
+  // tell who's speaking. Just a subtle timestamp.
   return (
     <article className={`msg ${messageClass(event.role)}`}>
       <div className="msg-head">
-        <span className="msg-role">{roleLabel(event.role, event.kind, agent)}</span>
         <time>{formatTime(event.ts)}</time>
       </div>
       <div className="msg-body">{event.text ? <Markdown text={event.text} /> : humanize(event.kind)}</div>
@@ -382,7 +373,7 @@ function Popover(props: {
   trigger: (args: { open: boolean; toggle(): void; ref: (el: HTMLElement | null) => void }) => ReactNode;
   open: boolean;
   setOpen(open: boolean): void;
-  align?: "left" | "right";
+  align?: "left" | "right" | "center";
   children: ReactNode;
 }) {
   const triggerRef = useRef<HTMLElement | null>(null);
@@ -406,7 +397,8 @@ function Popover(props: {
       const maxWidth = vw - margin * 2;
       const menuWidth = Math.min(menuRef.current?.offsetWidth ?? rect.width, maxWidth);
       // Anchor by preferred edge, then clamp fully inside the viewport so menus never clip.
-      const preferredLeft = align === "right" ? rect.right - menuWidth : rect.left;
+      const preferredLeft =
+        align === "center" ? (vw - menuWidth) / 2 : align === "right" ? rect.right - menuWidth : rect.left;
       const left = Math.max(margin, Math.min(preferredLeft, vw - menuWidth - margin));
       const next: CSSProperties = {
         position: "fixed",
@@ -530,7 +522,7 @@ function HistoryMenu(props: {
     <Popover
       open={props.open}
       setOpen={props.setOpen}
-      align="right"
+      align="center"
       trigger={({ toggle, ref }) => (
         <button
           ref={ref as (el: HTMLButtonElement | null) => void}
@@ -545,12 +537,12 @@ function HistoryMenu(props: {
       )}
     >
       <div className="menu history-menu" role="menu">
-        <button type="button" className="menu-item new-session" onClick={props.onNew}>
-          <Icon name="plus" />
-          <span>New session</span>
-        </button>
-        <div className="menu-sep" />
-        <div className="menu-head">Sessions</div>
+        <div className="history-menu-head">
+          <strong>Sessions</strong>
+          <button type="button" className="history-new" title="New session" aria-label="New session" onClick={props.onNew}>
+            <Icon name="plus" />
+          </button>
+        </div>
         {threads.length === 0 && <div className="menu-empty">No sessions yet</div>}
         {threads.map((thread) => {
           const running = thread.status === "running";
@@ -563,7 +555,7 @@ function HistoryMenu(props: {
                 onClick={() => props.onSelect(thread.id)}
                 title={thread.title}
               >
-                <span className="history-dot" data-status={thread.status} />
+                <span className={running ? "history-spinner" : "history-dot"} data-status={thread.status} />
                 <span className="history-text">
                   <span className="history-title">{thread.title}</span>
                   <small>
@@ -919,34 +911,28 @@ const PERMISSIONS: { value: PermissionPolicy; label: string; icon: "eye" | "shie
   { value: "autonomous", label: "Autonomous", icon: "bolt" },
 ];
 
-function RunDetails(props: {
-  details: NonNullable<WorkbenchSnapshot["details"]>;
+function ChangesView(props: {
+  diff: NonNullable<WorkbenchSnapshot["details"]>["diff"];
+  repos: NonNullable<WorkbenchSnapshot["details"]>["repos"];
   onOpenPath(path: string): void;
-  onDeleteQueued(id: string): void;
-  onMoveQueued(orderedIds: string[]): void;
 }) {
   const [open, setOpen] = useState(false);
-  const queuedIds = props.details.queued.map((turn) => turn.id);
-  const diffFiles =
-    props.details.diff?.repos.flatMap((repo) => repo.files.map((file) => ({ ...file, repo: repo.repo_name }))) ?? [];
-  const hasContent = props.details.repos.length > 0 || props.details.queued.length > 0 || diffFiles.length > 0;
-  if (!hasContent) return null;
+  const diffFiles = props.diff?.repos.flatMap((repo) => repo.files.map((file) => ({ ...file, repo: repo.repo_name }))) ?? [];
+  if (diffFiles.length === 0) return null;
 
   return (
-    <section className="run-details">
-      <button type="button" className="run-toggle" onClick={() => setOpen(!open)}>
+    <section className="changes-card">
+      <button type="button" className="changes-toggle" onClick={() => setOpen(!open)}>
         <Icon name="caret" className={open ? "caret open" : "caret"} />
-        <span>Workspace</span>
-        <span className="run-summary">
-          {props.details.repos.length} repo{props.details.repos.length === 1 ? "" : "s"}
-          {props.details.queued.length > 0 && ` · ${props.details.queued.length} queued`}
-          {diffFiles.length > 0 && ` · ${diffFiles.length} changed`}
+        <span>View Changes</span>
+        <span className="changes-summary">
+          {diffFiles.length} file{diffFiles.length === 1 ? "" : "s"}
         </span>
       </button>
 
       {open && (
-        <div className="run-body">
-          {props.details.repos.map((repo) => (
+        <div className="changes-body">
+          {props.repos.map((repo) => (
             <div key={repo.repo_id} className="detail-row">
               <Icon name="repo" />
               <span className="detail-name">{repo.repo_name}</span>
@@ -959,42 +945,15 @@ function RunDetails(props: {
             </div>
           ))}
 
-          {props.details.queued.length > 0 && (
-            <div className="queue-list">
-              <div className="detail-head">Queued</div>
-              {props.details.queued.map((turn, index) => (
-                <div className="queue-item" key={turn.id}>
-                  <span>{turn.message}</span>
-                  <IconButton title="Move up" disabled={index === 0} onClick={() => props.onMoveQueued(move(queuedIds, index, index - 1))}>
-                    <Icon name="up" />
-                  </IconButton>
-                  <IconButton
-                    title="Move down"
-                    disabled={index === queuedIds.length - 1}
-                    onClick={() => props.onMoveQueued(move(queuedIds, index, index + 1))}
-                  >
-                    <Icon name="down" />
-                  </IconButton>
-                  <IconButton title="Remove" onClick={() => props.onDeleteQueued(turn.id)}>
-                    <Icon name="close" />
-                  </IconButton>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {diffFiles.length > 0 && (
-            <div className="diff-list">
-              <div className="detail-head">Changes</div>
-              {diffFiles.map((file) => (
-                <div key={`${file.repo}:${file.path}`} className="diff-item">
-                  <span className="detail-name">{file.path}</span>
-                  <span className="diff-add">+{file.additions}</span>
-                  <span className="diff-del">-{file.deletions}</span>
-                </div>
-              ))}
-            </div>
-          )}
+          <div className="diff-list">
+            {diffFiles.map((file) => (
+              <div key={`${file.repo}:${file.path}`} className="diff-item">
+                <span className="detail-name">{file.path}</span>
+                <span className="diff-add">+{file.additions}</span>
+                <span className="diff-del">-{file.deletions}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </section>
@@ -1256,13 +1215,6 @@ function labelAgent(agent: AgentKind | null | undefined): string {
   }
 }
 
-function roleLabel(role: string, kind: string, agent: AgentKind): string {
-  if (role === "user") return "You";
-  if (role === "assistant") return labelAgent(agent);
-  if (role === "system" || !role) return humanize(kind || "system");
-  return humanize(role);
-}
-
 function humanize(value: string): string {
   return value
     .split("_")
@@ -1283,11 +1235,17 @@ function formatTime(value: string): string {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-function move(ids: string[], from: number, to: number): string[] {
-  const next = [...ids];
-  const [item] = next.splice(from, 1);
-  next.splice(to, 0, item);
-  return next;
+function latestChangesEventId(details: NonNullable<WorkbenchSnapshot["details"]>): string | null {
+  const hasChanges = details.diff?.repos.some((repo) => repo.files.length > 0) ?? false;
+  if (!hasChanges) return null;
+
+  const latestTurn = [...details.turns]
+    .filter((turn) => turn.state === "completed")
+    .sort((a, b) => Date.parse(b.ended_at ?? b.started_at) - Date.parse(a.ended_at ?? a.started_at))[0];
+  if (!latestTurn) return null;
+
+  const events = details.events.filter((event) => event.turn_id === latestTurn.id);
+  return events.at(-1)?.id ?? null;
 }
 
 function defaultLimitPolicy(): LimitPolicy {

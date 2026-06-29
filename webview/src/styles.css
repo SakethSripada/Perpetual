@@ -76,7 +76,7 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 8px 10px;
+  padding: 5px 8px;
   border-bottom: 1px solid var(--am-border-soft);
   flex: 0 0 auto;
 }
@@ -86,36 +86,18 @@ textarea {
   align-items: center;
   min-width: 0;
   gap: 8px;
-}
-
-.brand-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  flex: 0 0 auto;
-  border-radius: 7px;
-  color: var(--vscode-foreground);
-  background: var(--am-surface-2);
+  flex: 1 1 auto;
 }
 
 .brand-text {
   display: grid;
   min-width: 0;
-  line-height: 1.25;
+  line-height: 1.2;
+  max-width: 100%;
 }
 
 .brand-text strong {
   font-size: 13px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.brand-text span {
-  font-size: 11px;
-  color: var(--am-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -129,12 +111,12 @@ textarea {
 }
 /* Compact, evenly-sized toolbar icons that don't crowd the header. */
 .top-actions .icon-btn {
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
 }
 .top-actions .icon-btn svg {
-  width: 15px;
-  height: 15px;
+  width: 14px;
+  height: 14px;
 }
 
 /* ---------- icon buttons ---------- */
@@ -185,11 +167,8 @@ textarea {
 /* ---------- conversation ---------- */
 
 .conversation {
-  display: grid;
-  /* Transcript takes the flexible space and scrolls; the workspace panel sits
-     at its natural height pinned to the bottom (never inflates to fill space). */
-  grid-template-rows: minmax(0, 1fr) auto;
-  grid-template-columns: minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
   flex: 1 1 auto;
@@ -279,11 +258,6 @@ textarea {
   justify-content: space-between;
   gap: 8px;
 }
-.msg-role {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
 .msg-head time {
   font-size: 10px;
   color: var(--am-muted);
@@ -296,24 +270,16 @@ textarea {
   overflow-wrap: anywhere;
 }
 
-.msg.user .msg-role {
-  color: var(--am-accent);
-}
 .msg.user .msg-body {
+  width: fit-content;
+  max-width: min(100%, 72ch);
   padding: 9px 11px;
   border-radius: var(--am-radius);
   background: var(--am-surface-2);
 }
 
-.msg.assistant .msg-role {
-  color: var(--vscode-foreground);
-}
-
 .msg.system {
   opacity: 0.85;
-}
-.msg.system .msg-role {
-  color: var(--am-muted);
 }
 .msg.system .msg-body {
   font-size: 12px;
@@ -372,38 +338,41 @@ textarea {
   line-height: 1.5;
 }
 
-/* ---------- run details ---------- */
+/* ---------- inline changes ---------- */
 
-.run-details {
-  border-top: 1px solid var(--am-border-soft);
+.changes-card {
+  width: min(100%, 680px);
+  border: 1px solid var(--am-border-soft);
+  border-radius: var(--am-radius);
   background: var(--am-surface);
+  overflow: hidden;
 }
-.run-toggle {
+.changes-toggle {
   display: flex;
   align-items: center;
   gap: 6px;
   width: 100%;
   border: 0;
   background: transparent;
-  padding: 7px 10px;
+  padding: 7px 9px;
   cursor: pointer;
   font-size: 11px;
   font-weight: 600;
 }
-.run-toggle:hover {
+.changes-toggle:hover {
   background: var(--am-hover);
 }
-.run-toggle .caret {
+.changes-toggle .caret {
   transition: transform 0.12s ease;
   opacity: 0.7;
 }
-.run-toggle .caret.open {
+.changes-toggle .caret.open {
   transform: rotate(0deg);
 }
-.run-toggle .caret:not(.open) {
+.changes-toggle .caret:not(.open) {
   transform: rotate(-90deg);
 }
-.run-summary {
+.changes-summary {
   margin-left: auto;
   font-weight: 400;
   color: var(--am-muted);
@@ -413,22 +382,15 @@ textarea {
   white-space: nowrap;
   min-width: 0;
 }
-.run-toggle > span:nth-child(2) {
+.changes-toggle > span:nth-child(2) {
   flex: 0 0 auto;
 }
-.run-body {
+.changes-body {
   display: grid;
   gap: 8px;
-  padding: 0 10px 10px;
-  max-height: 200px;
+  padding: 0 9px 9px;
+  max-height: 220px;
   overflow: auto;
-}
-.detail-head {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--am-muted);
-  margin-bottom: 2px;
 }
 .detail-row {
   display: flex;
@@ -463,27 +425,9 @@ textarea {
   text-decoration: underline;
 }
 
-.queue-list,
 .diff-list {
   display: grid;
   gap: 4px;
-}
-.queue-item {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
-  align-items: center;
-  gap: 2px;
-  font-size: 12px;
-}
-.queue-item > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.queue-item .icon-btn {
-  width: 24px;
-  height: 24px;
 }
 .diff-item {
   display: flex;
@@ -800,15 +744,39 @@ textarea {
 }
 
 .history-menu {
-  min-width: 248px;
-  max-width: 340px;
+  width: min(420px, calc(100vw - 16px));
+  min-width: min(320px, calc(100vw - 16px));
+  padding: 8px;
 }
 .repo-menu {
   min-width: 220px;
   max-width: 320px;
 }
-.history-menu .new-session {
+.history-menu-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 2px 2px 8px 4px;
+}
+.history-menu-head strong {
+  font-size: 12px;
   font-weight: 600;
+}
+.history-new {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: var(--am-radius-sm);
+  background: var(--am-surface-2);
+  color: var(--vscode-icon-foreground, var(--vscode-foreground));
+  cursor: pointer;
+}
+.history-new:hover {
+  background: var(--am-hover);
 }
 
 /* A session row: a big pick target plus a delete affordance that reveals on
@@ -843,6 +811,20 @@ textarea {
 }
 .history-pick .history-dot {
   flex: 0 0 auto;
+}
+.history-spinner {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  border: 1.5px solid color-mix(in srgb, var(--am-accent) 28%, transparent);
+  border-top-color: var(--am-accent);
+  animation: history-spin 0.85s linear infinite;
+}
+@keyframes history-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 .history-del {
   display: inline-flex;
@@ -1218,15 +1200,6 @@ textarea {
 
 .msg.pending {
   opacity: 0.7;
-}
-.pending-spinner {
-  color: var(--am-muted);
-  animation: spin 1.2s linear infinite;
-}
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 /* ---------- approval card ---------- */

@@ -29,7 +29,6 @@
     "ai",
     "github",
     "docker",
-    "workbench",
     "handoff"
   ],
   "icon": "media/icon.png",
@@ -86,18 +85,18 @@
       "agentmanager": [
         {
           "id": "agentmanager.workbench",
-          "name": "Workbench",
+          "name": "AgentManager",
           "icon": "media/activity.svg",
-          "contextualTitle": "AgentManager Workbench",
+          "contextualTitle": "AgentManager",
           "type": "webview"
         }
       ],
       "agentmanagerPanel": [
         {
           "id": "agentmanager.workbench.panel",
-          "name": "Workbench",
+          "name": "AgentManager",
           "icon": "media/activity.svg",
-          "contextualTitle": "AgentManager Workbench",
+          "contextualTitle": "AgentManager",
           "type": "webview"
         }
       ]
@@ -105,7 +104,7 @@
     "commands": [
       {
         "command": "agentmanager.openWorkbench",
-        "title": "Open Workbench Panel",
+        "title": "Open AgentManager Panel",
         "category": "AgentManager",
         "icon": "$(comment-discussion)"
       },
@@ -179,7 +178,7 @@
             "codex"
           ],
           "default": "claude_code",
-          "description": "Default agent for new Workbench sessions."
+          "description": "Default agent for new AgentManager sessions."
         },
         "agentmanager.defaultPermission": {
           "type": "string",

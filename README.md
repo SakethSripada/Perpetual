@@ -3,11 +3,11 @@
 AgentManager runs Claude Code and Codex sessions from inside VS Code, preserving
 context across agent switches, usage limits, and runtime changes.
 
-![AgentManager Workbench](media/screenshot-workbench.png)
+![AgentManager](media/screenshot-workbench.png)
 
 ## Features
 
-- Chat-first Workbench in the Activity Bar, with an optional wide editor panel.
+- Chat-first AgentManager view in the Activity Bar, with an optional wide editor panel.
 - Pick Claude Code or Codex per session, including model and reasoning controls.
 - Automatic handoff when an agent hits a usage limit, using AgentManager context
   files so the next agent can continue without starting cold.
