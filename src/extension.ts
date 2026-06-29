@@ -4,6 +4,7 @@ import { WorkbenchController } from "./node/workbenchController";
 import { WorkbenchWebviewProvider } from "./node/webviewProvider";
 
 const VIEW_ID = "agentmanager.workbench";
+const PANEL_VIEW_ID = "agentmanager.workbench.panel";
 
 export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel("AgentManager");
@@ -17,6 +18,11 @@ export function activate(context: vscode.ExtensionContext): void {
     controller,
     provider,
     vscode.window.registerWebviewViewProvider(VIEW_ID, provider, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
+    // Same provider also backs the panel container so AgentManager can live in the
+    // bottom panel (beside Terminal) or be dragged to the secondary sidebar.
+    vscode.window.registerWebviewViewProvider(PANEL_VIEW_ID, provider, {
       webviewOptions: { retainContextWhenHidden: true },
     }),
     vscode.commands.registerCommand("agentmanager.openWorkbench", () => {

@@ -73,12 +73,28 @@
           "title": "AgentManager",
           "icon": "media/activity.svg"
         }
+      ],
+      "panel": [
+        {
+          "id": "agentmanagerPanel",
+          "title": "AgentManager",
+          "icon": "media/activity.svg"
+        }
       ]
     },
     "views": {
       "agentmanager": [
         {
           "id": "agentmanager.workbench",
+          "name": "Workbench",
+          "icon": "media/activity.svg",
+          "contextualTitle": "AgentManager Workbench",
+          "type": "webview"
+        }
+      ],
+      "agentmanagerPanel": [
+        {
+          "id": "agentmanager.workbench.panel",
           "name": "Workbench",
           "icon": "media/activity.svg",
           "contextualTitle": "AgentManager Workbench",
@@ -127,24 +143,9 @@
     "menus": {
       "view/title": [
         {
-          "command": "agentmanager.newSession",
-          "when": "view == agentmanager.workbench",
-          "group": "navigation@1"
-        },
-        {
-          "command": "agentmanager.refresh",
-          "when": "view == agentmanager.workbench",
-          "group": "navigation@2"
-        },
-        {
           "command": "agentmanager.openWorkbench",
           "when": "view == agentmanager.workbench",
-          "group": "navigation@3"
-        },
-        {
-          "command": "agentmanager.openSettings",
-          "when": "view == agentmanager.workbench",
-          "group": "navigation@4"
+          "group": "navigation@1"
         }
       ],
       "commandPalette": [

@@ -485,27 +485,31 @@ textarea {
   padding: 8px 10px 10px;
   border-top: 1px solid var(--am-border-soft);
   flex: 0 0 auto;
+  container-type: inline-size;
 }
 
 .composer-box {
   border: 1px solid var(--am-border);
-  border-radius: 12px;
+  border-radius: 14px;
   background: var(--vscode-input-background, var(--am-surface));
-  transition: border-color 0.12s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16);
+  transition: border-color 0.14s ease, box-shadow 0.14s ease;
 }
 .composer-box:focus-within {
-  border-color: var(--am-accent);
+  border-color: color-mix(in srgb, var(--am-accent) 70%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--am-accent) 45%, transparent),
+    0 4px 16px rgba(0, 0, 0, 0.2);
 }
 
 .composer textarea {
   display: block;
   width: 100%;
-  min-height: 40px;
+  min-height: 38px;
   max-height: 200px;
   resize: none;
   border: 0;
   background: transparent;
-  padding: 10px 12px 4px;
+  padding: 11px 13px 3px;
   line-height: 1.45;
   outline: none;
 }
@@ -515,73 +519,104 @@ textarea {
 
 .toolbar {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   gap: 6px;
-  padding: 5px 6px 6px;
+  padding: 4px 6px 6px;
   min-width: 0;
 }
 .toolbar-chips {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   flex: 1 1 auto;
   min-width: 0;
 }
 
+/* Pill with a visible label (agent picker) */
 .chip-btn {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 26px;
-  max-width: 140px;
+  height: 28px;
+  max-width: 150px;
   min-width: 0;
-  padding: 0 8px;
+  padding: 0 9px;
   border: 0;
   border-radius: 999px;
   background: transparent;
   color: var(--vscode-foreground);
   cursor: pointer;
   font-size: 12px;
+  transition: background 0.12s ease;
 }
 .chip-btn:hover {
   background: var(--am-hover);
 }
 .chip-btn svg {
   flex: 0 0 auto;
-  opacity: 0.8;
+  opacity: 0.85;
 }
 .chip-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 500;
 }
 .chip-caret {
   width: 12px;
   height: 12px;
-  opacity: 0.6;
+  opacity: 0.55;
 }
 
-.toggle-chip {
-  border: 1px solid var(--am-border);
+/* Compact icon-only control */
+.icon-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  opacity: 0.9;
+  transition: background 0.12s ease, color 0.12s ease, opacity 0.12s ease;
 }
-.toggle-chip.on {
-  border-color: transparent;
-  color: var(--vscode-button-foreground);
-  background: var(--vscode-button-background);
-}
-.toggle-chip.on:hover {
-  background: var(--vscode-button-hoverBackground);
-}
-.toggle-chip.on svg {
+.icon-chip:hover:not(:disabled) {
+  background: var(--am-hover);
   opacity: 1;
 }
-.toggle-chip:disabled {
-  opacity: 0.4;
-  cursor: default;
+.icon-chip svg {
+  opacity: 0.9;
 }
-.toggle-chip:disabled:hover {
-  background: transparent;
+.icon-chip.active {
+  color: var(--am-accent);
+  background: color-mix(in srgb, var(--am-accent) 14%, transparent);
+}
+.icon-chip.danger {
+  color: var(--am-warn);
+  background: color-mix(in srgb, var(--am-warn) 15%, transparent);
+}
+.chip-badge {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--am-accent);
+  color: var(--vscode-button-foreground, #fff);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .send-btn {
@@ -596,13 +631,34 @@ textarea {
   color: var(--vscode-button-foreground);
   background: var(--vscode-button-background);
   cursor: pointer;
+  transition: background 0.12s ease, transform 0.08s ease, opacity 0.12s ease;
+}
+.send-btn svg {
+  stroke-width: 1.7;
 }
 .send-btn:hover:not(:disabled) {
   background: var(--vscode-button-hoverBackground);
 }
+.send-btn:active:not(:disabled) {
+  transform: scale(0.94);
+}
 .send-btn:disabled {
-  opacity: 0.4;
+  opacity: 0.35;
   cursor: default;
+}
+
+/* Collapse the agent label when the composer gets narrow */
+@container (max-width: 280px) {
+  .chip-btn {
+    gap: 0;
+    width: 28px;
+    padding: 0;
+    justify-content: center;
+  }
+  .chip-btn .chip-label,
+  .chip-btn .chip-caret {
+    display: none;
+  }
 }
 
 /* ---------- popover / menu ---------- */
@@ -864,6 +920,10 @@ textarea {
   width: 15px;
   height: 15px;
   flex: 0 0 auto;
+}
+.toggle.disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 .field-grid {
   display: grid;

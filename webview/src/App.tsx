@@ -556,17 +556,18 @@ function Composer(props: {
 }) {
   const [reposOpen, setReposOpen] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
+  const [permOpen, setPermOpen] = useState(false);
   const sandboxAllowed = props.agent === "codex";
   const sandboxOn = props.backend === "docker_sandbox";
   const sandbox = props.snapshot?.sandboxRuntime;
   const repos = props.snapshot?.repos ?? [];
   const selectedRepos = repos.filter((repo) => props.repoIds.includes(repo.id));
-  const reposLabel =
+  const reposTitle =
     selectedRepos.length === 0
-      ? "No repo"
-      : selectedRepos.length === 1
-        ? selectedRepos[0].name
-        : `${selectedRepos.length} repos`;
+      ? "Add context — no repository attached"
+      : `Context: ${selectedRepos.map((repo) => repo.name).join(", ")}`;
+  const perm = PERMISSIONS.find((item) => item.value === props.permission) ?? PERMISSIONS[1];
+  const optionsActive = sandboxOn || !!props.model.trim() || (!!props.reasoning && props.reasoning !== "medium");
 
   return (
     <footer className="composer">
@@ -587,149 +588,175 @@ function Composer(props: {
 
         <div className="toolbar">
           <div className="toolbar-chips">
-          <Popover
-            open={reposOpen}
-            setOpen={setReposOpen}
-            trigger={({ toggle, ref }) => (
-              <button
-                ref={ref as (el: HTMLButtonElement | null) => void}
-                type="button"
-                className="chip-btn"
-                title="Repositories"
-                onClick={toggle}
-              >
-                <Icon name="repo" />
-                <span className="chip-label">{reposLabel}</span>
-                <Icon name="caret" className="chip-caret" />
-              </button>
-            )}
-          >
-            <div className="menu repo-menu">
-              <div className="menu-head">Repositories</div>
-              {repos.length === 0 && <div className="menu-empty">No repositories connected</div>}
-              {repos.map((repo) => {
-                const checked = props.repoIds.includes(repo.id);
-                return (
-                  <label key={repo.id} className={checked ? "menu-item check selected" : "menu-item check"}>
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      disabled={!!props.selectedThread}
-                      onChange={(event) => {
-                        const next = event.target.checked
-                          ? [...props.repoIds, repo.id]
-                          : props.repoIds.filter((id) => id !== repo.id);
-                        props.setRepoIds(next);
-                      }}
-                    />
-                    <span className="history-text">
-                      <span>{repo.name}</span>
-                      <small>{repo.kind === "github" ? "GitHub" : "Local"}</small>
-                    </span>
-                  </label>
-                );
-              })}
-              <div className="menu-sep" />
-              <button type="button" className="menu-item" onClick={() => { setReposOpen(false); props.onWorkspaceRepos(); }}>
-                <Icon name="folder" />
-                <span>Add local folder</span>
-              </button>
-              <button type="button" className="menu-item" onClick={() => { setReposOpen(false); props.onGithub(); }}>
-                <Icon name="github" />
-                <span>Add from GitHub</span>
-              </button>
-            </div>
-          </Popover>
-
-          <Dropdown
-            ariaLabel="Agent"
-            icon={<Icon name="agent" />}
-            value={props.agent}
-            onChange={(value) => props.setAgent(value as AgentKind)}
-            options={[
-              { value: "claude_code", label: "Claude" },
-              { value: "codex", label: "Codex" },
-            ]}
-          />
-
-          <Dropdown
-            ariaLabel="Permission mode"
-            icon={<Icon name="shield" />}
-            value={props.permission}
-            onChange={(value) => props.setPermission(value as PermissionPolicy)}
-            options={[
-              { value: "read_only", label: "Read only" },
-              { value: "workspace_write", label: "Write" },
-              { value: "autonomous", label: "Autonomous" },
-            ]}
-          />
-
-          <button
-            type="button"
-            className={sandboxOn ? "chip-btn toggle-chip on" : "chip-btn toggle-chip"}
-            disabled={!sandboxAllowed}
-            aria-pressed={sandboxOn}
-            title={sandboxAllowed ? "Run in Docker sandbox" : "Sandbox is available for Codex"}
-            onClick={() => props.setBackend(sandboxOn ? "host" : "docker_sandbox")}
-          >
-            <Icon name="cube" />
-            <span className="chip-label">Sandbox</span>
-          </button>
-
-          <Popover
-            open={optionsOpen}
-            setOpen={setOptionsOpen}
-            align="right"
-            trigger={({ toggle, ref }) => (
-              <button
-                ref={ref as (el: HTMLButtonElement | null) => void}
-                type="button"
-                className="icon-btn"
-                title="Run options"
-                onClick={toggle}
-              >
-                <Icon name="sliders" />
-              </button>
-            )}
-          >
-            <div className="menu options-menu">
-              <div className="menu-head">Run options</div>
-              <label className="field">
-                <span>Model</span>
-                <input
-                  value={props.model}
-                  placeholder="Default model"
-                  onChange={(event) => props.setModel(event.target.value)}
-                />
-              </label>
-              <label className="field">
-                <span>Reasoning effort</span>
-                <select value={props.reasoning} onChange={(event) => props.setReasoning(event.target.value)}>
-                  <option value="">Default</option>
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                </select>
-              </label>
-              {sandboxOn && sandbox && !sandbox.authenticated && (
-                <button type="button" className="menu-item" onClick={() => props.onSandboxLogin(false)}>
-                  Sign in to Sandbox
+            <Popover
+              open={reposOpen}
+              setOpen={setReposOpen}
+              trigger={({ toggle, ref }) => (
+                <button
+                  ref={ref as (el: HTMLButtonElement | null) => void}
+                  type="button"
+                  className="icon-chip"
+                  title={reposTitle}
+                  aria-label="Add context"
+                  onClick={toggle}
+                >
+                  <Icon name="paperclip" />
+                  {selectedRepos.length > 0 && <span className="chip-badge">{selectedRepos.length}</span>}
                 </button>
               )}
-              {sandboxOn && sandbox && !sandbox.codex_authenticated && (
-                <button type="button" className="menu-item" onClick={() => props.onSandboxLogin(true)}>
-                  Sign in to Codex Sandbox
+            >
+              <div className="menu repo-menu">
+                <div className="menu-head">Context</div>
+                {repos.length === 0 && <div className="menu-empty">No repositories connected</div>}
+                {repos.map((repo) => {
+                  const checked = props.repoIds.includes(repo.id);
+                  return (
+                    <label key={repo.id} className={checked ? "menu-item check selected" : "menu-item check"}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={!!props.selectedThread}
+                        onChange={(event) => {
+                          const next = event.target.checked
+                            ? [...props.repoIds, repo.id]
+                            : props.repoIds.filter((id) => id !== repo.id);
+                          props.setRepoIds(next);
+                        }}
+                      />
+                      <span className="history-text">
+                        <span>{repo.name}</span>
+                        <small>{repo.kind === "github" ? "GitHub" : "Local"}</small>
+                      </span>
+                    </label>
+                  );
+                })}
+                <div className="menu-sep" />
+                <button type="button" className="menu-item" onClick={() => { setReposOpen(false); props.onWorkspaceRepos(); }}>
+                  <Icon name="folder" />
+                  <span>Add local folder</span>
+                </button>
+                <button type="button" className="menu-item" onClick={() => { setReposOpen(false); props.onGithub(); }}>
+                  <Icon name="github" />
+                  <span>Add from GitHub</span>
+                </button>
+              </div>
+            </Popover>
+
+            <Dropdown
+              ariaLabel="Agent"
+              title="Agent"
+              icon={<Icon name="agent" />}
+              value={props.agent}
+              onChange={(value) => props.setAgent(value as AgentKind)}
+              options={[
+                { value: "claude_code", label: "Claude" },
+                { value: "codex", label: "Codex" },
+              ]}
+            />
+
+            <Popover
+              open={permOpen}
+              setOpen={setPermOpen}
+              trigger={({ toggle, ref }) => (
+                <button
+                  ref={ref as (el: HTMLButtonElement | null) => void}
+                  type="button"
+                  className={`icon-chip${props.permission === "autonomous" ? " danger" : ""}`}
+                  title={`Permission: ${perm.label}`}
+                  aria-label={`Permission mode: ${perm.label}`}
+                  onClick={toggle}
+                >
+                  <Icon name={perm.icon} />
                 </button>
               )}
-            </div>
-          </Popover>
+            >
+              <div className="menu" role="listbox">
+                <div className="menu-head">Permission</div>
+                {PERMISSIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="option"
+                    aria-selected={option.value === props.permission}
+                    className={option.value === props.permission ? "menu-item selected" : "menu-item"}
+                    onClick={() => {
+                      props.setPermission(option.value);
+                      setPermOpen(false);
+                    }}
+                  >
+                    <Icon name={option.icon} />
+                    <span>{option.label}</span>
+                    {option.value === props.permission && <Icon name="check" />}
+                  </button>
+                ))}
+              </div>
+            </Popover>
+
+            <Popover
+              open={optionsOpen}
+              setOpen={setOptionsOpen}
+              align="right"
+              trigger={({ toggle, ref }) => (
+                <button
+                  ref={ref as (el: HTMLButtonElement | null) => void}
+                  type="button"
+                  className={`icon-chip${optionsActive ? " active" : ""}`}
+                  title="Model, reasoning & sandbox"
+                  aria-label="Run options"
+                  onClick={toggle}
+                >
+                  <Icon name="sliders" />
+                </button>
+              )}
+            >
+              <div className="menu options-menu">
+                <div className="menu-head">Run options</div>
+                <label className="field">
+                  <span>Model</span>
+                  <input
+                    value={props.model}
+                    placeholder="Default model"
+                    onChange={(event) => props.setModel(event.target.value)}
+                  />
+                </label>
+                <label className="field">
+                  <span>Reasoning effort</span>
+                  <select value={props.reasoning} onChange={(event) => props.setReasoning(event.target.value)}>
+                    <option value="">Default</option>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                </label>
+                <label className={sandboxAllowed ? "toggle" : "toggle disabled"} title={sandboxAllowed ? "Run in an isolated Docker sandbox" : "Sandbox is available for Codex"}>
+                  <input
+                    type="checkbox"
+                    checked={sandboxOn}
+                    disabled={!sandboxAllowed}
+                    onChange={(event) => props.setBackend(event.target.checked ? "docker_sandbox" : "host")}
+                  />
+                  <span>Docker sandbox</span>
+                </label>
+                {sandboxOn && sandbox && !sandbox.authenticated && (
+                  <button type="button" className="menu-item" onClick={() => props.onSandboxLogin(false)}>
+                    Sign in to Sandbox
+                  </button>
+                )}
+                {sandboxOn && sandbox && !sandbox.codex_authenticated && (
+                  <button type="button" className="menu-item" onClick={() => props.onSandboxLogin(true)}>
+                    Sign in to Codex Sandbox
+                  </button>
+                )}
+              </div>
+            </Popover>
           </div>
 
           <button
             className="send-btn"
             type="button"
             disabled={!props.canSend}
-            title={props.isRunning ? "Queue message" : "Send"}
+            title={props.isRunning ? "Queue message (⌘⏎)" : "Send (⌘⏎)"}
+            aria-label={props.isRunning ? "Queue message" : "Send"}
             onClick={props.onSend}
           >
             <Icon name={props.isRunning ? "queue" : "send"} />
@@ -739,6 +766,12 @@ function Composer(props: {
     </footer>
   );
 }
+
+const PERMISSIONS: { value: PermissionPolicy; label: string; icon: "eye" | "shield" | "bolt" }[] = [
+  { value: "read_only", label: "Read only", icon: "eye" },
+  { value: "workspace_write", label: "Write", icon: "shield" },
+  { value: "autonomous", label: "Autonomous", icon: "bolt" },
+];
 
 function RunDetails(props: {
   details: NonNullable<WorkbenchSnapshot["details"]>;
