@@ -1,0 +1,54 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build",
+      "type": "npm",
+      "script": "build",
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "watch",
+      "dependsOn": ["watch:extension", "watch:webview"],
+      "problemMatcher": []
+    },
+    {
+      "label": "watch:extension",
+      "type": "npm",
+      "script": "watch:extension",
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "esbuild",
+        "pattern": {
+          "regexp": "^()$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "\\[watch\\] extension build watching",
+          "endsPattern": "\\[watch\\] extension build watching"
+        }
+      }
+    },
+    {
+      "label": "watch:webview",
+      "type": "npm",
+      "script": "watch:webview",
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": {
+          "regexp": "^()$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "building for production",
+          "endsPattern": "built in"
+        }
+      }
+    }
+  ]
+}

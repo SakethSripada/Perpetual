@@ -44,20 +44,50 @@ OAuth tokens in its database.
 The extension executes local CLIs and repository operations, so Workspace Trust
 is required before running agents or attaching repositories.
 
-## Packaging
+## Repository layout
 
-This extension bundles an `am-daemon` binary per platform-specific VSIX. To build
-the current platform package from the repository root:
+This is a standalone repository for the VS Code extension. Its TypeScript and
+webview code live here and are edited here directly.
+
+The bundled `am-daemon` binaries (under `bin/<target>/`) are **build artifacts**
+produced by the Rust crates in the separate
+[AgentManager](https://github.com/SakethSripada/AgentManager) monorepo. They are
+committed here so the extension is self-contained and packageable without a Rust
+toolchain.
+
+## Daemon workflow
+
+Edit and rebuild the extension entirely within this repo:
 
 ```bash
-cargo build -p am-daemon --release
-cd vscode-extension
 npm install
-npm run copy-daemon
-npm run package
+npm run build      # builds extension + webview into dist/
 ```
 
-Use `npm run package:darwin-arm64`, `npm run package:linux-x64`, or
-`npm run package:win32-x64` when publishing platform-specific packages.
+When daemon-side behavior changes in the monorepo and you want those changes in
+the extension, sync the binary **from the monorepo** (you choose when):
+
+```bash
+# run from the AgentManager monorepo checkout
+npm run sync:daemon -- --extension-repo="../AgentManagerVSCodeExtension"
+# add --target=linux-x64 (etc.) for a specific platform; default = host
+# add --all to build/sync every supported target
+```
+
+That rebuilds `am-daemon` and copies it into `bin/<target>/` here. Commit the
+updated `bin/` and repackage. Until you run it, the extension keeps using the
+daemon binary already committed — monorepo crate changes never leak in
+automatically.
+
+## Packaging
+
+`vsce package` builds the extension first (via `vscode:prepublish`) and bundles
+the daemon for the chosen target. The `check-daemon` step fails early with the
+sync command if a target's binary is missing.
+
+```bash
+npm install
+npm run package:darwin-arm64   # or :darwin-x64 / :linux-x64 / :linux-arm64 / :win32-x64 / :win32-arm64
+```
 
 See [PUBLISHING.md](PUBLISHING.md) for the full Marketplace checklist.
