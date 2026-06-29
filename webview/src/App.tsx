@@ -676,12 +676,13 @@ function Composer(props: {
       <div className="composer-box">
         <textarea
           value={props.message}
-          placeholder={props.isRunning ? "Queue a follow-up…" : "Ask anything — ⌘⏎ to send"}
+          placeholder={props.isRunning ? "Queue a follow-up…" : "Ask anything — Enter to send, Shift+Enter for newline"}
           rows={1}
           onChange={(event) => props.setMessage(event.target.value)}
           onInput={(event) => autoGrow(event.currentTarget)}
           onKeyDown={(event) => {
-            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+            // Enter sends; Shift+Enter (or ⌘/Ctrl+Enter) inserts a newline.
+            if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.nativeEvent.isComposing) {
               event.preventDefault();
               props.onSend();
             }
@@ -868,7 +869,7 @@ function Composer(props: {
             className="send-btn"
             type="button"
             disabled={!props.canSend}
-            title={props.isRunning ? "Queue message (⌘⏎)" : "Send (⌘⏎)"}
+            title={props.isRunning ? "Queue message (Enter)" : "Send (Enter)"}
             aria-label={props.isRunning ? "Queue message" : "Send"}
             onClick={props.onSend}
           >
