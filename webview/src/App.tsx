@@ -374,12 +374,14 @@ function Popover(props: {
   open: boolean;
   setOpen(open: boolean): void;
   align?: "left" | "right" | "center";
+  placement?: "auto" | "above" | "below";
   children: ReactNode;
 }) {
   const triggerRef = useRef<HTMLElement | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
   const align = props.align ?? "left";
+  const placement = props.placement ?? "auto";
 
   useLayoutEffect(() => {
     if (!props.open) return;
@@ -392,23 +394,26 @@ function Popover(props: {
       const vh = window.innerHeight;
       const spaceBelow = vh - rect.bottom - margin;
       const spaceAbove = rect.top - margin;
-      const openUp = spaceBelow < 220 && spaceAbove > spaceBelow;
-      const maxHeight = Math.max(120, Math.min(360, openUp ? spaceAbove : spaceBelow));
+      const openUp = placement === "above" || (placement === "auto" && spaceBelow < 220 && spaceAbove > spaceBelow);
+      const availableHeight = openUp ? spaceAbove : spaceBelow;
+      const maxHeight = Math.max(120, Math.min(360, availableHeight));
       const maxWidth = vw - margin * 2;
       const menuWidth = Math.min(menuRef.current?.offsetWidth ?? rect.width, maxWidth);
+      const menuHeight = Math.min(menuRef.current?.offsetHeight ?? maxHeight, maxHeight);
       // Anchor by preferred edge, then clamp fully inside the viewport so menus never clip.
       const preferredLeft =
         align === "center" ? (vw - menuWidth) / 2 : align === "right" ? rect.right - menuWidth : rect.left;
       const left = Math.max(margin, Math.min(preferredLeft, vw - menuWidth - margin));
+      const preferredTop = openUp ? rect.top - menuHeight - margin : rect.bottom + margin;
+      const top = Math.max(margin, Math.min(preferredTop, vh - menuHeight - margin));
       const next: CSSProperties = {
         position: "fixed",
         maxHeight,
         maxWidth,
         minWidth: Math.min(rect.width, maxWidth),
         left,
+        top,
       };
-      if (openUp) next.bottom = vh - rect.top + margin;
-      else next.top = rect.bottom + margin;
       setMenuStyle(next);
     };
     reposition();
@@ -418,7 +423,7 @@ function Popover(props: {
       window.removeEventListener("resize", reposition);
       window.removeEventListener("scroll", reposition, true);
     };
-  }, [props.open, align]);
+  }, [props.open, align, placement]);
 
   useEffect(() => {
     if (!props.open) return;
@@ -462,6 +467,7 @@ function Dropdown(props: {
   icon?: ReactNode;
   ariaLabel?: string;
   title?: string;
+  placement?: "auto" | "above" | "below";
 }) {
   const [open, setOpen] = useState(false);
   const selected = props.options.find((option) => option.value === props.value);
@@ -469,6 +475,7 @@ function Dropdown(props: {
     <Popover
       open={open}
       setOpen={setOpen}
+      placement={props.placement}
       trigger={({ toggle, ref }) => (
         <button
           ref={ref as (el: HTMLButtonElement | null) => void}
@@ -718,6 +725,7 @@ function Composer(props: {
             <Popover
               open={reposOpen}
               setOpen={setReposOpen}
+              placement="above"
               trigger={({ toggle, ref }) => (
                 <button
                   ref={ref as (el: HTMLButtonElement | null) => void}
@@ -776,6 +784,7 @@ function Composer(props: {
               title="Agent"
               icon={<Icon name="agent" />}
               value={props.agent}
+              placement="above"
               onChange={(value) => props.setAgent(value as AgentKind)}
               options={[
                 { value: "claude_code", label: "Claude" },
@@ -786,6 +795,7 @@ function Composer(props: {
             <Popover
               open={permOpen}
               setOpen={setPermOpen}
+              placement="above"
               trigger={({ toggle, ref }) => (
                 <button
                   ref={ref as (el: HTMLButtonElement | null) => void}
@@ -825,6 +835,7 @@ function Composer(props: {
               open={optionsOpen}
               setOpen={setOptionsOpen}
               align="right"
+              placement="above"
               trigger={({ toggle, ref }) => (
                 <button
                   ref={ref as (el: HTMLButtonElement | null) => void}
