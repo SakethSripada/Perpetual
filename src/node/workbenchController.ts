@@ -6,8 +6,11 @@ import type { DaemonApi } from "./protocol";
 import type { DaemonManager } from "./daemonManager";
 import type {
   AgentKind,
+  AgentRunDefaults,
+  AgentStatus,
   AgentThread,
   AppEvent,
+  ApprovalDecision,
   ExecutionBackend,
   GithubAuthStatus,
   GithubRepository,
@@ -15,6 +18,7 @@ import type {
   NewGithubRepo,
   PermissionPolicy,
   SandboxPolicy,
+  SandboxRuntimeStatus,
   WorkbenchDefaults,
   WorkbenchSnapshot,
 } from "./types";
@@ -52,13 +56,29 @@ type WebviewMessage =
   | { type: "openSettings" | "openPanel" }
   | { type: "deleteQueuedTurn"; id: string }
   | { type: "updateQueuedTurn"; id: string; message: string }
-  | { type: "reorderQueuedTurns"; threadId: string; orderedIds: string[] };
+  | { type: "reorderQueuedTurns"; threadId: string; orderedIds: string[] }
+  | { type: "resolveApproval"; id: string; decision: ApprovalDecision };
+
+// Agent/sandbox detection shells out to CLIs, so we cache it briefly to keep the
+// frequent event-driven refreshes from re-probing on every tick.
+const DETECTION_TTL_MS = 15_000;
+
+type DetectionCache = {
+  at: number;
+  agents: AgentStatus[];
+  runDefaults: AgentRunDefaults[];
+  limitPolicy: LimitPolicy | null;
+  sandboxPolicy: SandboxPolicy | null;
+  sandboxRuntime: SandboxRuntimeStatus | null;
+};
 
 export class WorkbenchController implements vscode.Disposable {
   private readonly snapshots = new vscode.EventEmitter<WorkbenchSnapshot>();
   private refreshTimer: NodeJS.Timeout | null = null;
   private lastSyncedSettings = "";
   private disposed = false;
+  private detectionCache: DetectionCache | null = null;
+  private reposConnected = false;
 
   readonly onSnapshot = this.snapshots.event;
 
@@ -73,6 +93,7 @@ export class WorkbenchController implements vscode.Disposable {
       vscode.workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration("agentmanager")) {
           this.lastSyncedSettings = "";
+          this.detectionCache = null;
           void this.refresh();
         }
       })
@@ -88,8 +109,13 @@ export class WorkbenchController implements vscode.Disposable {
   async handleMessage(message: WebviewMessage, reply?: WebviewReply): Promise<void> {
     try {
       switch (message.type) {
-        case "ready":
         case "refresh":
+          // Manual refresh should re-probe agents/sandbox, not serve the cache.
+          this.detectionCache = null;
+          this.reposConnected = false;
+          await this.refresh();
+          return;
+        case "ready":
           await this.refresh();
           return;
         case "newSession":
@@ -133,11 +159,13 @@ export class WorkbenchController implements vscode.Disposable {
         case "setLimitPolicy":
           await this.withClient((client) => client.setLimitPolicy(message.policy));
           this.lastSyncedSettings = "";
+          this.detectionCache = null;
           await this.refresh();
           return;
         case "setSandboxPolicy":
           await this.withClient((client) => client.setSandboxPolicy(message.policy));
           this.lastSyncedSettings = "";
+          this.detectionCache = null;
           await this.refresh();
           return;
         case "sandboxLogin":
@@ -162,6 +190,10 @@ export class WorkbenchController implements vscode.Disposable {
           return;
         case "reorderQueuedTurns":
           await this.withClient((client) => client.reorderQueuedTurns(message.threadId, message.orderedIds));
+          await this.refresh();
+          return;
+        case "resolveApproval":
+          await this.withClient((client) => client.resolveApproval(message.id, message.decision));
           await this.refresh();
           return;
       }
@@ -231,21 +263,21 @@ export class WorkbenchController implements vscode.Disposable {
       const client = await this.daemon.getClient();
       await this.syncSettings(client);
       const project = await client.ensureWorkbenchProject();
-      await this.autoConnectWorkspaceRepos(client, project.id);
+      // Connecting workspace repos shells out to git and rarely changes mid-session;
+      // do it once rather than on every event-driven refresh.
+      if (!this.reposConnected) {
+        await this.autoConnectWorkspaceRepos(client, project.id);
+        this.reposConnected = true;
+      }
 
-      const [threads, repos, agents, runDefaults, limitPolicy, sandboxPolicy, sandboxRuntime] =
-        await Promise.all([
-          client.listAgentThreads(project.id),
-          client.listRepos(project.id),
-          client.detectAgents().catch((err) => {
-            this.output.appendLine(`[workbench] agent detection failed: ${formatError(err)}`);
-            return [];
-          }),
-          client.agentRunDefaults().catch(() => []),
-          client.getLimitPolicy().catch(() => null),
-          client.getSandboxPolicy().catch(() => null),
-          client.detectSandboxRuntime().catch(() => null),
-        ]);
+      // Fast path: threads/repos are cheap DB reads; agent + sandbox detection is
+      // expensive (CLI probes) so it comes from a short-lived cache.
+      const [threads, repos, detection] = await Promise.all([
+        client.listAgentThreads(project.id),
+        client.listRepos(project.id),
+        this.detect(client),
+      ]);
+      const { agents, runDefaults, limitPolicy, sandboxPolicy, sandboxRuntime } = detection;
 
       const selectedThreadId = pickSelectedThread(
         this.context.workspaceState.get<string | null>(SELECTED_THREAD_KEY, null),
@@ -414,6 +446,54 @@ export class WorkbenchController implements vscode.Disposable {
     return fn(client);
   }
 
+  private detectInflight: Promise<DetectionCache> | null = null;
+
+  /**
+   * Agent/sandbox detection shells out to CLIs and can take seconds, so it must
+   * never block a snapshot. Serve the last-known values immediately; when stale,
+   * kick off a background re-probe that fires its own refresh when it lands. Only
+   * the very first call (no cache at all) awaits.
+   */
+  private async detect(client: DaemonApi): Promise<DetectionCache> {
+    const cached = this.detectionCache;
+    if (cached) {
+      if (Date.now() - cached.at >= DETECTION_TTL_MS && !this.detectInflight) {
+        void this.runDetection(client).then(() => void this.refresh());
+      }
+      return cached;
+    }
+    return this.runDetection(client);
+  }
+
+  private runDetection(client: DaemonApi): Promise<DetectionCache> {
+    if (this.detectInflight) return this.detectInflight;
+    this.detectInflight = (async () => {
+      const [agents, runDefaults, limitPolicy, sandboxPolicy, sandboxRuntime] = await Promise.all([
+        client.detectAgents().catch((err) => {
+          this.output.appendLine(`[workbench] agent detection failed: ${formatError(err)}`);
+          return [];
+        }),
+        client.agentRunDefaults().catch(() => []),
+        client.getLimitPolicy().catch(() => null),
+        client.getSandboxPolicy().catch(() => null),
+        client.detectSandboxRuntime().catch(() => null),
+      ]);
+      const next: DetectionCache = {
+        at: Date.now(),
+        agents,
+        runDefaults,
+        limitPolicy,
+        sandboxPolicy,
+        sandboxRuntime,
+      };
+      this.detectionCache = next;
+      return next;
+    })().finally(() => {
+      this.detectInflight = null;
+    });
+    return this.detectInflight;
+  }
+
   private async syncSettings(client: DaemonApi): Promise<void> {
     const settings = getSettingsSnapshot();
     const encoded = JSON.stringify(settings);
@@ -452,11 +532,19 @@ export class WorkbenchController implements vscode.Disposable {
 
   private onDaemonEvent(event: AppEvent): void {
     if (event.type === "activity") return;
+    // Approvals are interactive — surface them immediately. Streaming thread
+    // events are coalesced just enough to avoid thrashing the webview.
+    const delay =
+      event.type === "approval_requested" || event.type === "approval_resolved"
+        ? 0
+        : event.type === "agent_thread_event"
+          ? 150
+          : 80;
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
     this.refreshTimer = setTimeout(() => {
       this.refreshTimer = null;
       void this.refresh();
-    }, event.type === "agent_thread_event" ? 350 : 100);
+    }, delay);
   }
 
   private notice(reply: WebviewReply | undefined, message: string): void {
@@ -471,7 +559,7 @@ export class WorkbenchController implements vscode.Disposable {
 }
 
 async function loadThreadDetails(client: DaemonApi, threadId: string, output: vscode.OutputChannel) {
-  const [events, repos, turns, queued, diff] = await Promise.all([
+  const [events, repos, turns, queued, diff, approvals] = await Promise.all([
     client.listThreadEvents(threadId).catch((err) => {
       output.appendLine(`[workbench] listThreadEvents failed: ${formatError(err)}`);
       return [];
@@ -480,8 +568,16 @@ async function loadThreadDetails(client: DaemonApi, threadId: string, output: vs
     client.listThreadTurns(threadId).catch(() => []),
     client.listQueuedTurns(threadId).catch(() => []),
     client.threadDiff(threadId).catch(() => null),
+    client.listPendingApprovals().catch(() => []),
   ]);
-  return { events, repos, turns, queued, diff };
+  return {
+    events,
+    repos,
+    turns,
+    queued,
+    diff,
+    approvals: approvals.filter((approval) => approval.thread_id === threadId),
+  };
 }
 
 function emptySnapshot(trusted: boolean, defaults: WorkbenchDefaults, error: string): WorkbenchSnapshot {

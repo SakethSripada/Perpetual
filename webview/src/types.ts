@@ -174,12 +174,33 @@ export interface AgentThreadDiff {
   repos: AgentThreadRepoDiff[];
 }
 
+export type ApprovalKind = "command" | "file_change" | "tool";
+export type ApprovalDecision = "allow" | "allow_for_session" | "deny" | "abort";
+
+export interface ApprovalRequest {
+  id: string;
+  agent: AgentKind;
+  project_id?: string | null;
+  work_node_id?: string | null;
+  task_id?: string | null;
+  thread_id?: string | null;
+  session_id?: string | null;
+  kind: ApprovalKind;
+  tool_name: string;
+  command?: string[] | null;
+  cwd?: string | null;
+  input: unknown;
+  reason?: string | null;
+  created_at: string;
+}
+
 export interface ThreadDetails {
   events: AgentThreadEvent[];
   repos: AgentThreadRepo[];
   turns: AgentTurn[];
   queued: QueuedTurn[];
   diff: AgentThreadDiff | null;
+  approvals: ApprovalRequest[];
 }
 
 export interface WorkbenchSnapshot {

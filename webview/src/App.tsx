@@ -3,6 +3,8 @@ import type { CSSProperties, ReactNode } from "react";
 import type {
   AgentKind,
   AgentThread,
+  ApprovalDecision,
+  ApprovalRequest,
   AvailabilityState,
   ExecutionBackend,
   ExtensionMessage,
@@ -13,6 +15,9 @@ import type {
   WorkbenchSnapshot,
 } from "./types";
 import { BrandMark, Icon } from "./icons";
+import { Markdown } from "./markdown";
+
+type PendingMessage = { id: string; text: string };
 
 type VsCodeApi = {
   postMessage(message: unknown): void;
@@ -49,6 +54,12 @@ export default function App() {
   const [githubOpen, setGithubOpen] = useState(false);
   const [githubRepos, setGithubRepos] = useState<GithubRepository[]>([]);
   const [githubLoading, setGithubLoading] = useState(false);
+  // Optimistically-rendered user messages: shown the instant the user sends, then
+  // dropped once the real event for them arrives in a snapshot.
+  const [pending, setPending] = useState<PendingMessage[]>([]);
+  // Optimistic thread navigation: reflect the clicked thread instantly instead of
+  // waiting for the round-trip. `undefined` means "no navigation in flight".
+  const [navThreadId, setNavThreadId] = useState<string | null | undefined>(undefined);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -57,6 +68,19 @@ export default function App() {
       if (incoming.type === "snapshot") {
         setSnapshot(incoming.snapshot);
         if (incoming.snapshot.error) setNotice(incoming.snapshot.error);
+        // Clear the optimistic navigation once the daemon agrees on the selection.
+        setNavThreadId((nav) => (nav === undefined || nav === incoming.snapshot.selectedThreadId ? undefined : nav));
+        // Drop optimistic bubbles once the real message lands — either as a user
+        // event (sent immediately) or as a queued turn (sent while running).
+        const events = incoming.snapshot.details?.events ?? [];
+        const queued = incoming.snapshot.details?.queued ?? [];
+        setPending((prev) =>
+          prev.filter(
+            (item) =>
+              !events.some((e) => e.role === "user" && (e.text ?? "").trim() === item.text) &&
+              !queued.some((q) => q.message.trim() === item.text)
+          )
+        );
         return;
       }
       if (incoming.type === "githubRepos") {
@@ -78,10 +102,14 @@ export default function App() {
     return () => window.removeEventListener("message", onMessage);
   }, []);
 
+  const effectiveSelectedId = navThreadId !== undefined ? navThreadId : snapshot?.selectedThreadId ?? null;
   const selectedThread = useMemo(
-    () => snapshot?.threads.find((thread) => thread.id === snapshot.selectedThreadId) ?? null,
-    [snapshot]
+    () => snapshot?.threads.find((thread) => thread.id === effectiveSelectedId) ?? null,
+    [snapshot, effectiveSelectedId]
   );
+  // Details belong to the daemon's current selection; while navigating to a
+  // different thread they're stale, so we show a loading state instead.
+  const navigating = navThreadId !== undefined && navThreadId !== (snapshot?.selectedThreadId ?? null);
   useEffect(() => {
     if (!snapshot) return;
     const nextAgent = selectedThread?.preferred_agent ?? selectedThread?.active_agent ?? snapshot.defaults.agent;
@@ -96,14 +124,14 @@ export default function App() {
     } else if (!selectedThread) {
       setRepoIds(snapshot.repos.map((repo) => repo.id));
     }
-  }, [snapshot?.selectedThreadId, snapshot?.repos.length]);
+  }, [effectiveSelectedId, snapshot?.repos.length]);
 
   useEffect(() => {
     transcriptRef.current?.scrollTo({
       top: transcriptRef.current.scrollHeight,
       behavior: "smooth",
     });
-  }, [snapshot?.details?.events.length, selectedThread?.id]);
+  }, [snapshot?.details?.events.length, selectedThread?.id, pending.length]);
 
   // Surface agent availability changes as a notice instead of an always-on badge.
   const availabilityRef = useRef<Record<string, AvailabilityState>>({});
@@ -124,12 +152,13 @@ export default function App() {
 
   const isRunning = selectedThread?.status === "running";
   const canSend = !!message.trim() && !!snapshot?.trusted;
-  const details = snapshot?.details;
+  const details = navigating ? undefined : snapshot?.details;
 
   const send = () => {
     if (!canSend) return;
     const text = message.trim();
     setMessage("");
+    setPending((prev) => [...prev, { id: `pending-${Date.now()}-${prev.length}`, text }]);
     vscode.postMessage({
       type: "submit",
       message: text,
@@ -154,7 +183,16 @@ export default function App() {
 
   const newSession = () => {
     setHistoryOpen(false);
+    setPending([]);
+    setNavThreadId(undefined);
     vscode.postMessage({ type: "newSession" });
+  };
+
+  const selectThread = (id: string) => {
+    setHistoryOpen(false);
+    setPending([]);
+    setNavThreadId(id);
+    vscode.postMessage({ type: "selectThread", threadId: id });
   };
 
   return (
@@ -170,6 +208,24 @@ export default function App() {
           </div>
         </div>
         <div className="top-actions">
+          {selectedThread && isRunning && (
+            <IconButton
+              title="Stop"
+              onClick={() => vscode.postMessage({ type: "stopThread", threadId: selectedThread.id })}
+            >
+              <Icon name="stop" />
+            </IconButton>
+          )}
+          {selectedThread && (
+            <IconButton
+              title="Delete session"
+              onClick={() =>
+                vscode.postMessage({ type: "deleteThread", threadId: selectedThread.id, force: isRunning })
+              }
+            >
+              <Icon name="trash" />
+            </IconButton>
+          )}
           <IconButton title="New session" onClick={newSession}>
             <Icon name="plus" />
           </IconButton>
@@ -179,10 +235,7 @@ export default function App() {
             snapshot={snapshot}
             selectedThread={selectedThread}
             onNew={newSession}
-            onSelect={(id) => {
-              setHistoryOpen(false);
-              vscode.postMessage({ type: "selectThread", threadId: id });
-            }}
+            onSelect={selectThread}
           />
           <IconButton title="Open in editor" onClick={() => vscode.postMessage({ type: "openPanel" })}>
             <Icon name="window" />
@@ -206,32 +259,11 @@ export default function App() {
       )}
 
       <section className="conversation">
-        {selectedThread && (
-          <div className="thread-bar">
-            <ThreadStatus thread={selectedThread} />
-            <div className="thread-actions">
-              {isRunning && (
-                <IconButton
-                  title="Stop"
-                  onClick={() => vscode.postMessage({ type: "stopThread", threadId: selectedThread.id })}
-                >
-                  <Icon name="stop" />
-                </IconButton>
-              )}
-              <IconButton
-                title="Delete session"
-                onClick={() =>
-                  vscode.postMessage({ type: "deleteThread", threadId: selectedThread.id, force: isRunning })
-                }
-              >
-                <Icon name="trash" />
-              </IconButton>
-            </div>
-          </div>
-        )}
-
         <div className="transcript" ref={transcriptRef}>
-          {!selectedThread && <EmptyState trusted={snapshot?.trusted ?? true} />}
+          {navigating && <div className="thinking">Loading…</div>}
+          {!navigating && !selectedThread && pending.length === 0 && (
+            <EmptyState trusted={snapshot?.trusted ?? true} />
+          )}
           {selectedThread &&
             details?.events.map((event) => (
               <article key={event.id} className={`msg ${messageClass(event.role)}`}>
@@ -239,13 +271,38 @@ export default function App() {
                   <span className="msg-role">{roleLabel(event.role, event.kind, agent)}</span>
                   <time>{formatTime(event.ts)}</time>
                 </div>
-                <div className="msg-body">{event.text || humanize(event.kind)}</div>
+                <div className="msg-body">
+                  {event.text ? <Markdown text={event.text} /> : humanize(event.kind)}
+                </div>
               </article>
             ))}
-          {selectedThread && isRunning && <div className="thinking">Working…</div>}
-          {selectedThread && details && details.events.length === 0 && !isRunning && (
-            <EmptyState trusted={snapshot?.trusted ?? true} compact />
+          {pending.map((item) => (
+            <article key={item.id} className="msg user pending">
+              <div className="msg-head">
+                <span className="msg-role">You</span>
+                <Icon name="clock" className="pending-spinner" />
+              </div>
+              <div className="msg-body">{item.text}</div>
+            </article>
+          ))}
+          {details?.approvals.map((approval) => (
+            <ApprovalCard
+              key={approval.id}
+              approval={approval}
+              onResolve={(decision) =>
+                vscode.postMessage({ type: "resolveApproval", id: approval.id, decision })
+              }
+            />
+          ))}
+          {!navigating && (isRunning || pending.length > 0) && !details?.approvals.length && (
+            <div className="thinking">Working…</div>
           )}
+          {!navigating &&
+            selectedThread &&
+            details &&
+            details.events.length === 0 &&
+            pending.length === 0 &&
+            !isRunning && <EmptyState trusted={snapshot?.trusted ?? true} compact />}
         </div>
 
         {selectedThread && details && (
@@ -518,17 +575,54 @@ function HistoryMenu(props: {
   );
 }
 
-function ThreadStatus({ thread }: { thread: AgentThread }) {
+const APPROVAL_ICON: Record<ApprovalRequest["kind"], "terminal" | "repo" | "agent"> = {
+  command: "terminal",
+  file_change: "repo",
+  tool: "agent",
+};
+
+function ApprovalCard(props: { approval: ApprovalRequest; onResolve(decision: ApprovalDecision): void }) {
+  const { approval } = props;
+  const commandText = approval.command?.join(" ");
+  const title =
+    approval.kind === "command"
+      ? "Run command"
+      : approval.kind === "file_change"
+        ? "Apply file change"
+        : `Use ${approval.tool_name}`;
   return (
-    <div className="thread-status">
-      <span className="history-dot" data-status={thread.status} />
-      <span>{humanize(thread.status)}</span>
-      <span className="dot-sep">·</span>
-      <span>{labelAgent(thread.active_agent ?? thread.preferred_agent)}</span>
-      {thread.handoff_state && thread.handoff_state !== "none" && (
-        <span className="handoff">{humanize(thread.handoff_state)}</span>
-      )}
-    </div>
+    <article className="approval-card">
+      <div className="approval-head">
+        <span className="approval-badge">
+          <Icon name={APPROVAL_ICON[approval.kind]} />
+        </span>
+        <div className="approval-title">
+          <strong>{title}</strong>
+          <small>{labelAgent(approval.agent)} needs your approval</small>
+        </div>
+      </div>
+      {commandText && <pre className="approval-cmd"><code>{commandText}</code></pre>}
+      {approval.cwd && <div className="approval-meta">in {approval.cwd}</div>}
+      {approval.reason && <div className="approval-reason">{approval.reason}</div>}
+      <div className="approval-actions">
+        <button type="button" className="approval-btn allow" onClick={() => props.onResolve("allow")}>
+          <Icon name="check" /> Allow
+        </button>
+        <button
+          type="button"
+          className="approval-btn allow-session"
+          onClick={() => props.onResolve("allow_for_session")}
+        >
+          Allow for session
+        </button>
+        <button type="button" className="approval-btn deny" onClick={() => props.onResolve("deny")}>
+          <Icon name="close" /> Deny
+        </button>
+        <button type="button" className="approval-btn abort" onClick={() => props.onResolve("abort")}>
+          <Icon name="stop" /> Stop
+        </button>
+      </div>
+    </article>
   );
 }
 

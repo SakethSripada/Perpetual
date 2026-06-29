@@ -379,10 +379,33 @@ export interface WorkNodeDiff {
   thread: AgentThreadDiff | null;
 }
 
+export type ApprovalKind = "command" | "file_change" | "tool";
+export type ApprovalDecision = "allow" | "allow_for_session" | "deny" | "abort";
+export type ApprovalResolution = "decided" | "cancelled" | "timed_out";
+
+export interface ApprovalRequest {
+  id: string;
+  agent: AgentKind;
+  project_id?: string | null;
+  work_node_id?: string | null;
+  task_id?: string | null;
+  thread_id?: string | null;
+  session_id?: string | null;
+  kind: ApprovalKind;
+  tool_name: string;
+  command?: string[] | null;
+  cwd?: string | null;
+  input: unknown;
+  reason?: string | null;
+  created_at: string;
+}
+
 export type AppEvent =
   | { type: "agent_thread_created"; data: AgentThread }
   | { type: "agent_thread_updated"; data: AgentThread }
   | { type: "agent_thread_event"; data: AgentThreadEvent }
+  | { type: "approval_requested"; data: ApprovalRequest }
+  | { type: "approval_resolved"; data: { id: string; resolution: ApprovalResolution; decision?: ApprovalDecision | null } }
   | { type: "work_node_created"; data: WorkNode }
   | { type: "work_node_updated"; data: WorkNode }
   | { type: "repo_connected"; data: Repo }
@@ -395,6 +418,7 @@ export interface ThreadDetails {
   turns: AgentTurn[];
   queued: QueuedTurn[];
   diff: AgentThreadDiff | null;
+  approvals: ApprovalRequest[];
 }
 
 export interface WorkbenchSnapshot {

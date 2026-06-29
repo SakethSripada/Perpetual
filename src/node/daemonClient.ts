@@ -330,6 +330,14 @@ export class DaemonClient extends EventEmitter implements DaemonApi {
     expectUnit(await this.requestRaw(variant("stop_agent_thread", { thread_id: threadId })));
   }
 
+  async listPendingApprovals() {
+    return responsePayload(await this.requestRaw(variant("list_pending_approvals")), "pending_approvals");
+  }
+
+  async resolveApproval(id: string, decision: Parameters<DaemonApi["resolveApproval"]>[1]) {
+    expectUnit(await this.requestRaw(variant("resolve_approval", { id, decision })));
+  }
+
   async listThreadEvents(threadId: string) {
     return responsePayload(
       await this.requestRaw(variant("list_thread_events", { thread_id: threadId })),

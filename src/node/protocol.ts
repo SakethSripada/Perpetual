@@ -9,6 +9,8 @@ import type {
   AgentThreadUpdate,
   AgentTurn,
   AppEvent,
+  ApprovalDecision,
+  ApprovalRequest,
   ExecutionBackend,
   GithubAuthStatus,
   GithubRepository,
@@ -123,6 +125,8 @@ export interface DaemonApi {
     message: string
   ): Promise<string | null>;
   stopAgentThread(threadId: string): Promise<void>;
+  listPendingApprovals(): Promise<ApprovalRequest[]>;
+  resolveApproval(id: string, decision: ApprovalDecision): Promise<void>;
   listThreadEvents(threadId: string): Promise<AgentThreadEvent[]>;
   listThreadTurns(threadId: string): Promise<AgentTurn[]>;
   listQueuedTurns(threadId: string): Promise<QueuedTurn[]>;

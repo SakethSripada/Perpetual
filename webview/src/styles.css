@@ -1069,3 +1069,167 @@ textarea {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* ---------- markdown ---------- */
+
+.msg-body .md-p,
+.msg-body .md-h,
+.msg-body .md-list,
+.msg-body .md-pre,
+.msg-body .md-quote {
+  margin: 0;
+}
+.msg-body > :not(:first-child) {
+  margin-top: 8px;
+}
+.msg-body .md-h {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.msg-body .md-list {
+  padding-left: 18px;
+  display: grid;
+  gap: 3px;
+}
+.msg-body .md-quote {
+  border-left: 2px solid var(--am-border);
+  padding-left: 9px;
+  color: var(--am-muted);
+}
+.msg-body .md-hr {
+  border: none;
+  border-top: 1px solid var(--am-border-soft);
+}
+.msg-body a {
+  color: var(--am-accent);
+}
+.md-code {
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-size: 0.92em;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--am-surface-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.md-pre {
+  white-space: pre;
+  overflow-x: auto;
+  padding: 10px 11px;
+  border-radius: var(--am-radius-sm);
+  border: 1px solid var(--am-border-soft);
+  background: var(--am-surface);
+}
+.md-pre code {
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-size: 12px;
+  background: none;
+  padding: 0;
+}
+
+/* ---------- optimistic (pending) message ---------- */
+
+.msg.pending {
+  opacity: 0.7;
+}
+.pending-spinner {
+  color: var(--am-muted);
+  animation: spin 1.2s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---------- approval card ---------- */
+
+.approval-card {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border-radius: var(--am-radius);
+  border: 1px solid color-mix(in srgb, var(--am-warn) 45%, var(--am-border));
+  background: color-mix(in srgb, var(--am-warn) 8%, transparent);
+}
+.approval-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.approval-badge {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  border-radius: 7px;
+  color: var(--am-warn);
+  background: color-mix(in srgb, var(--am-warn) 18%, transparent);
+}
+.approval-title {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+.approval-title strong {
+  font-size: 13px;
+}
+.approval-title small {
+  font-size: 11px;
+  color: var(--am-muted);
+}
+.approval-cmd {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--am-radius-sm);
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--am-border-soft);
+  overflow-x: auto;
+}
+.approval-cmd code {
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-size: 12px;
+}
+.approval-meta,
+.approval-reason {
+  font-size: 11px;
+  color: var(--am-muted);
+  overflow-wrap: anywhere;
+}
+.approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.approval-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: var(--am-radius-sm);
+  border: 1px solid var(--am-border);
+  background: var(--am-surface-2);
+  color: var(--vscode-foreground);
+  cursor: pointer;
+}
+.approval-btn svg {
+  width: 13px;
+  height: 13px;
+}
+.approval-btn:hover {
+  background: var(--am-hover);
+}
+.approval-btn.allow {
+  border-color: color-mix(in srgb, var(--am-ok) 55%, transparent);
+  background: color-mix(in srgb, var(--am-ok) 16%, transparent);
+  color: var(--am-ok);
+}
+.approval-btn.deny,
+.approval-btn.abort {
+  color: var(--vscode-errorForeground, #f85149);
+  border-color: color-mix(in srgb, var(--vscode-errorForeground, #f85149) 45%, transparent);
+}
