@@ -1,21 +1,28 @@
 # AgentManager for VS Code
 
-AgentManager runs Claude Code and Codex sessions from inside VS Code, preserving
-context across agent switches, usage limits, and runtime changes.
+AgentManager is a local VS Code workbench for running Claude Code and Codex on
+the same task. It keeps session context, repository attachments, queued turns,
+approvals, and usage-limit handoffs in one place so you can move between agents
+without rebuilding state.
 
-![AgentManager](media/screenshot-workbench.png)
+![AgentManager workbench](media/screenshot-workbench.svg)
 
 ## Features
 
-- Chat-first AgentManager view in the Activity Bar, with an optional wide editor panel.
-- Pick Claude Code or Codex per session, including model and reasoning controls.
-- Automatic handoff when an agent hits a usage limit, using AgentManager context
-  files so the next agent can continue without starting cold.
-- Connect the current workspace repository or clone GitHub repositories through
-  VS Code's built-in GitHub authentication.
-- Queue follow-up turns while an agent is still running.
-- Run Codex on Host or in Docker Sandbox through Docker's `sbx` CLI.
-- Inspect session status, attached repositories, queued turns, and diffs.
+- Chat-first AgentManager workbench in the Activity Bar, with the same view
+  available as a wide VS Code panel.
+- Per-session agent routing for Claude Code and Codex, including permission,
+  model, reasoning, and runtime controls.
+- Automatic handoff when an agent hits a usage limit, with configurable fallback
+  order, recovery behavior, and retry timing.
+- Local repository attachment plus GitHub repository connection through VS Code's
+  built-in GitHub authentication.
+- Managed workspaces for agent edits, with inline changed-file summaries and
+  quick access to generated worktrees.
+- Queued follow-up turns while an agent is running, including queue editing and
+  reordering.
+- Approval prompts for commands, tools, and file changes that need user consent.
+- Codex runs on the host or inside Docker Sandbox through Docker's `sbx` CLI.
 
 ## Requirements
 
@@ -27,12 +34,33 @@ context across agent switches, usage limits, and runtime changes.
 ## Getting Started
 
 1. Open the AgentManager icon in the Activity Bar.
-2. Attach the current workspace repository, or connect a GitHub repository.
-3. Pick an agent and permission mode.
-4. Send a message.
+2. Attach the current workspace repository, add a local folder, or connect a
+   GitHub repository.
+3. Pick Claude or Codex, then choose the permission mode and optional run
+   settings.
+4. Send a message. If a run is already active, the message is queued as the next
+   turn.
 
 AgentManager creates managed workspaces for agent edits so your original working
 tree stays reviewable.
+
+Use **AgentManager: Open AgentManager Panel** from the Command Palette when you
+want the workbench in VS Code's bottom panel instead of the side bar.
+
+## Configuration
+
+The extension contributes `agentmanager.*` settings for defaults and runtime
+policy:
+
+- `defaultAgent`, `defaultPermission`, `defaultExecutionBackend`,
+  `defaultModel`, and `defaultReasoning` control new sessions.
+- `autoSwitchOnLimit`, `switchBackOnRecovery`, `fallbackPriority`,
+  `resumeWithEarliestAgent`, and `unknownLimitRetrySeconds` control handoff
+  behavior.
+- `sandbox.maxConcurrent`, `sandbox.cpus`, `sandbox.memory`, and
+  `sandbox.networkPreset` control Docker Sandbox runs.
+- `daemonPath` can point at a custom `am-daemon` binary. Empty uses the binary
+  bundled with the extension.
 
 ## Privacy and Security
 
@@ -50,19 +78,22 @@ This is a standalone repository for the VS Code extension. Its TypeScript and
 webview code live here and are edited here directly.
 
 The bundled `am-daemon` binaries (under `bin/<target>/`) are **build artifacts**
-produced by the Rust crates in the separate
-[AgentManager](https://github.com/SakethSripada/AgentManager) monorepo. They are
+produced by the Rust crates in the separate AgentManager monorepo. They are
 committed here so the extension is self-contained and packageable without a Rust
 toolchain.
 
-## Daemon workflow
-
-Edit and rebuild the extension entirely within this repo:
+## Development
 
 ```bash
 npm install
-npm run build      # builds extension + webview into dist/
+npm run build
+npm test
 ```
+
+For iterative work, run `npm run watch:extension` and `npm run watch:webview` in
+separate terminals.
+
+## Daemon workflow
 
 When daemon-side behavior changes in the monorepo and you want those changes in
 the extension, sync the binary **from the monorepo** (you choose when):
