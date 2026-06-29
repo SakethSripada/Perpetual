@@ -88,11 +88,16 @@ textarea {
   gap: 8px;
 }
 
-.brand img {
-  width: 22px;
-  height: 22px;
-  border-radius: 5px;
+.brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
   flex: 0 0 auto;
+  border-radius: 7px;
+  color: var(--vscode-foreground);
+  background: var(--am-surface-2);
 }
 
 .brand-text {
@@ -336,12 +341,16 @@ textarea {
   text-align: center;
   color: var(--am-muted);
 }
-.empty img {
-  width: 40px;
-  height: 40px;
-  border-radius: 9px;
-  opacity: 0.9;
-  margin-bottom: 4px;
+.empty-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  margin-bottom: 6px;
+  border-radius: 14px;
+  color: var(--vscode-foreground);
+  background: var(--am-surface-2);
 }
 .empty strong {
   color: var(--vscode-foreground);
@@ -567,6 +576,20 @@ textarea {
   height: 12px;
   opacity: 0.55;
 }
+.chip-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--am-accent);
+  color: var(--vscode-button-foreground, #fff);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+}
 
 /* Compact icon-only control */
 .icon-chip {
@@ -656,6 +679,7 @@ textarea {
     justify-content: center;
   }
   .chip-btn .chip-label,
+  .chip-btn .chip-count,
   .chip-btn .chip-caret {
     display: none;
   }
@@ -786,8 +810,67 @@ textarea {
   font-size: 12px;
 }
 .field > span {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
   font-size: 11px;
   color: var(--am-muted);
+}
+.field-value {
+  font-style: normal;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+
+/* Sandbox toggle row with its own icon + state */
+.sandbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--am-border);
+  border-radius: var(--am-radius-sm);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+}
+.sandbox-row:hover:not(.disabled) {
+  background: var(--am-hover);
+}
+.sandbox-row svg {
+  flex: 0 0 auto;
+  opacity: 0.85;
+}
+.sandbox-row > span:first-of-type {
+  flex: 1 1 auto;
+}
+.sandbox-state {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--am-muted);
+}
+.sandbox-row.on {
+  border-color: transparent;
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+.sandbox-row.on:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+.sandbox-row.on svg,
+.sandbox-row.on .sandbox-state {
+  opacity: 1;
+  color: var(--vscode-button-foreground);
+}
+.sandbox-row.disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 .field input,
 .field select {

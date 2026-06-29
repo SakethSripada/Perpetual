@@ -12,7 +12,7 @@ import type {
   SandboxPolicy,
   WorkbenchSnapshot,
 } from "./types";
-import { Icon } from "./icons";
+import { BrandMark, Icon } from "./icons";
 
 type VsCodeApi = {
   postMessage(message: unknown): void;
@@ -161,7 +161,9 @@ export default function App() {
     <main className="app-shell">
       <header className="topbar">
         <div className="brand">
-          <img src={iconUri()} alt="" />
+          <span className="brand-mark">
+            <BrandMark size={18} />
+          </span>
           <div className="brand-text">
             <strong>{selectedThread?.title ?? "AgentManager"}</strong>
             <span>{selectedThread ? humanize(selectedThread.status) : "Workbench"}</span>
@@ -562,10 +564,16 @@ function Composer(props: {
   const sandbox = props.snapshot?.sandboxRuntime;
   const repos = props.snapshot?.repos ?? [];
   const selectedRepos = repos.filter((repo) => props.repoIds.includes(repo.id));
+  const reposLabel =
+    selectedRepos.length === 0
+      ? "Connect repos"
+      : selectedRepos.length === 1
+        ? selectedRepos[0].name
+        : `${selectedRepos.length} repos`;
   const reposTitle =
     selectedRepos.length === 0
-      ? "Add context — no repository attached"
-      : `Context: ${selectedRepos.map((repo) => repo.name).join(", ")}`;
+      ? "Connected repos — none attached yet"
+      : `Connected repos: ${selectedRepos.map((repo) => repo.name).join(", ")}`;
   const perm = PERMISSIONS.find((item) => item.value === props.permission) ?? PERMISSIONS[1];
   const optionsActive = sandboxOn || !!props.model.trim() || (!!props.reasoning && props.reasoning !== "medium");
 
@@ -595,18 +603,20 @@ function Composer(props: {
                 <button
                   ref={ref as (el: HTMLButtonElement | null) => void}
                   type="button"
-                  className="icon-chip"
+                  className="chip-btn"
                   title={reposTitle}
-                  aria-label="Add context"
+                  aria-label="Connected repos"
                   onClick={toggle}
                 >
-                  <Icon name="paperclip" />
-                  {selectedRepos.length > 0 && <span className="chip-badge">{selectedRepos.length}</span>}
+                  <Icon name="repo" />
+                  <span className="chip-label">{reposLabel}</span>
+                  {selectedRepos.length > 0 && <span className="chip-count">{selectedRepos.length}</span>}
+                  <Icon name="caret" className="chip-caret" />
                 </button>
               )}
             >
               <div className="menu repo-menu">
-                <div className="menu-head">Context</div>
+                <div className="menu-head">Connected Repos</div>
                 {repos.length === 0 && <div className="menu-empty">No repositories connected</div>}
                 {repos.map((repo) => {
                   const checked = props.repoIds.includes(repo.id);
@@ -712,12 +722,18 @@ function Composer(props: {
               <div className="menu options-menu">
                 <div className="menu-head">Run options</div>
                 <label className="field">
-                  <span>Model</span>
+                  <span>Model{props.model.trim() && <em className="field-value">{prettyModel(props.model)}</em>}</span>
                   <input
+                    list="am-model-suggestions"
                     value={props.model}
                     placeholder="Default model"
                     onChange={(event) => props.setModel(event.target.value)}
                   />
+                  <datalist id="am-model-suggestions">
+                    {modelSuggestions(props.agent).map((name) => (
+                      <option key={name} value={name} />
+                    ))}
+                  </datalist>
                 </label>
                 <label className="field">
                   <span>Reasoning effort</span>
@@ -728,15 +744,18 @@ function Composer(props: {
                     <option value="high">High</option>
                   </select>
                 </label>
-                <label className={sandboxAllowed ? "toggle" : "toggle disabled"} title={sandboxAllowed ? "Run in an isolated Docker sandbox" : "Sandbox is available for Codex"}>
-                  <input
-                    type="checkbox"
-                    checked={sandboxOn}
-                    disabled={!sandboxAllowed}
-                    onChange={(event) => props.setBackend(event.target.checked ? "docker_sandbox" : "host")}
-                  />
+                <button
+                  type="button"
+                  className={`sandbox-row${sandboxOn ? " on" : ""}${sandboxAllowed ? "" : " disabled"}`}
+                  disabled={!sandboxAllowed}
+                  aria-pressed={sandboxOn}
+                  title={sandboxAllowed ? "Run in an isolated Docker sandbox" : "Sandbox is available for Codex"}
+                  onClick={() => props.setBackend(sandboxOn ? "host" : "docker_sandbox")}
+                >
+                  <Icon name={sandboxOn ? "cube" : "cubeOff"} />
                   <span>Docker sandbox</span>
-                </label>
+                  <span className="sandbox-state">{sandboxOn ? "On" : "Off"}</span>
+                </button>
                 {sandboxOn && sandbox && !sandbox.authenticated && (
                   <button type="button" className="menu-item" onClick={() => props.onSandboxLogin(false)}>
                     Sign in to Sandbox
@@ -1040,7 +1059,9 @@ function GithubSheet(props: {
 function EmptyState({ trusted, compact = false }: { trusted: boolean; compact?: boolean }) {
   return (
     <div className={compact ? "empty compact" : "empty"}>
-      <img src={iconUri()} alt="" />
+      <span className="empty-mark">
+        <BrandMark size={34} />
+      </span>
       <strong>{trusted ? "Start a session" : "Restricted Mode"}</strong>
       <span>
         {trusted ? "Pick an agent and ask anything from the composer below." : "Trust this workspace to run agents."}
@@ -1058,8 +1079,33 @@ function runDefaults(snapshot: WorkbenchSnapshot, agent: AgentKind) {
   return snapshot.runDefaults.find((item) => item.kind === agent) ?? { model: null, reasoning: null };
 }
 
-function iconUri(): string {
-  return document.getElementById("root")?.getAttribute("data-icon") ?? "";
+// Valid model identifiers per agent (kept lowercase so they pass straight to the CLI).
+function modelSuggestions(agent: AgentKind): string[] {
+  return agent === "codex"
+    ? ["gpt-5-codex", "gpt-5", "gpt-4.1", "o3", "o4-mini"]
+    : ["opus", "sonnet", "haiku"];
+}
+
+// Display-only: turn a raw model id into a properly-capitalized name.
+function prettyModel(value: string): string {
+  const v = value.trim();
+  if (!v) return "";
+  const known: Record<string, string> = {
+    opus: "Opus",
+    sonnet: "Sonnet",
+    haiku: "Haiku",
+    "claude-opus-4-8": "Claude Opus 4.8",
+    "claude-sonnet-4-6": "Claude Sonnet 4.6",
+    "claude-haiku-4-5": "Claude Haiku 4.5",
+    "gpt-5": "GPT-5",
+    "gpt-5-codex": "GPT-5 Codex",
+    "gpt-4.1": "GPT-4.1",
+    o3: "o3",
+    "o4-mini": "o4-mini",
+  };
+  const hit = known[v.toLowerCase()];
+  if (hit) return hit;
+  return v.replace(/\bgpt\b/gi, "GPT").replace(/(^|[\s\-_])([a-z])/g, (_match, sep, ch) => sep + ch.toUpperCase());
 }
 
 function sanitizeBackend(agent: AgentKind, backend: ExecutionBackend): ExecutionBackend {

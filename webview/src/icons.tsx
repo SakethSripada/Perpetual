@@ -26,7 +26,8 @@ type IconName =
   | "up"
   | "down"
   | "paperclip"
-  | "cube";
+  | "cube"
+  | "cubeOff";
 
 const PATHS: Record<IconName, string> = {
   plus: "M8 2.5v11M2.5 8h11",
@@ -58,6 +59,7 @@ const PATHS: Record<IconName, string> = {
   down: "M4 6.5 8 10.5l4-4",
   paperclip: "M12.5 7.2 7.7 12a2.6 2.6 0 0 1-3.7-3.7l4.8-4.8a1.6 1.6 0 0 1 2.3 2.3l-4.8 4.8a.6.6 0 0 1-.9-.9l4.3-4.3",
   cube: "M8 1.8 13.5 4.9v6.2L8 14.2 2.5 11.1V4.9zM2.5 4.9 8 8m0 0 5.5-3.1M8 8v6.2",
+  cubeOff: "M8 1.8 13.5 4.9v6.2L8 14.2 2.5 11.1V4.9zM2.5 4.9 8 8m0 0 5.5-3.1M8 8v6.2M2.2 2.2l11.6 11.6",
 };
 
 const FILLED: Partial<Record<IconName, boolean>> = {
@@ -66,6 +68,32 @@ const FILLED: Partial<Record<IconName, boolean>> = {
   bolt: true,
   queue: true,
 };
+
+/** The AgentManager mark — same artwork as the activity-bar icon (media/activity.svg),
+ *  rendered inline so it inherits theme color instead of the heavy PNG tile. */
+export function BrandMark({ className, size = 24 }: { className?: string; size?: number }) {
+  return (
+    <svg
+      className={className}
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M12 4.25v5.6M12 14.15v5.6M7.15 16.55l3.85-3.6M13 12.95l3.85 3.6M7.15 7.45 11 11.05M13 11.05l3.85-3.6"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+      <circle cx="12" cy="12" r="2.35" fill="currentColor" />
+      <circle cx="12" cy="3.5" r="2.2" fill="currentColor" />
+      <circle cx="5.75" cy="17.75" r="2.2" fill="currentColor" />
+      <circle cx="18.25" cy="17.75" r="2.2" fill="currentColor" />
+    </svg>
+  );
+}
 
 export function Icon({ name, className, ...rest }: { name: IconName; className?: string } & SVGProps<SVGSVGElement>) {
   const filled = FILLED[name];
