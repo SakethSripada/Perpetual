@@ -1,9 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import type {
   AgentKind,
-  AgentStatus,
   AgentThread,
+  AvailabilityState,
   ExecutionBackend,
   ExtensionMessage,
   GithubRepository,
@@ -12,6 +12,7 @@ import type {
   SandboxPolicy,
   WorkbenchSnapshot,
 } from "./types";
+import { Icon } from "./icons";
 
 type VsCodeApi = {
   postMessage(message: unknown): void;
@@ -44,6 +45,7 @@ export default function App() {
   const [repoIds, setRepoIds] = useState<string[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [githubOpen, setGithubOpen] = useState(false);
   const [githubRepos, setGithubRepos] = useState<GithubRepository[]>([]);
   const [githubLoading, setGithubLoading] = useState(false);
@@ -80,11 +82,6 @@ export default function App() {
     () => snapshot?.threads.find((thread) => thread.id === snapshot.selectedThreadId) ?? null,
     [snapshot]
   );
-  const selectedAgentStatus = useMemo(
-    () => snapshot?.agents.find((status) => status.kind === agent) ?? null,
-    [snapshot, agent]
-  );
-
   useEffect(() => {
     if (!snapshot) return;
     const nextAgent = selectedThread?.preferred_agent ?? selectedThread?.active_agent ?? snapshot.defaults.agent;
@@ -107,6 +104,23 @@ export default function App() {
       behavior: "smooth",
     });
   }, [snapshot?.details?.events.length, selectedThread?.id]);
+
+  // Surface agent availability changes as a notice instead of an always-on badge.
+  const availabilityRef = useRef<Record<string, AvailabilityState>>({});
+  useEffect(() => {
+    if (!snapshot) return;
+    for (const status of snapshot.agents) {
+      const previous = availabilityRef.current[status.kind];
+      availabilityRef.current[status.kind] = status.availability;
+      if (!previous || previous === status.availability) continue;
+      if (status.availability === "limited") {
+        const until = status.reset_at ? ` until ${formatTime(status.reset_at)}` : "";
+        setNotice(`${labelAgent(status.kind)} is rate limited${until}.`);
+      } else if (previous === "limited" && status.availability === "available") {
+        setNotice(`${labelAgent(status.kind)} is available again.`);
+      }
+    }
+  }, [snapshot]);
 
   const isRunning = selectedThread?.status === "running";
   const canSend = !!message.trim() && !!snapshot?.trusted;
@@ -138,134 +152,115 @@ export default function App() {
     if (!reasoning.trim()) setReasoning(defaults.reasoning ?? "medium");
   };
 
+  const newSession = () => {
+    setHistoryOpen(false);
+    vscode.postMessage({ type: "newSession" });
+  };
+
   return (
     <main className="app-shell">
       <header className="topbar">
         <div className="brand">
           <img src={iconUri()} alt="" />
-          <div>
-            <strong>AgentManager</strong>
-            <span>{selectedThread?.title ?? "Workbench"}</span>
+          <div className="brand-text">
+            <strong>{selectedThread?.title ?? "AgentManager"}</strong>
+            <span>{selectedThread ? humanize(selectedThread.status) : "Workbench"}</span>
           </div>
         </div>
         <div className="top-actions">
-          <button title="New session" onClick={() => vscode.postMessage({ type: "newSession" })}>
-            +
-          </button>
-          <button title="Open wider panel" onClick={() => vscode.postMessage({ type: "openPanel" })}>
-            Panel
-          </button>
-          <button title="Refresh" onClick={() => vscode.postMessage({ type: "refresh" })}>
-            Refresh
-          </button>
-          <button title="Settings" onClick={() => setSettingsOpen(true)}>
-            Settings
-          </button>
+          <IconButton title="New session" onClick={newSession}>
+            <Icon name="plus" />
+          </IconButton>
+          <HistoryMenu
+            open={historyOpen}
+            setOpen={setHistoryOpen}
+            snapshot={snapshot}
+            selectedThread={selectedThread}
+            onNew={newSession}
+            onSelect={(id) => {
+              setHistoryOpen(false);
+              vscode.postMessage({ type: "selectThread", threadId: id });
+            }}
+          />
+          <IconButton title="Open in editor" onClick={() => vscode.postMessage({ type: "openPanel" })}>
+            <Icon name="window" />
+          </IconButton>
+          <IconButton title="Refresh" onClick={() => vscode.postMessage({ type: "refresh" })}>
+            <Icon name="refresh" />
+          </IconButton>
+          <IconButton title="Settings" onClick={() => setSettingsOpen(true)}>
+            <Icon name="settings" />
+          </IconButton>
         </div>
       </header>
 
       {notice && (
         <div className="notice" role="status">
           <span>{notice}</span>
-          <button onClick={() => setNotice(null)} title="Dismiss">
-            x
-          </button>
+          <IconButton title="Dismiss" onClick={() => setNotice(null)}>
+            <Icon name="close" />
+          </IconButton>
         </div>
       )}
 
-      <section className="status-strip">
-        <AgentPill status={snapshot?.agents.find((status) => status.kind === "claude_code") ?? null} />
-        <AgentPill status={snapshot?.agents.find((status) => status.kind === "codex") ?? null} />
-        <span className={snapshot?.sandboxRuntime?.installed ? "runtime ok" : "runtime"}>
-          Docker {snapshot?.sandboxRuntime?.installed ? "ready" : "off"}
-        </span>
-        {selectedThread?.handoff_state && (
-          <span className="handoff">{humanize(selectedThread.handoff_state)}</span>
+      <section className="conversation">
+        {selectedThread && (
+          <div className="thread-bar">
+            <ThreadStatus thread={selectedThread} />
+            <div className="thread-actions">
+              {isRunning && (
+                <IconButton
+                  title="Stop"
+                  onClick={() => vscode.postMessage({ type: "stopThread", threadId: selectedThread.id })}
+                >
+                  <Icon name="stop" />
+                </IconButton>
+              )}
+              <IconButton
+                title="Delete session"
+                onClick={() =>
+                  vscode.postMessage({ type: "deleteThread", threadId: selectedThread.id, force: isRunning })
+                }
+              >
+                <Icon name="trash" />
+              </IconButton>
+            </div>
+          </div>
+        )}
+
+        <div className="transcript" ref={transcriptRef}>
+          {!selectedThread && <EmptyState trusted={snapshot?.trusted ?? true} />}
+          {selectedThread &&
+            details?.events.map((event) => (
+              <article key={event.id} className={`msg ${messageClass(event.role)}`}>
+                <div className="msg-head">
+                  <span className="msg-role">{roleLabel(event.role, event.kind, agent)}</span>
+                  <time>{formatTime(event.ts)}</time>
+                </div>
+                <div className="msg-body">{event.text || humanize(event.kind)}</div>
+              </article>
+            ))}
+          {selectedThread && isRunning && <div className="thinking">Working…</div>}
+          {selectedThread && details && details.events.length === 0 && !isRunning && (
+            <EmptyState trusted={snapshot?.trusted ?? true} compact />
+          )}
+        </div>
+
+        {selectedThread && details && (
+          <RunDetails
+            details={details}
+            onOpenPath={(target) => vscode.postMessage({ type: "openPath", path: target })}
+            onDeleteQueued={(id) => vscode.postMessage({ type: "deleteQueuedTurn", id })}
+            onMoveQueued={(orderedIds) =>
+              vscode.postMessage({ type: "reorderQueuedTurns", threadId: selectedThread.id, orderedIds })
+            }
+          />
         )}
       </section>
-
-      <div className="workspace-grid">
-        <aside className="sessions">
-          <button
-            className={!selectedThread ? "session active" : "session"}
-            onClick={() => vscode.postMessage({ type: "newSession" })}
-          >
-            <span>New session</span>
-            <small>{snapshot?.repos.length ?? 0} repos</small>
-          </button>
-          {snapshot?.threads.map((thread) => (
-            <button
-              key={thread.id}
-              className={thread.id === snapshot.selectedThreadId ? "session active" : "session"}
-              onClick={() => vscode.postMessage({ type: "selectThread", threadId: thread.id })}
-            >
-              <span>{thread.title}</span>
-              <small>
-                {labelAgent(thread.active_agent ?? thread.preferred_agent)} / {humanize(thread.status)}
-              </small>
-            </button>
-          ))}
-        </aside>
-
-        <section className="conversation">
-          <div className="thread-meta">
-            <div>
-              <strong>{selectedThread?.title ?? "Untitled"}</strong>
-              <span>{selectedThread ? humanize(selectedThread.status) : "Draft"}</span>
-            </div>
-            {selectedThread && (
-              <div className="thread-actions">
-                {isRunning && (
-                  <button onClick={() => vscode.postMessage({ type: "stopThread", threadId: selectedThread.id })}>
-                    Stop
-                  </button>
-                )}
-                <button
-                  onClick={() =>
-                    vscode.postMessage({ type: "deleteThread", threadId: selectedThread.id, force: isRunning })
-                  }
-                >
-                  Delete
-                </button>
-              </div>
-            )}
-          </div>
-
-          <div className="transcript" ref={transcriptRef}>
-            {!selectedThread && <EmptyState trusted={snapshot?.trusted ?? true} />}
-            {selectedThread &&
-              details?.events.map((event) => (
-                <article key={event.id} className={`message ${messageClass(event.role)}`}>
-                  <div className="message-meta">
-                    <span>{event.role || event.kind}</span>
-                    <time>{formatTime(event.ts)}</time>
-                  </div>
-                  <div className="message-body">{event.text || humanize(event.kind)}</div>
-                </article>
-              ))}
-            {selectedThread && details && details.events.length === 0 && (
-              <EmptyState trusted={snapshot?.trusted ?? true} compact />
-            )}
-          </div>
-
-          {selectedThread && details && (
-            <RunDetails
-              thread={selectedThread}
-              details={details}
-              onOpenPath={(target) => vscode.postMessage({ type: "openPath", path: target })}
-              onDeleteQueued={(id) => vscode.postMessage({ type: "deleteQueuedTurn", id })}
-              onMoveQueued={(orderedIds) =>
-                vscode.postMessage({ type: "reorderQueuedTurns", threadId: selectedThread.id, orderedIds })
-              }
-            />
-          )}
-        </section>
-      </div>
 
       <Composer
         snapshot={snapshot}
         selectedThread={selectedThread}
-        selectedAgentStatus={selectedAgentStatus}
         message={message}
         setMessage={setMessage}
         agent={agent}
@@ -319,42 +314,54 @@ export default function App() {
   );
 }
 
-function Dropdown(props: {
-  value: string;
-  options: { value: string; label: string }[];
-  onChange(value: string): void;
-  ariaLabel?: string;
-  title?: string;
+function IconButton(props: { title: string; onClick(): void; disabled?: boolean; children: ReactNode }) {
+  return (
+    <button className="icon-btn" type="button" title={props.title} aria-label={props.title} disabled={props.disabled} onClick={props.onClick}>
+      {props.children}
+    </button>
+  );
+}
+
+/** Generic viewport-anchored popover used by toolbar menus. */
+function Popover(props: {
+  trigger: (args: { open: boolean; toggle(): void; ref: (el: HTMLElement | null) => void }) => ReactNode;
+  open: boolean;
+  setOpen(open: boolean): void;
+  align?: "left" | "right";
+  children: ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
+  const align = props.align ?? "left";
 
-  // Position the menu against the viewport so it is never clipped by the
-  // composer footer or the edges of the (often short) webview panel.
   useLayoutEffect(() => {
-    if (!open) return;
+    if (!props.open) return;
     const reposition = () => {
       const trigger = triggerRef.current;
       if (!trigger) return;
       const rect = trigger.getBoundingClientRect();
       const margin = 6;
-      const spaceBelow = window.innerHeight - rect.bottom - margin;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const spaceBelow = vh - rect.bottom - margin;
       const spaceAbove = rect.top - margin;
-      const openUp = spaceBelow < 200 && spaceAbove > spaceBelow;
-      const maxHeight = Math.max(96, Math.min(280, openUp ? spaceAbove : spaceBelow));
+      const openUp = spaceBelow < 220 && spaceAbove > spaceBelow;
+      const maxHeight = Math.max(120, Math.min(360, openUp ? spaceAbove : spaceBelow));
+      const maxWidth = vw - margin * 2;
+      const menuWidth = Math.min(menuRef.current?.offsetWidth ?? rect.width, maxWidth);
+      // Anchor by preferred edge, then clamp fully inside the viewport so menus never clip.
+      const preferredLeft = align === "right" ? rect.right - menuWidth : rect.left;
+      const left = Math.max(margin, Math.min(preferredLeft, vw - menuWidth - margin));
       const next: CSSProperties = {
         position: "fixed",
-        left: rect.left,
-        minWidth: rect.width,
         maxHeight,
+        maxWidth,
+        minWidth: Math.min(rect.width, maxWidth),
+        left,
       };
-      if (openUp) {
-        next.bottom = window.innerHeight - rect.top + margin;
-      } else {
-        next.top = rect.bottom + margin;
-      }
+      if (openUp) next.bottom = vh - rect.top + margin;
+      else next.top = rect.bottom + margin;
       setMenuStyle(next);
     };
     reposition();
@@ -364,18 +371,18 @@ function Dropdown(props: {
       window.removeEventListener("resize", reposition);
       window.removeEventListener("scroll", reposition, true);
     };
-  }, [open]);
+  }, [props.open, align]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!props.open) return;
     const onPointerDown = (event: MouseEvent) => {
       const target = event.target as Node;
       if (!menuRef.current?.contains(target) && !triggerRef.current?.contains(target)) {
-        setOpen(false);
+        props.setOpen(false);
       }
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") props.setOpen(false);
     };
     window.addEventListener("mousedown", onPointerDown);
     window.addEventListener("keydown", onKeyDown);
@@ -383,42 +390,141 @@ function Dropdown(props: {
       window.removeEventListener("mousedown", onPointerDown);
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [open]);
+  }, [props.open]);
 
+  return (
+    <>
+      {props.trigger({
+        open: props.open,
+        toggle: () => props.setOpen(!props.open),
+        ref: (el) => (triggerRef.current = el),
+      })}
+      {props.open && (
+        <div ref={menuRef} className="popover" style={menuStyle}>
+          {props.children}
+        </div>
+      )}
+    </>
+  );
+}
+
+function Dropdown(props: {
+  value: string;
+  options: { value: string; label: string }[];
+  onChange(value: string): void;
+  icon?: ReactNode;
+  ariaLabel?: string;
+  title?: string;
+}) {
+  const [open, setOpen] = useState(false);
   const selected = props.options.find((option) => option.value === props.value);
   return (
-    <div className="dropdown">
-      <button
-        ref={triggerRef}
-        type="button"
-        className="dropdown-trigger"
-        title={props.title}
-        aria-label={props.ariaLabel}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-      >
-        <span className="dropdown-value">{selected?.label ?? props.value}</span>
-        <span className="dropdown-caret" aria-hidden="true">▾</span>
-      </button>
-      {open && (
-        <div ref={menuRef} className="dropdown-menu" style={menuStyle} role="listbox">
-          {props.options.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              role="option"
-              aria-selected={option.value === props.value}
-              className={option.value === props.value ? "dropdown-option selected" : "dropdown-option"}
-              onClick={() => {
-                props.onChange(option.value);
-                setOpen(false);
-              }}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
+    <Popover
+      open={open}
+      setOpen={setOpen}
+      trigger={({ toggle, ref }) => (
+        <button
+          ref={ref as (el: HTMLButtonElement | null) => void}
+          type="button"
+          className="chip-btn"
+          title={props.title}
+          aria-label={props.ariaLabel}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          onClick={toggle}
+        >
+          {props.icon}
+          <span className="chip-label">{selected?.label ?? props.value}</span>
+          <Icon name="caret" className="chip-caret" />
+        </button>
+      )}
+    >
+      <div className="menu" role="listbox">
+        {props.options.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            role="option"
+            aria-selected={option.value === props.value}
+            className={option.value === props.value ? "menu-item selected" : "menu-item"}
+            onClick={() => {
+              props.onChange(option.value);
+              setOpen(false);
+            }}
+          >
+            <span>{option.label}</span>
+            {option.value === props.value && <Icon name="check" />}
+          </button>
+        ))}
+      </div>
+    </Popover>
+  );
+}
+
+function HistoryMenu(props: {
+  open: boolean;
+  setOpen(open: boolean): void;
+  snapshot: WorkbenchSnapshot | null;
+  selectedThread: AgentThread | null;
+  onNew(): void;
+  onSelect(id: string): void;
+}) {
+  const threads = props.snapshot?.threads ?? [];
+  return (
+    <Popover
+      open={props.open}
+      setOpen={props.setOpen}
+      align="right"
+      trigger={({ toggle, ref }) => (
+        <button
+          ref={ref as (el: HTMLButtonElement | null) => void}
+          type="button"
+          className="icon-btn"
+          title="History"
+          aria-label="History"
+          onClick={toggle}
+        >
+          <Icon name="history" />
+        </button>
+      )}
+    >
+      <div className="menu history-menu" role="menu">
+        <button type="button" className="menu-item" onClick={props.onNew}>
+          <Icon name="plus" />
+          <span>New session</span>
+        </button>
+        {threads.length > 0 && <div className="menu-sep" />}
+        {threads.length === 0 && <div className="menu-empty">No sessions yet</div>}
+        {threads.map((thread) => (
+          <button
+            key={thread.id}
+            type="button"
+            className={thread.id === props.selectedThread?.id ? "menu-item selected" : "menu-item"}
+            onClick={() => props.onSelect(thread.id)}
+          >
+            <span className="history-dot" data-status={thread.status} />
+            <span className="history-text">
+              <span className="history-title">{thread.title}</span>
+              <small>
+                {labelAgent(thread.active_agent ?? thread.preferred_agent)} · {humanize(thread.status)}
+              </small>
+            </span>
+          </button>
+        ))}
+      </div>
+    </Popover>
+  );
+}
+
+function ThreadStatus({ thread }: { thread: AgentThread }) {
+  return (
+    <div className="thread-status">
+      <span className="history-dot" data-status={thread.status} />
+      <span>{humanize(thread.status)}</span>
+      <span className="dot-sep">·</span>
+      <span>{labelAgent(thread.active_agent ?? thread.preferred_agent)}</span>
+      {thread.handoff_state && thread.handoff_state !== "none" && (
+        <span className="handoff">{humanize(thread.handoff_state)}</span>
       )}
     </div>
   );
@@ -427,7 +533,6 @@ function Dropdown(props: {
 function Composer(props: {
   snapshot: WorkbenchSnapshot | null;
   selectedThread: AgentThread | null;
-  selectedAgentStatus: AgentStatus | null;
   message: string;
   setMessage(value: string): void;
   agent: AgentKind;
@@ -449,181 +554,267 @@ function Composer(props: {
   onWorkspaceRepos(): void;
   onSandboxLogin(codex: boolean): void;
 }) {
-  const dockerAllowed = props.agent === "codex";
+  const [reposOpen, setReposOpen] = useState(false);
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const sandboxAllowed = props.agent === "codex";
+  const sandboxOn = props.backend === "docker_sandbox";
   const sandbox = props.snapshot?.sandboxRuntime;
+  const repos = props.snapshot?.repos ?? [];
+  const selectedRepos = repos.filter((repo) => props.repoIds.includes(repo.id));
+  const reposLabel =
+    selectedRepos.length === 0
+      ? "No repo"
+      : selectedRepos.length === 1
+        ? selectedRepos[0].name
+        : `${selectedRepos.length} repos`;
+
   return (
     <footer className="composer">
-      <textarea
-        value={props.message}
-        placeholder={props.isRunning ? "Queue a follow-up" : "Do anything"}
-        onChange={(event) => props.setMessage(event.target.value)}
-        onKeyDown={(event) => {
-          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-            event.preventDefault();
-            props.onSend();
-          }
-        }}
-      />
+      <div className="composer-box">
+        <textarea
+          value={props.message}
+          placeholder={props.isRunning ? "Queue a follow-up…" : "Ask anything — ⌘⏎ to send"}
+          rows={1}
+          onChange={(event) => props.setMessage(event.target.value)}
+          onInput={(event) => autoGrow(event.currentTarget)}
+          onKeyDown={(event) => {
+            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+              event.preventDefault();
+              props.onSend();
+            }
+          }}
+        />
 
-      <div className="repo-row">
-        <div className="repo-picks">
-          {props.snapshot?.repos.map((repo) => {
-            const checked = props.repoIds.includes(repo.id);
-            return (
-              <label key={repo.id} className={checked ? "repo-chip selected" : "repo-chip"}>
+        <div className="toolbar">
+          <div className="toolbar-chips">
+          <Popover
+            open={reposOpen}
+            setOpen={setReposOpen}
+            trigger={({ toggle, ref }) => (
+              <button
+                ref={ref as (el: HTMLButtonElement | null) => void}
+                type="button"
+                className="chip-btn"
+                title="Repositories"
+                onClick={toggle}
+              >
+                <Icon name="repo" />
+                <span className="chip-label">{reposLabel}</span>
+                <Icon name="caret" className="chip-caret" />
+              </button>
+            )}
+          >
+            <div className="menu repo-menu">
+              <div className="menu-head">Repositories</div>
+              {repos.length === 0 && <div className="menu-empty">No repositories connected</div>}
+              {repos.map((repo) => {
+                const checked = props.repoIds.includes(repo.id);
+                return (
+                  <label key={repo.id} className={checked ? "menu-item check selected" : "menu-item check"}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={!!props.selectedThread}
+                      onChange={(event) => {
+                        const next = event.target.checked
+                          ? [...props.repoIds, repo.id]
+                          : props.repoIds.filter((id) => id !== repo.id);
+                        props.setRepoIds(next);
+                      }}
+                    />
+                    <span className="history-text">
+                      <span>{repo.name}</span>
+                      <small>{repo.kind === "github" ? "GitHub" : "Local"}</small>
+                    </span>
+                  </label>
+                );
+              })}
+              <div className="menu-sep" />
+              <button type="button" className="menu-item" onClick={() => { setReposOpen(false); props.onWorkspaceRepos(); }}>
+                <Icon name="folder" />
+                <span>Add local folder</span>
+              </button>
+              <button type="button" className="menu-item" onClick={() => { setReposOpen(false); props.onGithub(); }}>
+                <Icon name="github" />
+                <span>Add from GitHub</span>
+              </button>
+            </div>
+          </Popover>
+
+          <Dropdown
+            ariaLabel="Agent"
+            icon={<Icon name="agent" />}
+            value={props.agent}
+            onChange={(value) => props.setAgent(value as AgentKind)}
+            options={[
+              { value: "claude_code", label: "Claude" },
+              { value: "codex", label: "Codex" },
+            ]}
+          />
+
+          <Dropdown
+            ariaLabel="Permission mode"
+            icon={<Icon name="shield" />}
+            value={props.permission}
+            onChange={(value) => props.setPermission(value as PermissionPolicy)}
+            options={[
+              { value: "read_only", label: "Read only" },
+              { value: "workspace_write", label: "Write" },
+              { value: "autonomous", label: "Autonomous" },
+            ]}
+          />
+
+          <button
+            type="button"
+            className={sandboxOn ? "chip-btn toggle-chip on" : "chip-btn toggle-chip"}
+            disabled={!sandboxAllowed}
+            aria-pressed={sandboxOn}
+            title={sandboxAllowed ? "Run in Docker sandbox" : "Sandbox is available for Codex"}
+            onClick={() => props.setBackend(sandboxOn ? "host" : "docker_sandbox")}
+          >
+            <Icon name="cube" />
+            <span className="chip-label">Sandbox</span>
+          </button>
+
+          <Popover
+            open={optionsOpen}
+            setOpen={setOptionsOpen}
+            align="right"
+            trigger={({ toggle, ref }) => (
+              <button
+                ref={ref as (el: HTMLButtonElement | null) => void}
+                type="button"
+                className="icon-btn"
+                title="Run options"
+                onClick={toggle}
+              >
+                <Icon name="sliders" />
+              </button>
+            )}
+          >
+            <div className="menu options-menu">
+              <div className="menu-head">Run options</div>
+              <label className="field">
+                <span>Model</span>
                 <input
-                  type="checkbox"
-                  checked={checked}
-                  disabled={!!props.selectedThread}
-                  onChange={(event) => {
-                    const next = event.target.checked
-                      ? [...props.repoIds, repo.id]
-                      : props.repoIds.filter((id) => id !== repo.id);
-                    props.setRepoIds(next);
-                  }}
+                  value={props.model}
+                  placeholder="Default model"
+                  onChange={(event) => props.setModel(event.target.value)}
                 />
-                {repo.name}
               </label>
-            );
-          })}
-        </div>
-        <button onClick={props.onWorkspaceRepos}>Local</button>
-        <button onClick={props.onGithub}>GitHub</button>
-      </div>
+              <label className="field">
+                <span>Reasoning effort</span>
+                <select value={props.reasoning} onChange={(event) => props.setReasoning(event.target.value)}>
+                  <option value="">Default</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
+              </label>
+              {sandboxOn && sandbox && !sandbox.authenticated && (
+                <button type="button" className="menu-item" onClick={() => props.onSandboxLogin(false)}>
+                  Sign in to Sandbox
+                </button>
+              )}
+              {sandboxOn && sandbox && !sandbox.codex_authenticated && (
+                <button type="button" className="menu-item" onClick={() => props.onSandboxLogin(true)}>
+                  Sign in to Codex Sandbox
+                </button>
+              )}
+            </div>
+          </Popover>
+          </div>
 
-      <div className="control-grid">
-        <div className="segmented">
           <button
-            className={props.agent === "claude_code" ? "selected" : ""}
-            onClick={() => props.setAgent("claude_code")}
+            className="send-btn"
+            type="button"
+            disabled={!props.canSend}
+            title={props.isRunning ? "Queue message" : "Send"}
+            onClick={props.onSend}
           >
-            Claude
-          </button>
-          <button
-            className={props.agent === "codex" ? "selected" : ""}
-            onClick={() => props.setAgent("codex")}
-          >
-            Codex
-          </button>
-        </div>
-
-        <Dropdown
-          ariaLabel="Permission"
-          value={props.permission}
-          onChange={(value) => props.setPermission(value as PermissionPolicy)}
-          options={[
-            { value: "read_only", label: "Read" },
-            { value: "workspace_write", label: "Write" },
-            { value: "autonomous", label: "Autonomous" },
-          ]}
-        />
-
-        <div className="segmented">
-          <button
-            className={props.backend === "host" ? "selected" : ""}
-            onClick={() => props.setBackend("host")}
-          >
-            Host
-          </button>
-          <button
-            className={props.backend === "docker_sandbox" ? "selected" : ""}
-            disabled={!dockerAllowed}
-            onClick={() => props.setBackend("docker_sandbox")}
-            title={dockerAllowed ? "Use Codex Docker Sandbox" : "Claude Code uses Host in this release"}
-          >
-            Docker
+            <Icon name={props.isRunning ? "queue" : "send"} />
           </button>
         </div>
-
-        <Dropdown
-          ariaLabel="Reasoning effort"
-          value={props.reasoning}
-          onChange={props.setReasoning}
-          options={[
-            { value: "", label: "Default" },
-            { value: "low", label: "Low" },
-            { value: "medium", label: "Medium" },
-            { value: "high", label: "High" },
-          ]}
-        />
-
-        <input
-          value={props.model}
-          placeholder="Model"
-          onChange={(event) => props.setModel(event.target.value)}
-        />
-
-        <button className="send" disabled={!props.canSend} onClick={props.onSend}>
-          {props.isRunning ? "Queue" : "Send"}
-        </button>
-      </div>
-
-      <div className="composer-status">
-        <span>{agentStateText(props.selectedAgentStatus)}</span>
-        {props.backend === "docker_sandbox" && sandbox && !sandbox.authenticated && (
-          <button onClick={() => props.onSandboxLogin(false)}>Sign in sbx</button>
-        )}
-        {props.backend === "docker_sandbox" && sandbox && !sandbox.codex_authenticated && (
-          <button onClick={() => props.onSandboxLogin(true)}>Sign in Codex sandbox</button>
-        )}
-        {!dockerAllowed && <span>Claude Code is Host-only in v1.</span>}
       </div>
     </footer>
   );
 }
 
 function RunDetails(props: {
-  thread: AgentThread;
   details: NonNullable<WorkbenchSnapshot["details"]>;
   onOpenPath(path: string): void;
   onDeleteQueued(id: string): void;
   onMoveQueued(orderedIds: string[]): void;
 }) {
+  const [open, setOpen] = useState(false);
   const queuedIds = props.details.queued.map((turn) => turn.id);
+  const diffFiles =
+    props.details.diff?.repos.flatMap((repo) => repo.files.map((file) => ({ ...file, repo: repo.repo_name }))) ?? [];
+  const hasContent = props.details.repos.length > 0 || props.details.queued.length > 0 || diffFiles.length > 0;
+  if (!hasContent) return null;
+
   return (
     <section className="run-details">
-      {props.details.repos.length > 0 && (
-        <div className="detail-band">
+      <button type="button" className="run-toggle" onClick={() => setOpen(!open)}>
+        <Icon name="caret" className={open ? "caret open" : "caret"} />
+        <span>Workspace</span>
+        <span className="run-summary">
+          {props.details.repos.length} repo{props.details.repos.length === 1 ? "" : "s"}
+          {props.details.queued.length > 0 && ` · ${props.details.queued.length} queued`}
+          {diffFiles.length > 0 && ` · ${diffFiles.length} changed`}
+        </span>
+      </button>
+
+      {open && (
+        <div className="run-body">
           {props.details.repos.map((repo) => (
-            <div key={repo.repo_id} className="repo-detail">
-              <span>{repo.repo_name}</span>
+            <div key={repo.repo_id} className="detail-row">
+              <Icon name="repo" />
+              <span className="detail-name">{repo.repo_name}</span>
               <small>{repo.branch ?? repo.workspace_backend}</small>
-              {repo.worktree_path && <button onClick={() => props.onOpenPath(repo.worktree_path!)}>Open</button>}
+              {repo.worktree_path && (
+                <button type="button" className="link-btn" onClick={() => props.onOpenPath(repo.worktree_path!)}>
+                  Open
+                </button>
+              )}
             </div>
           ))}
-        </div>
-      )}
-      {props.details.queued.length > 0 && (
-        <div className="queue-list">
-          <strong>Queued</strong>
-          {props.details.queued.map((turn, index) => (
-            <div className="queue-item" key={turn.id}>
-              <span>{turn.message}</span>
-              <button
-                disabled={index === 0}
-                onClick={() => props.onMoveQueued(move(queuedIds, index, index - 1))}
-              >
-                Up
-              </button>
-              <button
-                disabled={index === queuedIds.length - 1}
-                onClick={() => props.onMoveQueued(move(queuedIds, index, index + 1))}
-              >
-                Down
-              </button>
-              <button onClick={() => props.onDeleteQueued(turn.id)}>Remove</button>
+
+          {props.details.queued.length > 0 && (
+            <div className="queue-list">
+              <div className="detail-head">Queued</div>
+              {props.details.queued.map((turn, index) => (
+                <div className="queue-item" key={turn.id}>
+                  <span>{turn.message}</span>
+                  <IconButton title="Move up" disabled={index === 0} onClick={() => props.onMoveQueued(move(queuedIds, index, index - 1))}>
+                    <Icon name="up" />
+                  </IconButton>
+                  <IconButton
+                    title="Move down"
+                    disabled={index === queuedIds.length - 1}
+                    onClick={() => props.onMoveQueued(move(queuedIds, index, index + 1))}
+                  >
+                    <Icon name="down" />
+                  </IconButton>
+                  <IconButton title="Remove" onClick={() => props.onDeleteQueued(turn.id)}>
+                    <Icon name="close" />
+                  </IconButton>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-      )}
-      {props.details.diff?.repos.some((repo) => repo.files.length > 0) && (
-        <div className="diff-strip">
-          {props.details.diff.repos.map((repo) =>
-            repo.files.map((file) => (
-              <span key={`${repo.repo_id}:${file.path}`}>
-                {file.path} +{file.additions} -{file.deletions}
-              </span>
-            ))
+          )}
+
+          {diffFiles.length > 0 && (
+            <div className="diff-list">
+              <div className="detail-head">Changes</div>
+              {diffFiles.map((file) => (
+                <div key={`${file.repo}:${file.path}`} className="diff-item">
+                  <span className="detail-name">{file.path}</span>
+                  <span className="diff-add">+{file.additions}</span>
+                  <span className="diff-del">-{file.deletions}</span>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       )}
@@ -642,118 +833,129 @@ function SettingsSheet(props: {
   const claudeFirst = limit.agent_priority[0] !== "codex";
 
   return (
-    <div className="sheet-backdrop">
-      <section className="sheet">
+    <div className="sheet-backdrop" onMouseDown={props.onClose}>
+      <section className="sheet" onMouseDown={(event) => event.stopPropagation()}>
         <header>
           <strong>Settings</strong>
-          <button onClick={props.onClose}>x</button>
+          <IconButton title="Close" onClick={props.onClose}>
+            <Icon name="close" />
+          </IconButton>
         </header>
-        <div className="settings-grid">
-          <label>
-            <input
-              type="checkbox"
-              checked={limit.auto_switch}
-              onChange={(event) => setLimit({ ...limit, auto_switch: event.target.checked })}
-            />
-            Auto switch on limits
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={limit.switch_back}
-              onChange={(event) => setLimit({ ...limit, switch_back: event.target.checked })}
-            />
-            Switch back on recovery
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={limit.resume_with_earliest}
-              onChange={(event) => setLimit({ ...limit, resume_with_earliest: event.target.checked })}
-            />
-            Resume with earliest agent
-          </label>
-          <label>
-            Retry seconds
-            <input
-              type="number"
-              min={0}
-              value={limit.unknown_reset_retry_secs}
-              onChange={(event) =>
-                setLimit({ ...limit, unknown_reset_retry_secs: Number(event.target.value) })
-              }
-            />
-          </label>
-          <div className="field-row">
-            <span>Fallback</span>
-            <div className="segmented">
-              <button
-                className={claudeFirst ? "selected" : ""}
-                onClick={() => setLimit({ ...limit, agent_priority: ["claude_code", "codex"] })}
+
+        <div className="sheet-body">
+          <div className="settings-group">
+            <div className="group-title">Limit handling</div>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={limit.auto_switch}
+                onChange={(event) => setLimit({ ...limit, auto_switch: event.target.checked })}
+              />
+              <span>Auto switch agents on limits</span>
+            </label>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={limit.switch_back}
+                onChange={(event) => setLimit({ ...limit, switch_back: event.target.checked })}
+              />
+              <span>Switch back on recovery</span>
+            </label>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={limit.resume_with_earliest}
+                onChange={(event) => setLimit({ ...limit, resume_with_earliest: event.target.checked })}
+              />
+              <span>Resume with earliest agent</span>
+            </label>
+            <div className="field">
+              <span>Fallback order</span>
+              <div className="segmented">
+                <button
+                  type="button"
+                  className={claudeFirst ? "selected" : ""}
+                  onClick={() => setLimit({ ...limit, agent_priority: ["claude_code", "codex"] })}
+                >
+                  Claude first
+                </button>
+                <button
+                  type="button"
+                  className={!claudeFirst ? "selected" : ""}
+                  onClick={() => setLimit({ ...limit, agent_priority: ["codex", "claude_code"] })}
+                >
+                  Codex first
+                </button>
+              </div>
+            </div>
+            <label className="field">
+              <span>Retry seconds</span>
+              <input
+                type="number"
+                min={0}
+                value={limit.unknown_reset_retry_secs}
+                onChange={(event) => setLimit({ ...limit, unknown_reset_retry_secs: Number(event.target.value) })}
+              />
+            </label>
+          </div>
+
+          <div className="settings-group">
+            <div className="group-title">Docker Sandbox</div>
+            <label className="field">
+              <span>Default runtime</span>
+              <select
+                value={sandbox.default_backend}
+                onChange={(event) => setSandbox({ ...sandbox, default_backend: event.target.value as ExecutionBackend })}
               >
-                Claude first
-              </button>
-              <button
-                className={!claudeFirst ? "selected" : ""}
-                onClick={() => setLimit({ ...limit, agent_priority: ["codex", "claude_code"] })}
-              >
-                Codex first
-              </button>
+                <option value="host">Host</option>
+                <option value="docker_sandbox">Docker Sandbox</option>
+              </select>
+            </label>
+            <div className="field-grid">
+              <label className="field">
+                <span>Max sandboxes</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={8}
+                  value={sandbox.max_concurrent_sandboxes}
+                  onChange={(event) => setSandbox({ ...sandbox, max_concurrent_sandboxes: Number(event.target.value) })}
+                />
+              </label>
+              <label className="field">
+                <span>CPUs</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={16}
+                  value={sandbox.cpus}
+                  onChange={(event) => setSandbox({ ...sandbox, cpus: Number(event.target.value) })}
+                />
+              </label>
+              <label className="field">
+                <span>Memory</span>
+                <input value={sandbox.memory} onChange={(event) => setSandbox({ ...sandbox, memory: event.target.value })} />
+              </label>
+              <label className="field">
+                <span>Network</span>
+                <select
+                  value={sandbox.network_preset}
+                  onChange={(event) => setSandbox({ ...sandbox, network_preset: event.target.value })}
+                >
+                  <option value="balanced">Balanced</option>
+                  <option value="open">Open</option>
+                  <option value="locked_down">Locked down</option>
+                </select>
+              </label>
             </div>
           </div>
-          <label>
-            Default runtime
-            <select
-              value={sandbox.default_backend}
-              onChange={(event) =>
-                setSandbox({ ...sandbox, default_backend: event.target.value as ExecutionBackend })
-              }
-            >
-              <option value="host">Host</option>
-              <option value="docker_sandbox">Docker Sandbox</option>
-            </select>
-          </label>
-          <label>
-            Max sandboxes
-            <input
-              type="number"
-              min={1}
-              max={8}
-              value={sandbox.max_concurrent_sandboxes}
-              onChange={(event) =>
-                setSandbox({ ...sandbox, max_concurrent_sandboxes: Number(event.target.value) })
-              }
-            />
-          </label>
-          <label>
-            CPUs
-            <input
-              type="number"
-              min={1}
-              max={16}
-              value={sandbox.cpus}
-              onChange={(event) => setSandbox({ ...sandbox, cpus: Number(event.target.value) })}
-            />
-          </label>
-          <label>
-            Memory
-            <input value={sandbox.memory} onChange={(event) => setSandbox({ ...sandbox, memory: event.target.value })} />
-          </label>
-          <label>
-            Network
-            <select
-              value={sandbox.network_preset}
-              onChange={(event) => setSandbox({ ...sandbox, network_preset: event.target.value })}
-            >
-              <option value="balanced">Balanced</option>
-              <option value="open">Open</option>
-              <option value="locked_down">Locked down</option>
-            </select>
-          </label>
         </div>
+
         <footer>
-          <button onClick={props.onOpenSettings}>VS Code settings</button>
-          <button className="primary" onClick={() => props.onApply(limit, sandbox)}>
+          <button type="button" onClick={props.onOpenSettings}>
+            VS Code settings
+          </button>
+          <button type="button" className="primary" onClick={() => props.onApply(limit, sandbox)}>
             Apply
           </button>
         </footer>
@@ -768,20 +970,32 @@ function GithubSheet(props: {
   onClose(): void;
   onConnect(repo: GithubRepository): void;
 }) {
+  const [query, setQuery] = useState("");
+  const filtered = props.repos.filter((repo) => repo.full_name.toLowerCase().includes(query.toLowerCase()));
   return (
-    <div className="sheet-backdrop">
-      <section className="sheet repo-sheet">
+    <div className="sheet-backdrop" onMouseDown={props.onClose}>
+      <section className="sheet repo-sheet" onMouseDown={(event) => event.stopPropagation()}>
         <header>
-          <strong>GitHub</strong>
-          <button onClick={props.onClose}>x</button>
+          <strong>Add from GitHub</strong>
+          <IconButton title="Close" onClick={props.onClose}>
+            <Icon name="close" />
+          </IconButton>
         </header>
+        <div className="sheet-search">
+          <Icon name="search" />
+          <input autoFocus placeholder="Filter repositories" value={query} onChange={(event) => setQuery(event.target.value)} />
+        </div>
         <div className="github-list">
-          {props.loading && <div className="empty">Loading repositories</div>}
+          {props.loading && <div className="menu-empty">Loading repositories…</div>}
+          {!props.loading && filtered.length === 0 && <div className="menu-empty">No matching repositories</div>}
           {!props.loading &&
-            props.repos.map((repo) => (
-              <button key={repo.id} className="github-row" onClick={() => props.onConnect(repo)}>
-                <span>{repo.full_name}</span>
-                <small>{repo.private ? "Private" : "Public"} / {repo.default_branch}</small>
+            filtered.map((repo) => (
+              <button key={repo.id} type="button" className="github-row" onClick={() => props.onConnect(repo)}>
+                <Icon name={repo.private ? "lock" : "github"} />
+                <span className="history-text">
+                  <span>{repo.full_name}</span>
+                  <small>{repo.private ? "Private" : "Public"} · {repo.default_branch}</small>
+                </span>
               </button>
             ))}
         </div>
@@ -790,24 +1004,21 @@ function GithubSheet(props: {
   );
 }
 
-function AgentPill({ status }: { status: AgentStatus | null }) {
-  const kind = status?.kind ?? "claude_code";
-  const ready = !!status?.installed && !!status?.authenticated && status.availability !== "limited";
-  return (
-    <span className={ready ? "agent-pill ready" : "agent-pill"}>
-      {labelAgent(kind)} {status ? humanize(status.availability) : "unknown"}
-    </span>
-  );
-}
-
 function EmptyState({ trusted, compact = false }: { trusted: boolean; compact?: boolean }) {
   return (
     <div className={compact ? "empty compact" : "empty"}>
       <img src={iconUri()} alt="" />
-      <strong>{trusted ? "Ready" : "Restricted Mode"}</strong>
-      <span>{trusted ? "Start from the composer." : "Trust this workspace to run agents."}</span>
+      <strong>{trusted ? "Start a session" : "Restricted Mode"}</strong>
+      <span>
+        {trusted ? "Pick an agent and ask anything from the composer below." : "Trust this workspace to run agents."}
+      </span>
     </div>
   );
+}
+
+function autoGrow(el: HTMLTextAreaElement) {
+  el.style.height = "auto";
+  el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
 }
 
 function runDefaults(snapshot: WorkbenchSnapshot, agent: AgentKind) {
@@ -839,12 +1050,11 @@ function labelAgent(agent: AgentKind | null | undefined): string {
   }
 }
 
-function agentStateText(status: AgentStatus | null): string {
-  if (!status) return "Agent status unknown";
-  if (!status.installed) return `${labelAgent(status.kind)} CLI not found`;
-  if (!status.authenticated) return `${labelAgent(status.kind)} auth required`;
-  if (status.availability === "limited") return `${labelAgent(status.kind)} limited`;
-  return `${labelAgent(status.kind)} ready`;
+function roleLabel(role: string, kind: string, agent: AgentKind): string {
+  if (role === "user") return "You";
+  if (role === "assistant") return labelAgent(agent);
+  if (role === "system" || !role) return humanize(kind || "system");
+  return humanize(role);
 }
 
 function humanize(value: string): string {
