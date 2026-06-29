@@ -135,12 +135,17 @@ export class WorkbenchController implements vscode.Disposable {
           this.notice(reply, "Stopped the active run.");
           await this.refresh();
           return;
-        case "deleteThread":
+        case "deleteThread": {
           await this.withClient((client) => client.deleteAgentThread(message.threadId, !!message.force));
-          await this.selectThread(null);
+          // Only drop the selection when the open thread is the one being deleted,
+          // so deleting an older session from the menu doesn't yank you out of the
+          // session you're currently viewing.
+          const current = this.context.workspaceState.get<string | null>(SELECTED_THREAD_KEY, null);
+          if (current === message.threadId) await this.selectThread(null);
           this.notice(reply, "Deleted the session.");
           await this.refresh();
           return;
+        }
         case "assignRepos":
           await this.withClient((client) => client.assignThreadRepos(message.threadId, message.repoIds));
           await this.refresh();

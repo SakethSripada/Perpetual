@@ -1,3 +1,4 @@
+import * as fs from "fs";
 import * as vscode from "vscode";
 import type { WorkbenchController, WebviewReply } from "./workbenchController";
 
@@ -80,12 +81,13 @@ export class WorkbenchWebviewProvider implements vscode.WebviewViewProvider, vsc
 
   private html(webview: vscode.Webview): string {
     const nonce = getNonce();
-    const scriptUri = webview.asWebviewUri(
-      vscode.Uri.joinPath(this.context.extensionUri, "dist", "webview", "assets", "index.js")
-    );
-    const styleUri = webview.asWebviewUri(
-      vscode.Uri.joinPath(this.context.extensionUri, "dist", "webview", "assets", "index.css")
-    );
+    const scriptPath = vscode.Uri.joinPath(this.context.extensionUri, "dist", "webview", "assets", "index.js");
+    const stylePath = vscode.Uri.joinPath(this.context.extensionUri, "dist", "webview", "assets", "index.css");
+    // The bundle filenames are stable, so VS Code's webview cache would keep
+    // serving a stale build after a rebuild + reload. Bust the cache by tagging
+    // each URL with the file's mtime — it changes only when the bundle changes.
+    const scriptUri = webview.asWebviewUri(scriptPath).with({ query: `v=${assetVersion(scriptPath)}` });
+    const styleUri = webview.asWebviewUri(stylePath).with({ query: `v=${assetVersion(stylePath)}` });
     const iconUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, "media", "icon.png")
     );
@@ -111,6 +113,14 @@ export class WorkbenchWebviewProvider implements vscode.WebviewViewProvider, vsc
     <script nonce="${nonce}" type="module" src="${scriptUri}"></script>
   </body>
 </html>`;
+  }
+}
+
+function assetVersion(uri: vscode.Uri): string {
+  try {
+    return String(Math.floor(fs.statSync(uri.fsPath).mtimeMs));
+  } catch {
+    return "0";
   }
 }
 

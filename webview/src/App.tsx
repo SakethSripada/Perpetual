@@ -1,8 +1,9 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import type {
   AgentKind,
   AgentThread,
+  AgentThreadEvent,
   ApprovalDecision,
   ApprovalRequest,
   AvailabilityState,
@@ -41,7 +42,6 @@ const vscode =
 
 export default function App() {
   const [snapshot, setSnapshot] = useState<WorkbenchSnapshot | null>(null);
-  const [message, setMessage] = useState("");
   const [agent, setAgent] = useState<AgentKind>("claude_code");
   const [permission, setPermission] = useState<PermissionPolicy>("workspace_write");
   const [backend, setBackend] = useState<ExecutionBackend>("host");
@@ -129,7 +129,7 @@ export default function App() {
   useEffect(() => {
     transcriptRef.current?.scrollTo({
       top: transcriptRef.current.scrollHeight,
-      behavior: "smooth",
+      behavior: "auto",
     });
   }, [snapshot?.details?.events.length, selectedThread?.id, pending.length]);
 
@@ -151,13 +151,13 @@ export default function App() {
   }, [snapshot]);
 
   const isRunning = selectedThread?.status === "running";
-  const canSend = !!message.trim() && !!snapshot?.trusted;
   const details = navigating ? undefined : snapshot?.details;
 
-  const send = () => {
-    if (!canSend) return;
-    const text = message.trim();
-    setMessage("");
+  // The composer owns its own draft text so typing never re-renders the
+  // transcript; it hands us the final text here on submit.
+  const send = (raw: string) => {
+    const text = raw.trim();
+    if (!text || !snapshot?.trusted) return;
     setPending((prev) => [...prev, { id: `pending-${Date.now()}-${prev.length}`, text }]);
     vscode.postMessage({
       type: "submit",
@@ -184,7 +184,8 @@ export default function App() {
   const newSession = () => {
     setHistoryOpen(false);
     setPending([]);
-    setNavThreadId(undefined);
+    // Reflect the empty composer instantly instead of waiting for the round-trip.
+    setNavThreadId(null);
     vscode.postMessage({ type: "newSession" });
   };
 
@@ -193,6 +194,16 @@ export default function App() {
     setPending([]);
     setNavThreadId(id);
     vscode.postMessage({ type: "selectThread", threadId: id });
+  };
+
+  const deleteThread = (id: string, force: boolean) => {
+    // Deleting clears the daemon's selection; if we're removing the open thread,
+    // jump to a fresh session optimistically so the view doesn't flash stale.
+    if (id === effectiveSelectedId) {
+      setPending([]);
+      setNavThreadId(null);
+    }
+    vscode.postMessage({ type: "deleteThread", threadId: id, force });
   };
 
   return (
@@ -208,27 +219,6 @@ export default function App() {
           </div>
         </div>
         <div className="top-actions">
-          {selectedThread && isRunning && (
-            <IconButton
-              title="Stop"
-              onClick={() => vscode.postMessage({ type: "stopThread", threadId: selectedThread.id })}
-            >
-              <Icon name="stop" />
-            </IconButton>
-          )}
-          {selectedThread && (
-            <IconButton
-              title="Delete session"
-              onClick={() =>
-                vscode.postMessage({ type: "deleteThread", threadId: selectedThread.id, force: isRunning })
-              }
-            >
-              <Icon name="trash" />
-            </IconButton>
-          )}
-          <IconButton title="New session" onClick={newSession}>
-            <Icon name="plus" />
-          </IconButton>
           <HistoryMenu
             open={historyOpen}
             setOpen={setHistoryOpen}
@@ -236,15 +226,19 @@ export default function App() {
             selectedThread={selectedThread}
             onNew={newSession}
             onSelect={selectThread}
+            onDelete={deleteThread}
           />
           <IconButton title="Open in editor" onClick={() => vscode.postMessage({ type: "openPanel" })}>
             <Icon name="window" />
           </IconButton>
+          <IconButton title="Settings" onClick={() => setSettingsOpen(true)}>
+            <Icon name="settings" />
+          </IconButton>
           <IconButton title="Refresh" onClick={() => vscode.postMessage({ type: "refresh" })}>
             <Icon name="refresh" />
           </IconButton>
-          <IconButton title="Settings" onClick={() => setSettingsOpen(true)}>
-            <Icon name="settings" />
+          <IconButton title="New session" onClick={newSession}>
+            <Icon name="plus" />
           </IconButton>
         </div>
       </header>
@@ -265,17 +259,7 @@ export default function App() {
             <EmptyState trusted={snapshot?.trusted ?? true} />
           )}
           {selectedThread &&
-            details?.events.map((event) => (
-              <article key={event.id} className={`msg ${messageClass(event.role)}`}>
-                <div className="msg-head">
-                  <span className="msg-role">{roleLabel(event.role, event.kind, agent)}</span>
-                  <time>{formatTime(event.ts)}</time>
-                </div>
-                <div className="msg-body">
-                  {event.text ? <Markdown text={event.text} /> : humanize(event.kind)}
-                </div>
-              </article>
-            ))}
+            details?.events.map((event) => <MessageView key={event.id} event={event} agent={agent} />)}
           {pending.map((item) => (
             <article key={item.id} className="msg user pending">
               <div className="msg-head">
@@ -320,8 +304,6 @@ export default function App() {
       <Composer
         snapshot={snapshot}
         selectedThread={selectedThread}
-        message={message}
-        setMessage={setMessage}
         agent={agent}
         setAgent={pickAgent}
         permission={permission}
@@ -335,8 +317,8 @@ export default function App() {
         repoIds={repoIds}
         setRepoIds={setRepoIds}
         isRunning={isRunning}
-        canSend={canSend}
         onSend={send}
+        onStop={() => selectedThread && vscode.postMessage({ type: "stopThread", threadId: selectedThread.id })}
         onGithub={() => {
           setGithubLoading(true);
           vscode.postMessage({ type: "githubList" });
@@ -372,6 +354,20 @@ export default function App() {
     </main>
   );
 }
+
+// One transcript row. Memoized so a snapshot tick only re-renders the messages
+// that actually changed — an unchanged message keeps its parsed Markdown.
+const MessageView = memo(function MessageView({ event, agent }: { event: AgentThreadEvent; agent: AgentKind }) {
+  return (
+    <article className={`msg ${messageClass(event.role)}`}>
+      <div className="msg-head">
+        <span className="msg-role">{roleLabel(event.role, event.kind, agent)}</span>
+        <time>{formatTime(event.ts)}</time>
+      </div>
+      <div className="msg-body">{event.text ? <Markdown text={event.text} /> : humanize(event.kind)}</div>
+    </article>
+  );
+});
 
 function IconButton(props: { title: string; onClick(): void; disabled?: boolean; children: ReactNode }) {
   return (
@@ -527,6 +523,7 @@ function HistoryMenu(props: {
   selectedThread: AgentThread | null;
   onNew(): void;
   onSelect(id: string): void;
+  onDelete(id: string, force: boolean): void;
 }) {
   const threads = props.snapshot?.threads ?? [];
   return (
@@ -539,8 +536,8 @@ function HistoryMenu(props: {
           ref={ref as (el: HTMLButtonElement | null) => void}
           type="button"
           className="icon-btn"
-          title="History"
-          aria-label="History"
+          title="Sessions"
+          aria-label="Sessions"
           onClick={toggle}
         >
           <Icon name="history" />
@@ -548,28 +545,47 @@ function HistoryMenu(props: {
       )}
     >
       <div className="menu history-menu" role="menu">
-        <button type="button" className="menu-item" onClick={props.onNew}>
+        <button type="button" className="menu-item new-session" onClick={props.onNew}>
           <Icon name="plus" />
           <span>New session</span>
         </button>
-        {threads.length > 0 && <div className="menu-sep" />}
+        <div className="menu-sep" />
+        <div className="menu-head">Sessions</div>
         {threads.length === 0 && <div className="menu-empty">No sessions yet</div>}
-        {threads.map((thread) => (
-          <button
-            key={thread.id}
-            type="button"
-            className={thread.id === props.selectedThread?.id ? "menu-item selected" : "menu-item"}
-            onClick={() => props.onSelect(thread.id)}
-          >
-            <span className="history-dot" data-status={thread.status} />
-            <span className="history-text">
-              <span className="history-title">{thread.title}</span>
-              <small>
-                {labelAgent(thread.active_agent ?? thread.preferred_agent)} · {humanize(thread.status)}
-              </small>
-            </span>
-          </button>
-        ))}
+        {threads.map((thread) => {
+          const running = thread.status === "running";
+          const selected = thread.id === props.selectedThread?.id;
+          return (
+            <div key={thread.id} className={selected ? "history-row selected" : "history-row"}>
+              <button
+                type="button"
+                className="history-pick"
+                onClick={() => props.onSelect(thread.id)}
+                title={thread.title}
+              >
+                <span className="history-dot" data-status={thread.status} />
+                <span className="history-text">
+                  <span className="history-title">{thread.title}</span>
+                  <small>
+                    {labelAgent(thread.active_agent ?? thread.preferred_agent)} · {humanize(thread.status)}
+                  </small>
+                </span>
+              </button>
+              <button
+                type="button"
+                className="history-del"
+                title={running ? "Stop and delete session" : "Delete session"}
+                aria-label="Delete session"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  props.onDelete(thread.id, running);
+                }}
+              >
+                <Icon name="trash" />
+              </button>
+            </div>
+          );
+        })}
       </div>
     </Popover>
   );
@@ -605,21 +621,22 @@ function ApprovalCard(props: { approval: ApprovalRequest; onResolve(decision: Ap
       {approval.cwd && <div className="approval-meta">in {approval.cwd}</div>}
       {approval.reason && <div className="approval-reason">{approval.reason}</div>}
       <div className="approval-actions">
-        <button type="button" className="approval-btn allow" onClick={() => props.onResolve("allow")}>
-          <Icon name="check" /> Allow
+        <button type="button" className="approval-btn allow" title="Allow once" onClick={() => props.onResolve("allow")}>
+          <Icon name="check" />
+          <span>Allow</span>
+        </button>
+        <button type="button" className="approval-btn deny" title="Deny this request" onClick={() => props.onResolve("deny")}>
+          <Icon name="close" />
+          <span>Deny</span>
         </button>
         <button
           type="button"
-          className="approval-btn allow-session"
+          className="approval-btn session"
+          title="Allow for the rest of this session"
           onClick={() => props.onResolve("allow_for_session")}
         >
-          Allow for session
-        </button>
-        <button type="button" className="approval-btn deny" onClick={() => props.onResolve("deny")}>
-          <Icon name="close" /> Deny
-        </button>
-        <button type="button" className="approval-btn abort" onClick={() => props.onResolve("abort")}>
-          <Icon name="stop" /> Stop
+          <Icon name="shield" />
+          <span>Session</span>
         </button>
       </div>
     </article>
@@ -629,8 +646,6 @@ function ApprovalCard(props: { approval: ApprovalRequest; onResolve(decision: Ap
 function Composer(props: {
   snapshot: WorkbenchSnapshot | null;
   selectedThread: AgentThread | null;
-  message: string;
-  setMessage(value: string): void;
   agent: AgentKind;
   setAgent(value: AgentKind): void;
   permission: PermissionPolicy;
@@ -644,8 +659,8 @@ function Composer(props: {
   repoIds: string[];
   setRepoIds(value: string[]): void;
   isRunning: boolean;
-  canSend: boolean;
-  onSend(): void;
+  onSend(text: string): void;
+  onStop(): void;
   onGithub(): void;
   onWorkspaceRepos(): void;
   onSandboxLogin(codex: boolean): void;
@@ -653,6 +668,22 @@ function Composer(props: {
   const [reposOpen, setReposOpen] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [permOpen, setPermOpen] = useState(false);
+  // The draft lives here, not in App, so each keystroke re-renders only the
+  // composer — never the transcript. App receives the text only on submit.
+  const [draft, setDraft] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const canSend = !!draft.trim() && !!props.snapshot?.trusted;
+  // While the agent is running and the composer is empty, the action button
+  // turns into a Stop control (matching Claude Code / Codex). Typing turns it
+  // back into a send/queue button.
+  const stopMode = props.isRunning && !draft.trim();
+  const submit = () => {
+    if (!canSend) return;
+    props.onSend(draft);
+    setDraft("");
+    const el = textareaRef.current;
+    if (el) el.style.height = "auto";
+  };
   const sandboxAllowed = props.agent === "codex";
   const sandboxOn = props.backend === "docker_sandbox";
   const sandbox = props.snapshot?.sandboxRuntime;
@@ -675,16 +706,17 @@ function Composer(props: {
     <footer className="composer">
       <div className="composer-box">
         <textarea
-          value={props.message}
+          ref={textareaRef}
+          value={draft}
           placeholder={props.isRunning ? "Queue a follow-up…" : "Ask anything — Enter to send, Shift+Enter for newline"}
           rows={1}
-          onChange={(event) => props.setMessage(event.target.value)}
+          onChange={(event) => setDraft(event.target.value)}
           onInput={(event) => autoGrow(event.currentTarget)}
           onKeyDown={(event) => {
             // Enter sends; Shift+Enter (or ⌘/Ctrl+Enter) inserts a newline.
             if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.nativeEvent.isComposing) {
               event.preventDefault();
-              props.onSend();
+              submit();
             }
           }}
         />
@@ -866,14 +898,14 @@ function Composer(props: {
           </div>
 
           <button
-            className="send-btn"
+            className={`send-btn${stopMode ? " stop" : ""}`}
             type="button"
-            disabled={!props.canSend}
-            title={props.isRunning ? "Queue message (Enter)" : "Send (Enter)"}
-            aria-label={props.isRunning ? "Queue message" : "Send"}
-            onClick={props.onSend}
+            disabled={!stopMode && !canSend}
+            title={stopMode ? "Stop the agent" : props.isRunning ? "Queue message (Enter)" : "Send (Enter)"}
+            aria-label={stopMode ? "Stop" : props.isRunning ? "Queue message" : "Send"}
+            onClick={stopMode ? props.onStop : submit}
           >
-            <Icon name={props.isRunning ? "queue" : "send"} />
+            <Icon name={stopMode ? "stop" : props.isRunning ? "queue" : "send"} />
           </button>
         </div>
       </div>

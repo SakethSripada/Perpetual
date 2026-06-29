@@ -38,8 +38,9 @@ const PATHS: Record<IconName, string> = {
     "M8 4v4l2.5 1.5M2.6 9a5.5 5.5 0 1 0 1.2-4.3M3 3v2.4h2.4",
   window: "M2 3.5h12v9H2zM2 6h12",
   refresh: "M12.5 5A5 5 0 1 0 13 9M13 3v2.4h-2.4",
+  // Stroked 8-tooth cog matching the other line icons (generated for the 16 grid).
   settings:
-    "M6.3 2.4 6 4a4.6 4.6 0 0 0-1.2.7l-1.5-.6-1.3 2.2 1.3 1a4.7 4.7 0 0 0 0 1.4l-1.3 1 1.3 2.2 1.5-.6q.55.43 1.2.7l.3 1.6h2.5l.3-1.6q.65-.27 1.2-.7l1.5.6 1.3-2.2-1.3-1a4.7 4.7 0 0 0 0-1.4l1.3-1-1.3-2.2-1.5.6A4.6 4.6 0 0 0 10 4l-.3-1.6zM8 6.2A1.8 1.8 0 1 1 8 9.8a1.8 1.8 0 0 1 0-3.6z",
+    "M13.91 6.96L13.91 9.04L12.44 8.98L11.84 10.44L12.91 11.44L11.44 12.91L10.44 11.84L8.98 12.44L9.04 13.91L6.96 13.91L7.02 12.44L5.56 11.84L4.56 12.91L3.09 11.44L4.16 10.44L3.56 8.98L2.09 9.04L2.09 6.96L3.56 7.02L4.16 5.56L3.09 4.56L4.56 3.09L5.56 4.16L7.02 3.56L6.96 2.09L9.04 2.09L8.98 3.56L10.44 4.16L11.44 3.09L12.91 4.56L11.84 5.56L12.44 7.02ZM6 8a2 2 0 1 0 4 0a2 2 0 1 0 -4 0Z",
   close: "M3.5 3.5l9 9M12.5 3.5l-9 9",
   stop: "M4 4h8v8H4z",
   trash: "M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5",
@@ -117,7 +118,7 @@ export function Icon({ name, className, ...rest }: { name: IconName; className?:
       aria-hidden="true"
       {...rest}
     >
-      <path d={PATHS[name]} />
+      <path d={PATHS[name]} fillRule="evenodd" clipRule="evenodd" />
     </svg>
   );
 }

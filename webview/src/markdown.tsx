@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { ReactNode } from "react";
 
 /**
@@ -5,10 +6,14 @@ import type { ReactNode } from "react";
  * HTML), so agent output is formatted without any XSS surface. Covers the
  * constructs agents actually emit: fenced/inline code, headings, bold/italic,
  * links, blockquotes, and ordered/unordered lists.
+ *
+ * Memoized on `text`: parsing is pure, so an unchanged message never re-parses
+ * when an unrelated part of the app re-renders (e.g. a snapshot tick). This is
+ * what keeps a long transcript cheap while messages stream in.
  */
-export function Markdown({ text }: { text: string }) {
+export const Markdown = memo(function Markdown({ text }: { text: string }) {
   return <>{renderBlocks(text.replace(/\r\n/g, "\n"))}</>;
-}
+});
 
 function renderBlocks(source: string): ReactNode[] {
   const lines = source.split("\n");
