@@ -136,6 +136,8 @@ export interface AgentThread {
   reasoning: string | null;
   original_agent: AgentKind | null;
   fallback_agent: AgentKind | null;
+  original_model?: string | null;
+  fallback_model?: string | null;
   limit_reset_at: string | null;
   switch_back: boolean;
   handoff_state: string;

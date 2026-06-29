@@ -5,7 +5,7 @@ the same task. It keeps session context, repository attachments, queued turns,
 approvals, and usage-limit handoffs in one place so you can move between agents
 without rebuilding state.
 
-![AgentManager workbench](media/screenshot-workbench.svg)
+![AgentManager workbench](media/screenshot-workbench.png)
 
 ## Features
 

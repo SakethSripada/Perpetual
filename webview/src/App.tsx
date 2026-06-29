@@ -61,6 +61,8 @@ export default function App() {
   // waiting for the round-trip. `undefined` means "no navigation in flight".
   const [navThreadId, setNavThreadId] = useState<string | null | undefined>(undefined);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const runControlsKeyRef = useRef<string>("");
+  const handoffRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
     const onMessage = (event: MessageEvent<ExtensionMessage>) => {
@@ -74,11 +76,15 @@ export default function App() {
         // event (sent immediately) or as a queued turn (sent while running).
         const events = incoming.snapshot.details?.events ?? [];
         const queued = incoming.snapshot.details?.queued ?? [];
+        const selected = incoming.snapshot.threads.find((thread) => thread.id === incoming.snapshot.selectedThreadId);
         setPending((prev) =>
           prev.filter(
             (item) =>
-              !events.some((e) => e.role === "user" && (e.text ?? "").trim() === item.text) &&
-              !queued.some((q) => q.message.trim() === item.text)
+              !selected ||
+              selected.status === "draft" ||
+              (!events.some((e) => e.role === "user" && (e.text ?? "").trim() === item.text) &&
+                !queued.some((q) => q.message.trim() === item.text) &&
+                !events.some((e) => e.kind === "user_message" && (e.text ?? "").trim() === item.text))
           )
         );
         return;
@@ -112,19 +118,78 @@ export default function App() {
   const navigating = navThreadId !== undefined && navThreadId !== (snapshot?.selectedThreadId ?? null);
   useEffect(() => {
     if (!snapshot) return;
-    const nextAgent = selectedThread?.preferred_agent ?? selectedThread?.active_agent ?? snapshot.defaults.agent;
+    const nextAgent = selectedThread?.active_agent ?? selectedThread?.preferred_agent ?? snapshot.defaults.agent;
     const defaults = runDefaults(snapshot, nextAgent);
-    setAgent(nextAgent);
-    setPermission(selectedThread?.permission ?? snapshot.defaults.permission);
-    setBackend(sanitizeBackend(nextAgent, selectedThread?.execution_backend ?? snapshot.defaults.execution_backend));
-    setModel(selectedThread?.model ?? snapshot.defaults.model ?? defaults.model ?? "");
-    setReasoning(selectedThread?.reasoning ?? snapshot.defaults.reasoning ?? defaults.reasoning ?? "medium");
+    const nextPermission = selectedThread?.permission ?? snapshot.defaults.permission;
+    const nextBackend = sanitizeBackend(nextAgent, selectedThread?.execution_backend ?? snapshot.defaults.execution_backend);
+    const nextModel = selectedThread?.model ?? snapshot.defaults.model ?? defaults.model ?? "";
+    const nextReasoning = selectedThread?.reasoning ?? snapshot.defaults.reasoning ?? defaults.reasoning ?? "medium";
+    const runControlsKey = [
+      effectiveSelectedId ?? "new",
+      nextAgent,
+      nextPermission,
+      nextBackend,
+      nextModel,
+      nextReasoning,
+      selectedThread?.handoff_state ?? "",
+    ].join("|");
+    if (runControlsKeyRef.current !== runControlsKey) {
+      runControlsKeyRef.current = runControlsKey;
+      setAgent(nextAgent);
+      setPermission(nextPermission);
+      setBackend(nextBackend);
+      setModel(nextModel);
+      setReasoning(nextReasoning);
+    }
     if (selectedThread && snapshot.details?.repos.length) {
       setRepoIds(snapshot.details.repos.map((repo) => repo.repo_id));
     } else if (!selectedThread) {
       setRepoIds(snapshot.repos.map((repo) => repo.id));
     }
-  }, [effectiveSelectedId, snapshot?.repos.length]);
+  }, [
+    effectiveSelectedId,
+    selectedThread?.active_agent,
+    selectedThread?.preferred_agent,
+    selectedThread?.permission,
+    selectedThread?.execution_backend,
+    selectedThread?.model,
+    selectedThread?.reasoning,
+    selectedThread?.handoff_state,
+    snapshot?.defaults.agent,
+    snapshot?.defaults.permission,
+    snapshot?.defaults.execution_backend,
+    snapshot?.defaults.model,
+    snapshot?.defaults.reasoning,
+    snapshot?.repos.length,
+    snapshot?.runDefaults,
+  ]);
+
+  useEffect(() => {
+    if (!selectedThread) return;
+    const fallback = selectedThread.fallback_agent;
+    const active = selectedThread.active_agent;
+    const original = selectedThread.original_agent;
+    const isFallbackActive =
+      !!fallback && active === fallback && (selectedThread.handoff_state === "fallback_active" || !!original);
+    const key = isFallbackActive
+      ? `${selectedThread.id}:${original ?? "agent"}:${fallback}:${selectedThread.model ?? ""}`
+      : `${selectedThread.id}:none`;
+    if (handoffRef.current[selectedThread.id] === key) return;
+    handoffRef.current[selectedThread.id] = key;
+    if (!isFallbackActive) return;
+    const modelNote = selectedThread.original_model !== selectedThread.model
+      ? ` (${formatModelSwitch(selectedThread.original_model, selectedThread.model)})`
+      : "";
+    setNotice(`Rate Limit reached, switched to ${labelAgent(fallback)}${modelNote}.`);
+  }, [
+    selectedThread?.id,
+    selectedThread?.active_agent,
+    selectedThread?.original_agent,
+    selectedThread?.fallback_agent,
+    selectedThread?.handoff_state,
+    selectedThread?.model,
+    selectedThread?.original_model,
+  ]);
 
   useEffect(() => {
     transcriptRef.current?.scrollTo({
@@ -142,6 +207,8 @@ export default function App() {
       availabilityRef.current[status.kind] = status.availability;
       if (!previous || previous === status.availability) continue;
       if (status.availability === "limited") {
+        const activeFallback = selectedThread?.fallback_agent && selectedThread.active_agent === selectedThread.fallback_agent;
+        if (activeFallback && status.kind === selectedThread?.original_agent) continue;
         const until = status.reset_at ? ` until ${formatTime(status.reset_at)}` : "";
         setNotice(`${labelAgent(status.kind)} is rate limited${until}.`);
       } else if (previous === "limited" && status.availability === "available") {
@@ -1210,6 +1277,12 @@ function prettyModel(value: string): string {
   const hit = known[v.toLowerCase()];
   if (hit) return hit;
   return v.replace(/\bgpt\b/gi, "GPT").replace(/(^|[\s\-_])([a-z])/g, (_match, sep, ch) => sep + ch.toUpperCase());
+}
+
+function formatModelSwitch(from: string | null | undefined, to: string | null | undefined): string {
+  const fromLabel = from ? prettyModel(from) : "default model";
+  const toLabel = to ? prettyModel(to) : "default model";
+  return `${fromLabel} -> ${toLabel}`;
 }
 
 function sanitizeBackend(agent: AgentKind, backend: ExecutionBackend): ExecutionBackend {
