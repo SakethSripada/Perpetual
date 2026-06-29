@@ -379,12 +379,15 @@ function Popover(props: {
 }) {
   const triggerRef = useRef<HTMLElement | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
+  const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null);
   const align = props.align ?? "left";
   const placement = props.placement ?? "auto";
 
   useLayoutEffect(() => {
-    if (!props.open) return;
+    if (!props.open) {
+      setMenuStyle(null);
+      return;
+    }
     const reposition = () => {
       const trigger = triggerRef.current;
       if (!trigger) return;
@@ -452,7 +455,11 @@ function Popover(props: {
         ref: (el) => (triggerRef.current = el),
       })}
       {props.open && (
-        <div ref={menuRef} className="popover" style={menuStyle}>
+        <div
+          ref={menuRef}
+          className="popover"
+          style={menuStyle ?? { position: "fixed", top: 0, left: 0, visibility: "hidden", pointerEvents: "none" }}
+        >
           {props.children}
         </div>
       )}

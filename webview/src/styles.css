@@ -662,12 +662,14 @@ textarea {
   background: var(--vscode-menu-background, var(--vscode-editorWidget-background, var(--vscode-input-background)));
   color: var(--vscode-menu-foreground, var(--vscode-foreground));
   box-shadow: 0 10px 32px rgba(0, 0, 0, 0.4);
+  overscroll-behavior: contain;
 }
 
 .menu {
   display: flex;
   flex-direction: column;
-  padding: 5px;
+  gap: 2px;
+  padding: 6px;
   min-width: 180px;
 }
 .menu-head {
@@ -693,8 +695,8 @@ textarea {
   align-items: center;
   gap: 8px;
   width: 100%;
-  min-height: 30px;
-  padding: 5px 8px;
+  min-height: 32px;
+  padding: 6px 8px;
   border: 0;
   border-radius: var(--am-radius-sm);
   background: transparent;
@@ -746,11 +748,12 @@ textarea {
 .history-menu {
   width: min(420px, calc(100vw - 16px));
   min-width: min(320px, calc(100vw - 16px));
+  gap: 4px;
   padding: 8px;
 }
 .repo-menu {
-  min-width: 220px;
-  max-width: 320px;
+  min-width: 240px;
+  max-width: 340px;
 }
 .history-menu-head {
   display: flex;
@@ -784,7 +787,7 @@ textarea {
 .history-row {
   display: flex;
   align-items: stretch;
-  gap: 2px;
+  gap: 4px;
   border-radius: var(--am-radius-sm);
 }
 .history-row:hover,
@@ -794,10 +797,10 @@ textarea {
 .history-pick {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   flex: 1 1 auto;
   min-width: 0;
-  padding: 6px 8px;
+  padding: 7px 8px;
   border: 0;
   background: transparent;
   color: inherit;
@@ -831,13 +834,15 @@ textarea {
   align-items: center;
   justify-content: center;
   width: 28px;
+  height: 28px;
+  margin: auto 4px auto 0;
   flex: 0 0 auto;
   border: 0;
   border-radius: var(--am-radius-sm);
   background: transparent;
   color: var(--am-muted);
   cursor: pointer;
-  opacity: 0;
+  opacity: 0.45;
   transition: opacity 0.1s ease, color 0.1s ease, background 0.1s ease;
 }
 .history-row:hover .history-del,
