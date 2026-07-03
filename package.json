@@ -209,6 +209,21 @@
           "default": "medium",
           "description": "Optional reasoning-effort override for new sessions."
         },
+        "agentmanager.defaultLocalProvider": {
+          "type": "string",
+          "enum": [
+            "",
+            "ollama",
+            "lm_studio"
+          ],
+          "default": "",
+          "description": "Optional local model provider for new Codex sessions. Empty uses cloud/default agent behavior."
+        },
+        "agentmanager.defaultLocalBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Optional base URL for the local model provider. Empty uses http://127.0.0.1:11434 for Ollama or http://127.0.0.1:1234 for LM Studio."
+        },
         "agentmanager.autoSwitchOnLimit": {
           "type": "boolean",
           "default": true,

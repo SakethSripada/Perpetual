@@ -15,6 +15,8 @@ without rebuilding state.
   model, reasoning, and runtime controls.
 - Automatic handoff when an agent hits a usage limit, with configurable fallback
   order, recovery behavior, and retry timing.
+- Codex can be pointed at local Ollama or LM Studio models for local-model
+  fallback/continuation when the bundled daemon supports it.
 - Local repository attachment plus GitHub repository connection through VS Code's
   built-in GitHub authentication.
 - Managed workspaces for agent edits, with inline changed-file summaries and
@@ -53,7 +55,8 @@ The extension contributes `agentmanager.*` settings for defaults and runtime
 policy:
 
 - `defaultAgent`, `defaultPermission`, `defaultExecutionBackend`,
-  `defaultModel`, and `defaultReasoning` control new sessions.
+  `defaultModel`, `defaultReasoning`, `defaultLocalProvider`, and
+  `defaultLocalBaseUrl` control new sessions.
 - `autoSwitchOnLimit`, `switchBackOnRecovery`, `fallbackPriority`,
   `resumeWithEarliestAgent`, and `unknownLimitRetrySeconds` control handoff
   behavior.
@@ -114,7 +117,8 @@ automatically.
 
 `vsce package` builds the extension first (via `vscode:prepublish`) and bundles
 the daemon for the chosen target. The `check-daemon` step fails early with the
-sync command if a target's binary is missing.
+sync command if a target's binary is missing or if it does not include local
+model fallback and diff support.
 
 ```bash
 npm install

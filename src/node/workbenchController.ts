@@ -15,6 +15,7 @@ import type {
   GithubAuthStatus,
   GithubRepository,
   LimitPolicy,
+  LocalModelProvider,
   NewGithubRepo,
   PermissionPolicy,
   SandboxPolicy,
@@ -38,6 +39,8 @@ type SubmitMessage = {
   executionBackend?: ExecutionBackend;
   model?: string | null;
   reasoning?: string | null;
+  localProvider?: LocalModelProvider | null;
+  localBaseUrl?: string | null;
 };
 
 type WebviewMessage =
@@ -328,8 +331,17 @@ export class WorkbenchController implements vscode.Disposable {
     const agent = message.agent ?? defaults.agent;
     const permission = message.permission ?? defaults.permission;
     const executionBackend = sanitizeBackend(agent, message.executionBackend ?? defaults.execution_backend);
+    const localProvider = agent === "codex"
+      ? sanitizeLocalProvider(message.localProvider ?? defaults.local_provider)
+      : null;
+    const localBaseUrl = localProvider
+      ? blankToNull(message.localBaseUrl ?? defaults.local_base_url) ?? defaultLocalBaseUrl(localProvider)
+      : null;
     const model = blankToNull(message.model ?? defaults.model);
     const reasoning = blankToNull(message.reasoning ?? defaults.reasoning);
+    if (localProvider && !model) {
+      throw new Error("Choose a local model before running with Ollama or LM Studio.");
+    }
 
     const repoIds = message.repoIds ?? [];
     if (message.threadId) {
@@ -339,6 +351,8 @@ export class WorkbenchController implements vscode.Disposable {
         execution_backend: executionBackend,
         model,
         reasoning,
+        local_provider: localProvider,
+        local_base_url: localBaseUrl,
       });
       await client.sendThreadMessage(message.threadId, agent, permission, text);
       await this.selectThread(message.threadId);
@@ -355,6 +369,8 @@ export class WorkbenchController implements vscode.Disposable {
       execution_backend: executionBackend,
       model,
       reasoning,
+      local_provider: localProvider,
+      local_base_url: localBaseUrl,
     });
     await this.selectThread(thread.id);
     await client.runAgentThread(thread.id, agent, permission, text, executionBackend);
@@ -631,6 +647,8 @@ function getDefaults(): WorkbenchDefaults {
     execution_backend: config.get<ExecutionBackend>("defaultExecutionBackend", "host"),
     model: blankToNull(config.get<string>("defaultModel", "")),
     reasoning: blankToNull(config.get<string>("defaultReasoning", "medium")),
+    local_provider: sanitizeLocalProvider(config.get<string>("defaultLocalProvider", "")),
+    local_base_url: blankToNull(config.get<string>("defaultLocalBaseUrl", "")),
   };
 }
 
@@ -660,6 +678,14 @@ function sanitizeBackend(agent: AgentKind, backend: ExecutionBackend): Execution
 function blankToNull(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
+}
+
+function sanitizeLocalProvider(value: string | null | undefined): LocalModelProvider | null {
+  return value === "ollama" || value === "lm_studio" ? value : null;
+}
+
+function defaultLocalBaseUrl(provider: LocalModelProvider): string {
+  return provider === "lm_studio" ? "http://127.0.0.1:1234" : "http://127.0.0.1:11434";
 }
 
 function formatError(err: unknown): string {

@@ -11,6 +11,7 @@ import type {
   ExtensionMessage,
   GithubRepository,
   LimitPolicy,
+  LocalModelProvider,
   PermissionPolicy,
   SandboxPolicy,
   WorkbenchSnapshot,
@@ -47,6 +48,8 @@ export default function App() {
   const [backend, setBackend] = useState<ExecutionBackend>("host");
   const [model, setModel] = useState("");
   const [reasoning, setReasoning] = useState("medium");
+  const [localProvider, setLocalProvider] = useState<LocalModelProvider | "">("");
+  const [localBaseUrl, setLocalBaseUrl] = useState("");
   const [repoIds, setRepoIds] = useState<string[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -124,6 +127,8 @@ export default function App() {
     const nextBackend = sanitizeBackend(nextAgent, selectedThread?.execution_backend ?? snapshot.defaults.execution_backend);
     const nextModel = selectedThread?.model ?? snapshot.defaults.model ?? defaults.model ?? "";
     const nextReasoning = selectedThread?.reasoning ?? snapshot.defaults.reasoning ?? defaults.reasoning ?? "medium";
+    const nextLocalProvider = selectedThread?.local_provider ?? snapshot.defaults.local_provider ?? "";
+    const nextLocalBaseUrl = selectedThread?.local_base_url ?? snapshot.defaults.local_base_url ?? "";
     const runControlsKey = [
       effectiveSelectedId ?? "new",
       nextAgent,
@@ -131,6 +136,8 @@ export default function App() {
       nextBackend,
       nextModel,
       nextReasoning,
+      nextLocalProvider,
+      nextLocalBaseUrl,
       selectedThread?.handoff_state ?? "",
     ].join("|");
     if (runControlsKeyRef.current !== runControlsKey) {
@@ -140,6 +147,8 @@ export default function App() {
       setBackend(nextBackend);
       setModel(nextModel);
       setReasoning(nextReasoning);
+      setLocalProvider(nextAgent === "codex" ? nextLocalProvider : "");
+      setLocalBaseUrl(nextAgent === "codex" ? nextLocalBaseUrl : "");
     }
     if (selectedThread && snapshot.details?.repos.length) {
       setRepoIds(snapshot.details.repos.map((repo) => repo.repo_id));
@@ -154,12 +163,16 @@ export default function App() {
     selectedThread?.execution_backend,
     selectedThread?.model,
     selectedThread?.reasoning,
+    selectedThread?.local_provider,
+    selectedThread?.local_base_url,
     selectedThread?.handoff_state,
     snapshot?.defaults.agent,
     snapshot?.defaults.permission,
     snapshot?.defaults.execution_backend,
     snapshot?.defaults.model,
     snapshot?.defaults.reasoning,
+    snapshot?.defaults.local_provider,
+    snapshot?.defaults.local_base_url,
     snapshot?.repos.length,
     snapshot?.runDefaults,
   ]);
@@ -237,12 +250,18 @@ export default function App() {
       executionBackend: sanitizeBackend(agent, backend),
       model: model.trim() || null,
       reasoning: reasoning.trim() || null,
+      localProvider: localProvider || null,
+      localBaseUrl: localBaseUrl.trim() || null,
     });
   };
 
   const pickAgent = (nextAgent: AgentKind) => {
     setAgent(nextAgent);
-    if (nextAgent !== "codex") setBackend("host");
+    if (nextAgent !== "codex") {
+      setBackend("host");
+      setLocalProvider("");
+      setLocalBaseUrl("");
+    }
     if (!snapshot) return;
     const defaults = runDefaults(snapshot, nextAgent);
     if (!model.trim()) setModel(defaults.model ?? "");
@@ -371,6 +390,10 @@ export default function App() {
         setModel={setModel}
         reasoning={reasoning}
         setReasoning={setReasoning}
+        localProvider={localProvider}
+        setLocalProvider={setLocalProvider}
+        localBaseUrl={localBaseUrl}
+        setLocalBaseUrl={setLocalBaseUrl}
         repoIds={repoIds}
         setRepoIds={setRepoIds}
         isRunning={isRunning}
@@ -729,6 +752,10 @@ function Composer(props: {
   setModel(value: string): void;
   reasoning: string;
   setReasoning(value: string): void;
+  localProvider: LocalModelProvider | "";
+  setLocalProvider(value: LocalModelProvider | ""): void;
+  localBaseUrl: string;
+  setLocalBaseUrl(value: string): void;
   repoIds: string[];
   setRepoIds(value: string[]): void;
   isRunning: boolean;
@@ -745,7 +772,9 @@ function Composer(props: {
   // composer — never the transcript. App receives the text only on submit.
   const [draft, setDraft] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const canSend = !!draft.trim() && !!props.snapshot?.trusted;
+  const localOn = !!props.localProvider;
+  const localAllowed = props.agent === "codex";
+  const canSend = !!draft.trim() && !!props.snapshot?.trusted && (!localOn || !!props.model.trim());
   // While the agent is running and the composer is empty, the action button
   // turns into a Stop control (matching Claude Code / Codex). Typing turns it
   // back into a send/queue button.
@@ -773,7 +802,8 @@ function Composer(props: {
       ? "Connected repos — none attached yet"
       : `Connected repos: ${selectedRepos.map((repo) => repo.name).join(", ")}`;
   const perm = PERMISSIONS.find((item) => item.value === props.permission) ?? PERMISSIONS[1];
-  const optionsActive = sandboxOn || !!props.model.trim() || (!!props.reasoning && props.reasoning !== "medium");
+  const optionsActive = sandboxOn || localOn || !!props.model.trim() || (!!props.reasoning && props.reasoning !== "medium");
+  const localBaseUrl = props.localBaseUrl.trim() || defaultLocalBaseUrl(props.localProvider || "ollama");
 
   return (
     <footer className="composer">
@@ -960,6 +990,53 @@ function Composer(props: {
                   <span>Docker sandbox</span>
                   <span className="sandbox-state">{sandboxOn ? "On" : "Off"}</span>
                 </button>
+                <button
+                  type="button"
+                  className={`sandbox-row${localOn ? " on" : ""}${localAllowed ? "" : " disabled"}`}
+                  disabled={!localAllowed}
+                  aria-pressed={localOn}
+                  title={localAllowed ? "Run Codex against a local Ollama or LM Studio model" : "Local model runs use Codex"}
+                  onClick={() => {
+                    if (localOn) {
+                      props.setLocalProvider("");
+                      props.setLocalBaseUrl("");
+                    } else {
+                      const provider = props.snapshot?.defaults.local_provider ?? "ollama";
+                      props.setLocalProvider(provider);
+                      props.setLocalBaseUrl(props.snapshot?.defaults.local_base_url ?? defaultLocalBaseUrl(provider));
+                    }
+                  }}
+                >
+                  <Icon name="terminal" />
+                  <span>Local model</span>
+                  <span className="sandbox-state">{localOn ? labelLocalProvider(props.localProvider) : "Off"}</span>
+                </button>
+                {localOn && (
+                  <>
+                    <label className="field">
+                      <span>Local provider</span>
+                      <select
+                        value={props.localProvider}
+                        onChange={(event) => {
+                          const provider = event.target.value as LocalModelProvider;
+                          props.setLocalProvider(provider);
+                          props.setLocalBaseUrl(defaultLocalBaseUrl(provider));
+                        }}
+                      >
+                        <option value="ollama">Ollama</option>
+                        <option value="lm_studio">LM Studio</option>
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Local endpoint</span>
+                      <input
+                        value={props.localBaseUrl}
+                        placeholder={localBaseUrl}
+                        onChange={(event) => props.setLocalBaseUrl(event.target.value)}
+                      />
+                    </label>
+                  </>
+                )}
                 {sandboxOn && sandbox && !sandbox.authenticated && (
                   <button type="button" className="menu-item" onClick={() => props.onSandboxLogin(false)}>
                     Sign in to Sandbox
@@ -1283,6 +1360,14 @@ function formatModelSwitch(from: string | null | undefined, to: string | null | 
   const fromLabel = from ? prettyModel(from) : "default model";
   const toLabel = to ? prettyModel(to) : "default model";
   return `${fromLabel} -> ${toLabel}`;
+}
+
+function labelLocalProvider(provider: LocalModelProvider | ""): string {
+  return provider === "lm_studio" ? "LM Studio" : provider === "ollama" ? "Ollama" : "Off";
+}
+
+function defaultLocalBaseUrl(provider: LocalModelProvider): string {
+  return provider === "lm_studio" ? "http://127.0.0.1:1234" : "http://127.0.0.1:11434";
 }
 
 function sanitizeBackend(agent: AgentKind, backend: ExecutionBackend): ExecutionBackend {

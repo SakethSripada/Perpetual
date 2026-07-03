@@ -1,4 +1,4 @@
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
@@ -15,7 +15,21 @@ const expected = path.resolve("bin", target, binary);
 try {
   const info = await stat(expected);
   if (!info.isFile() || info.size === 0) throw new Error("empty");
+  const binaryData = await readFile(expected);
+  const missing = requiredDaemonMarkers().filter((marker) => !binaryData.includes(Buffer.from(marker)));
+  if (missing.length) {
+    console.error(`Daemon binary for ${target} is missing required capabilities: ${expected}`);
+    console.error("");
+    for (const marker of missing) {
+      console.error(`  - ${marker}`);
+    }
+    console.error("");
+    console.error("Sync a daemon build that includes local model fallback and diff support:");
+    console.error(`  npm run sync:daemon -- --target=${target} --extension-repo="${process.cwd()}"`);
+    process.exit(1);
+  }
   console.log(`Daemon present for ${target}: ${expected}`);
+  console.log("Daemon capabilities present: local model fallback, local model providers, thread/work-node diffs.");
 } catch {
   console.error(`Missing daemon binary for ${target}: ${expected}`);
   console.error("");
@@ -24,6 +38,20 @@ try {
   console.error(`  npm run sync:daemon -- --target=${target} --extension-repo="${process.cwd()}"`);
   console.error("Then commit the updated bin/ here and retry packaging.");
   process.exit(1);
+}
+
+function requiredDaemonMarkers() {
+  return [
+    "LocalModelPolicy",
+    "LocalModelTarget",
+    "thread.local_fallback_started",
+    "local_fallback_active",
+    "ollama",
+    "lm_studio",
+    "ThreadDiff",
+    "WorkNodeDiff",
+    "/diff",
+  ];
 }
 
 function currentTarget() {

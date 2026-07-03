@@ -15,6 +15,7 @@ export type TaskPriority = "low" | "medium" | "high" | "urgent";
 export type PermissionPolicy = "read_only" | "workspace_write" | "autonomous";
 export type ExecutionBackend = "host" | "docker_sandbox";
 export type AvailabilityState = "unknown" | "available" | "limited";
+export type LocalModelProvider = "ollama" | "lm_studio";
 
 export interface Project {
   id: string;
@@ -134,10 +135,16 @@ export interface AgentThread {
   execution_backend: ExecutionBackend;
   model: string | null;
   reasoning: string | null;
+  local_provider: LocalModelProvider | null;
+  local_base_url: string | null;
   original_agent: AgentKind | null;
   fallback_agent: AgentKind | null;
   original_model?: string | null;
   fallback_model?: string | null;
+  original_local_provider?: LocalModelProvider | null;
+  fallback_local_provider?: LocalModelProvider | null;
+  original_local_base_url?: string | null;
+  fallback_local_base_url?: string | null;
   limit_reset_at: string | null;
   switch_back: boolean;
   handoff_state: string;
@@ -160,6 +167,8 @@ export interface NewAgentThread {
   execution_backend?: ExecutionBackend | null;
   model?: string | null;
   reasoning?: string | null;
+  local_provider?: LocalModelProvider | null;
+  local_base_url?: string | null;
 }
 
 export interface AgentThreadUpdate {
@@ -171,6 +180,8 @@ export interface AgentThreadUpdate {
   execution_backend?: ExecutionBackend | null;
   model?: string | null;
   reasoning?: string | null;
+  local_provider?: LocalModelProvider | null;
+  local_base_url?: string | null;
   objective?: string | null;
   decisions?: string | null;
   progress?: string | null;
@@ -208,6 +219,10 @@ export interface AgentTurn {
   permission: PermissionPolicy;
   execution_backend: ExecutionBackend;
   sandbox_name: string | null;
+  model?: string | null;
+  reasoning?: string | null;
+  local_provider?: LocalModelProvider | null;
+  local_base_url?: string | null;
   started_at: string;
   ended_at: string | null;
 }
@@ -446,4 +461,6 @@ export interface WorkbenchDefaults {
   execution_backend: ExecutionBackend;
   model: string | null;
   reasoning: string | null;
+  local_provider: LocalModelProvider | null;
+  local_base_url: string | null;
 }
