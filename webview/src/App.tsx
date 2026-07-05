@@ -7,6 +7,7 @@ import type {
   ApprovalDecision,
   ApprovalRequest,
   AvailabilityState,
+  CloudPolicy,
   ExecutionBackend,
   ExtensionMessage,
   GithubRepository,
@@ -411,9 +412,10 @@ export default function App() {
         <SettingsSheet
           snapshot={snapshot}
           onClose={() => setSettingsOpen(false)}
-          onApply={(limitPolicy, sandboxPolicy) => {
+          onApply={(limitPolicy, sandboxPolicy, cloudPolicy) => {
             vscode.postMessage({ type: "setLimitPolicy", policy: limitPolicy });
             vscode.postMessage({ type: "setSandboxPolicy", policy: sandboxPolicy });
+            vscode.postMessage({ type: "setCloudPolicy", policy: cloudPolicy });
             setSettingsOpen(false);
           }}
           onOpenSettings={() => vscode.postMessage({ type: "openSettings" })}
@@ -956,7 +958,12 @@ function Composer(props: {
               <div className="menu options-menu">
                 <div className="menu-head">Run options</div>
                 <label className="field">
-                  <span>Model{props.model.trim() && <em className="field-value">{prettyModel(props.model)}</em>}</span>
+                  <span>
+                    Model
+                    {props.model.trim() && prettyModel(props.model) !== props.model.trim() && (
+                      <em className="field-value">{prettyModel(props.model)}</em>
+                    )}
+                  </span>
                   <input
                     list="am-model-suggestions"
                     value={props.model}
@@ -964,8 +971,8 @@ function Composer(props: {
                     onChange={(event) => props.setModel(event.target.value)}
                   />
                   <datalist id="am-model-suggestions">
-                    {modelSuggestions(props.agent).map((name) => (
-                      <option key={name} value={name} />
+                    {modelSuggestions(props.agent, props.snapshot).map((name) => (
+                      <option key={name} value={name} label={prettyModel(name)} />
                     ))}
                   </datalist>
                 </label>
@@ -1125,12 +1132,14 @@ function ChangesView(props: {
 function SettingsSheet(props: {
   snapshot: WorkbenchSnapshot;
   onClose(): void;
-  onApply(limitPolicy: LimitPolicy, sandboxPolicy: SandboxPolicy): void;
+  onApply(limitPolicy: LimitPolicy, sandboxPolicy: SandboxPolicy, cloudPolicy: CloudPolicy): void;
   onOpenSettings(): void;
 }) {
   const [limit, setLimit] = useState<LimitPolicy>(() => props.snapshot.limitPolicy ?? defaultLimitPolicy());
   const [sandbox, setSandbox] = useState<SandboxPolicy>(() => props.snapshot.sandboxPolicy ?? defaultSandboxPolicy());
+  const [cloud, setCloud] = useState<CloudPolicy>(() => props.snapshot.cloudPolicy ?? defaultCloudPolicy());
   const claudeFirst = limit.agent_priority[0] !== "codex";
+  const cloudBlockers = (props.snapshot.cloudAvailability ?? []).filter((item) => !item.ready);
 
   return (
     <div className="sheet-backdrop" onMouseDown={props.onClose}>
@@ -1200,6 +1209,96 @@ function SettingsSheet(props: {
           </div>
 
           <div className="settings-group">
+            <div className="group-title">Cloud continuity</div>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={cloud.enabled}
+                onChange={(event) => setCloud({ ...cloud, enabled: event.target.checked })}
+              />
+              <span>Auto carryover tasks to the cloud</span>
+            </label>
+            {cloud.enabled && (
+              <>
+                <label className="toggle">
+                  <input
+                    type="checkbox"
+                    checked={cloud.continue_on_sleep}
+                    onChange={(event) => setCloud({ ...cloud, continue_on_sleep: event.target.checked })}
+                  />
+                  <span>Carry over when the machine sleeps</span>
+                </label>
+                <label className="toggle">
+                  <input
+                    type="checkbox"
+                    checked={cloud.continue_on_shutdown}
+                    onChange={(event) => setCloud({ ...cloud, continue_on_shutdown: event.target.checked })}
+                  />
+                  <span>Carry over on shutdown</span>
+                </label>
+                <label className="toggle">
+                  <input
+                    type="checkbox"
+                    checked={cloud.require_approval}
+                    onChange={(event) => setCloud({ ...cloud, require_approval: event.target.checked })}
+                  />
+                  <span>Ask before handing work to the cloud</span>
+                </label>
+                <div className="field">
+                  <span>Cloud provider</span>
+                  <div className="segmented">
+                    <button
+                      type="button"
+                      className={!cloud.allow_cross_provider ? "selected" : ""}
+                      title="Claude Code tasks continue on Claude Code on the web; Codex tasks on Codex Cloud."
+                      onClick={() => setCloud({ ...cloud, allow_cross_provider: false })}
+                    >
+                      Same provider
+                    </button>
+                    <button
+                      type="button"
+                      className={cloud.allow_cross_provider ? "selected" : ""}
+                      title="Hand the task to the other provider's cloud when the current one isn't ready."
+                      onClick={() => setCloud({ ...cloud, allow_cross_provider: true })}
+                    >
+                      Allow switching
+                    </button>
+                  </div>
+                </div>
+                <div className="field-grid">
+                  <label className="field">
+                    <span>Max cloud runs</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={8}
+                      value={cloud.max_concurrent_cloud_runs}
+                      onChange={(event) =>
+                        setCloud({ ...cloud, max_concurrent_cloud_runs: Number(event.target.value) })
+                      }
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Codex environment ID</span>
+                    <input
+                      value={cloud.codex_env_id ?? ""}
+                      placeholder="From chatgpt.com/codex"
+                      onChange={(event) =>
+                        setCloud({ ...cloud, codex_env_id: event.target.value.trim() || null })
+                      }
+                    />
+                  </label>
+                </div>
+                {cloudBlockers.map((item) => (
+                  <div key={item.agent} className="menu-empty">
+                    {labelAgent(item.agent)} cloud: {item.blockers.length ? item.blockers.join(" ") : "not ready"}
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+
+          <div className="settings-group">
             <div className="group-title">Docker Sandbox</div>
             <label className="field">
               <span>Default runtime</span>
@@ -1255,7 +1354,7 @@ function SettingsSheet(props: {
           <button type="button" onClick={props.onOpenSettings}>
             VS Code settings
           </button>
-          <button type="button" className="primary" onClick={() => props.onApply(limit, sandbox)}>
+          <button type="button" className="primary" onClick={() => props.onApply(limit, sandbox, cloud)}>
             Apply
           </button>
         </footer>
@@ -1327,25 +1426,49 @@ function runDefaults(snapshot: WorkbenchSnapshot, agent: AgentKind) {
   return snapshot.runDefaults.find((item) => item.kind === agent) ?? { model: null, reasoning: null };
 }
 
-// Valid model identifiers per agent (kept lowercase so they pass straight to the CLI).
-function modelSuggestions(agent: AgentKind): string[] {
-  return agent === "codex"
-    ? ["gpt-5-codex", "gpt-5", "gpt-4.1", "o3", "o4-mini"]
-    : ["opus", "sonnet", "haiku"];
+// Valid model identifiers per agent (kept lowercase so they pass straight to the
+// CLI). The agent's own configured default (e.g. the model picked up from
+// ~/.claude/settings.json) is merged in, deduped against the static list so the
+// same model never shows up twice.
+function modelSuggestions(agent: AgentKind, snapshot: WorkbenchSnapshot | null): string[] {
+  const base =
+    agent === "codex"
+      ? ["gpt-5-codex", "gpt-5", "gpt-4.1", "o3", "o4-mini"]
+      : ["opus", "sonnet", "haiku"];
+  const detected = snapshot ? runDefaults(snapshot, agent).model : null;
+  const merged = detected?.trim() ? [detected.trim(), ...base] : base;
+  const seen = new Set<string>();
+  return merged.filter((name) => {
+    const key = baseModelId(name).toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+// Strips provider decorations from a model id — e.g. the "[1m]" 1M-context
+// suffix Claude Code appends — so display and dedupe work on the base id.
+// The raw id (suffix included) is still what gets passed to the CLI.
+function baseModelId(value: string): string {
+  return value.trim().replace(/\[[^\]]*\]$/, "").trim();
 }
 
 // Display-only: turn a raw model id into a properly-capitalized name.
 function prettyModel(value: string): string {
-  const v = value.trim();
+  const v = baseModelId(value);
   if (!v) return "";
   const known: Record<string, string> = {
     opus: "Opus",
     sonnet: "Sonnet",
     haiku: "Haiku",
+    fable: "Fable",
+    "claude-fable-5": "Claude Fable 5",
     "claude-opus-4-8": "Claude Opus 4.8",
+    "claude-sonnet-5": "Claude Sonnet 5",
     "claude-sonnet-4-6": "Claude Sonnet 4.6",
     "claude-haiku-4-5": "Claude Haiku 4.5",
     "gpt-5": "GPT-5",
+    "gpt-5.5": "GPT-5.5",
     "gpt-5-codex": "GPT-5 Codex",
     "gpt-4.1": "GPT-4.1",
     o3: "o3",
@@ -1353,6 +1476,25 @@ function prettyModel(value: string): string {
   };
   const hit = known[v.toLowerCase()];
   if (hit) return hit;
+  // Claude ids follow "claude-<family>-<major>[-<minor>]": capitalize the words
+  // and join trailing version numbers with dots (claude-opus-4-8 -> Claude Opus 4.8).
+  if (/^claude[-_]/i.test(v)) {
+    const words: string[] = [];
+    const version: string[] = [];
+    for (const part of v.split(/[-_]+/).filter(Boolean)) {
+      if (/^\d+$/.test(part)) {
+        version.push(part);
+      } else {
+        if (version.length) {
+          words.push(version.join("."));
+          version.length = 0;
+        }
+        words.push(part.charAt(0).toUpperCase() + part.slice(1));
+      }
+    }
+    if (version.length) words.push(version.join("."));
+    return words.join(" ");
+  }
   return v.replace(/\bgpt\b/gi, "GPT").replace(/(^|[\s\-_])([a-z])/g, (_match, sep, ch) => sep + ch.toUpperCase());
 }
 
@@ -1432,6 +1574,23 @@ function defaultLimitPolicy(): LimitPolicy {
     resume_with_earliest: true,
     unknown_reset_retry_secs: 600,
     keep_awake: true,
+  };
+}
+
+// Mirrors the daemon's built-in cloud policy defaults; only used before the
+// first get_cloud_policy response arrives.
+function defaultCloudPolicy(): CloudPolicy {
+  return {
+    enabled: false,
+    continue_on_sleep: true,
+    continue_on_shutdown: true,
+    allow_cross_provider: false,
+    checkpoint_interval_secs: 120,
+    monitor_poll_secs: 30,
+    stall_timeout_secs: 900,
+    max_concurrent_cloud_runs: 2,
+    codex_env_id: null,
+    require_approval: false,
   };
 }
 

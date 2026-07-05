@@ -97,6 +97,27 @@ export interface LimitPolicy {
   keep_awake: boolean;
 }
 
+export interface CloudPolicy {
+  enabled: boolean;
+  continue_on_sleep: boolean;
+  continue_on_shutdown: boolean;
+  allow_cross_provider: boolean;
+  checkpoint_interval_secs: number;
+  monitor_poll_secs: number;
+  stall_timeout_secs: number;
+  max_concurrent_cloud_runs: number;
+  codex_env_id: string | null;
+  require_approval: boolean;
+}
+
+export interface CloudAvailability {
+  agent: AgentKind;
+  ready: boolean;
+  authenticated: boolean;
+  blockers: string[];
+  checked_at: string;
+}
+
 export interface SandboxPolicy {
   default_backend: ExecutionBackend;
   max_concurrent_sandboxes: number;
@@ -450,6 +471,8 @@ export interface WorkbenchSnapshot {
   limitPolicy: LimitPolicy | null;
   sandboxPolicy: SandboxPolicy | null;
   sandboxRuntime: SandboxRuntimeStatus | null;
+  cloudPolicy: CloudPolicy | null;
+  cloudAvailability: CloudAvailability[];
   details: ThreadDetails | null;
   github: GithubAuthStatus | null;
   error: string | null;

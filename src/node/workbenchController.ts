@@ -11,6 +11,8 @@ import type {
   AgentThread,
   AppEvent,
   ApprovalDecision,
+  CloudAvailability,
+  CloudPolicy,
   ExecutionBackend,
   GithubAuthStatus,
   GithubRepository,
@@ -54,6 +56,7 @@ type WebviewMessage =
   | { type: "connectGithubRepo"; repo: GithubRepository }
   | { type: "setLimitPolicy"; policy: LimitPolicy }
   | { type: "setSandboxPolicy"; policy: SandboxPolicy }
+  | { type: "setCloudPolicy"; policy: CloudPolicy }
   | { type: "sandboxLogin"; codex?: boolean }
   | { type: "openPath"; path: string }
   | { type: "openSettings" | "openPanel" }
@@ -73,6 +76,8 @@ type DetectionCache = {
   limitPolicy: LimitPolicy | null;
   sandboxPolicy: SandboxPolicy | null;
   sandboxRuntime: SandboxRuntimeStatus | null;
+  cloudPolicy: CloudPolicy | null;
+  cloudAvailability: CloudAvailability[];
 };
 
 export class WorkbenchController implements vscode.Disposable {
@@ -172,6 +177,15 @@ export class WorkbenchController implements vscode.Disposable {
           return;
         case "setSandboxPolicy":
           await this.withClient((client) => client.setSandboxPolicy(message.policy));
+          this.lastSyncedSettings = "";
+          this.detectionCache = null;
+          await this.refresh();
+          return;
+        case "setCloudPolicy":
+          await this.withClient((client) => client.setCloudPolicy(message.policy));
+          // Mirror into VS Code settings so the next settings sync doesn't undo
+          // what the user just applied from the in-webview sheet.
+          await this.mirrorCloudPolicyToConfig(message.policy);
           this.lastSyncedSettings = "";
           this.detectionCache = null;
           await this.refresh();
@@ -285,7 +299,8 @@ export class WorkbenchController implements vscode.Disposable {
         client.listRepos(project.id),
         this.detect(client),
       ]);
-      const { agents, runDefaults, limitPolicy, sandboxPolicy, sandboxRuntime } = detection;
+      const { agents, runDefaults, limitPolicy, sandboxPolicy, sandboxRuntime, cloudPolicy, cloudAvailability } =
+        detection;
 
       const selectedThreadId = pickSelectedThread(
         this.context.workspaceState.get<string | null>(SELECTED_THREAD_KEY, null),
@@ -311,6 +326,8 @@ export class WorkbenchController implements vscode.Disposable {
         limitPolicy,
         sandboxPolicy,
         sandboxRuntime,
+        cloudPolicy,
+        cloudAvailability,
         details,
         github: null,
         error,
@@ -489,16 +506,19 @@ export class WorkbenchController implements vscode.Disposable {
   private runDetection(client: DaemonApi): Promise<DetectionCache> {
     if (this.detectInflight) return this.detectInflight;
     this.detectInflight = (async () => {
-      const [agents, runDefaults, limitPolicy, sandboxPolicy, sandboxRuntime] = await Promise.all([
-        client.detectAgents().catch((err) => {
-          this.output.appendLine(`[workbench] agent detection failed: ${formatError(err)}`);
-          return [];
-        }),
-        client.agentRunDefaults().catch(() => []),
-        client.getLimitPolicy().catch(() => null),
-        client.getSandboxPolicy().catch(() => null),
-        client.detectSandboxRuntime().catch(() => null),
-      ]);
+      const [agents, runDefaults, limitPolicy, sandboxPolicy, sandboxRuntime, cloudPolicy, cloudAvailability] =
+        await Promise.all([
+          client.detectAgents().catch((err) => {
+            this.output.appendLine(`[workbench] agent detection failed: ${formatError(err)}`);
+            return [];
+          }),
+          client.agentRunDefaults().catch(() => []),
+          client.getLimitPolicy().catch(() => null),
+          client.getSandboxPolicy().catch(() => null),
+          client.detectSandboxRuntime().catch(() => null),
+          client.getCloudPolicy().catch(() => null),
+          client.cloudAvailability().catch(() => []),
+        ]);
       const next: DetectionCache = {
         at: Date.now(),
         agents,
@@ -506,6 +526,8 @@ export class WorkbenchController implements vscode.Disposable {
         limitPolicy,
         sandboxPolicy,
         sandboxRuntime,
+        cloudPolicy,
+        cloudAvailability,
       };
       this.detectionCache = next;
       return next;
@@ -520,9 +542,10 @@ export class WorkbenchController implements vscode.Disposable {
     const encoded = JSON.stringify(settings);
     if (encoded === this.lastSyncedSettings) return;
 
-    const [limitPolicy, sandboxPolicy] = await Promise.all([
+    const [limitPolicy, sandboxPolicy, cloudPolicy] = await Promise.all([
       client.getLimitPolicy().catch(() => null),
       client.getSandboxPolicy().catch(() => null),
+      client.getCloudPolicy().catch(() => null),
     ]);
     if (limitPolicy) {
       await client.setLimitPolicy({
@@ -532,6 +555,18 @@ export class WorkbenchController implements vscode.Disposable {
         resume_with_earliest: settings.resumeWithEarliestAgent,
         unknown_reset_retry_secs: settings.unknownLimitRetrySeconds,
         agent_priority: settings.fallbackPriority,
+      });
+    }
+    if (cloudPolicy) {
+      await client.setCloudPolicy({
+        ...cloudPolicy,
+        enabled: settings.cloudAutoCarryover,
+        continue_on_sleep: settings.cloudCarryOverOnSleep,
+        continue_on_shutdown: settings.cloudCarryOverOnShutdown,
+        allow_cross_provider: settings.cloudProviderStrategy === "switch_provider",
+        require_approval: settings.cloudRequireApproval,
+        max_concurrent_cloud_runs: settings.cloudMaxConcurrentRuns,
+        codex_env_id: blankToNull(settings.cloudCodexEnvId),
       });
     }
     if (sandboxPolicy) {
@@ -545,6 +580,30 @@ export class WorkbenchController implements vscode.Disposable {
       });
     }
     this.lastSyncedSettings = encoded;
+  }
+
+  /**
+   * The VS Code settings are the durable source of truth for the cloud
+   * carryover policy (syncSettings pushes them to the daemon on every change),
+   * so a policy applied from the webview sheet must be written back to the
+   * configuration or the next sync would silently revert it.
+   */
+  private async mirrorCloudPolicyToConfig(policy: CloudPolicy): Promise<void> {
+    const config = vscode.workspace.getConfiguration("agentmanager");
+    const target = vscode.ConfigurationTarget.Global;
+    await Promise.all([
+      config.update("cloud.autoCarryover", policy.enabled, target),
+      config.update("cloud.carryOverOnSleep", policy.continue_on_sleep, target),
+      config.update("cloud.carryOverOnShutdown", policy.continue_on_shutdown, target),
+      config.update(
+        "cloud.providerStrategy",
+        policy.allow_cross_provider ? "switch_provider" : "same_provider",
+        target
+      ),
+      config.update("cloud.requireApproval", policy.require_approval, target),
+      config.update("cloud.maxConcurrentRuns", policy.max_concurrent_cloud_runs, target),
+      config.update("cloud.codexEnvId", policy.codex_env_id ?? "", target),
+    ]);
   }
 
   private async selectThread(threadId: string | null): Promise<void> {
@@ -614,6 +673,8 @@ function emptySnapshot(trusted: boolean, defaults: WorkbenchDefaults, error: str
     limitPolicy: null,
     sandboxPolicy: null,
     sandboxRuntime: null,
+    cloudPolicy: null,
+    cloudAvailability: [],
     details: null,
     github: null,
     error,
@@ -661,6 +722,13 @@ function getSettingsSnapshot() {
     resumeWithEarliestAgent: config.get<boolean>("resumeWithEarliestAgent", true),
     unknownLimitRetrySeconds: config.get<number>("unknownLimitRetrySeconds", 600),
     fallbackPriority: config.get<AgentKind[]>("fallbackPriority", ["claude_code", "codex"]),
+    cloudAutoCarryover: config.get<boolean>("cloud.autoCarryover", false),
+    cloudCarryOverOnSleep: config.get<boolean>("cloud.carryOverOnSleep", true),
+    cloudCarryOverOnShutdown: config.get<boolean>("cloud.carryOverOnShutdown", true),
+    cloudProviderStrategy: config.get<string>("cloud.providerStrategy", "same_provider"),
+    cloudRequireApproval: config.get<boolean>("cloud.requireApproval", false),
+    cloudMaxConcurrentRuns: config.get<number>("cloud.maxConcurrentRuns", 2),
+    cloudCodexEnvId: config.get<string>("cloud.codexEnvId", ""),
     sandboxMaxConcurrent: config.get<number>("sandbox.maxConcurrent", 2),
     sandboxCpus: config.get<number>("sandbox.cpus", 2),
     sandboxMemory: config.get<string>("sandbox.memory", "4g"),

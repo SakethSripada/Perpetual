@@ -11,6 +11,8 @@ import type {
   AppEvent,
   ApprovalDecision,
   ApprovalRequest,
+  CloudAvailability,
+  CloudPolicy,
   ExecutionBackend,
   GithubAuthStatus,
   GithubRepository,
@@ -77,6 +79,9 @@ export interface DaemonApi {
   codexSandboxLogin(): Promise<SandboxLoginPrompt>;
   getSandboxPolicy(): Promise<SandboxPolicy>;
   setSandboxPolicy(policy: SandboxPolicy): Promise<SandboxPolicy>;
+  getCloudPolicy(): Promise<CloudPolicy>;
+  setCloudPolicy(policy: CloudPolicy): Promise<CloudPolicy>;
+  cloudAvailability(): Promise<CloudAvailability[]>;
   getWorkGraph(projectId: string): Promise<WorkGraph>;
   createWorkNode(input: NewWorkNode): Promise<WorkNode>;
   updateWorkNode(nodeId: string, patch: WorkNodeUpdate): Promise<WorkNode>;

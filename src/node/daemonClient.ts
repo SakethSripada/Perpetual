@@ -151,6 +151,18 @@ export class DaemonClient extends EventEmitter implements DaemonApi {
     return responsePayload(await this.requestRaw(variant("set_sandbox_policy", policy)), "sandbox_policy");
   }
 
+  async getCloudPolicy() {
+    return responsePayload(await this.requestRaw(variant("get_cloud_policy")), "cloud_policy");
+  }
+
+  async setCloudPolicy(policy: Parameters<DaemonApi["setCloudPolicy"]>[0]) {
+    return responsePayload(await this.requestRaw(variant("set_cloud_policy", policy)), "cloud_policy");
+  }
+
+  async cloudAvailability() {
+    return responsePayload(await this.requestRaw(variant("cloud_availability")), "cloud_availabilities");
+  }
+
   async getWorkGraph(projectId: string) {
     return responsePayload(
       await this.requestRaw(variant("get_work_graph", { project_id: projectId })),

@@ -260,6 +260,51 @@
           "minimum": 0,
           "description": "Retry interval when an agent reports a usage limit without a reset time. Set 0 to wait indefinitely."
         },
+        "agentmanager.cloud.autoCarryover": {
+          "type": "boolean",
+          "default": false,
+          "description": "Cloud Continuity: automatically carry active tasks over to the provider's cloud (Claude Code on the web / Codex Cloud) so they keep running when this machine can't."
+        },
+        "agentmanager.cloud.carryOverOnSleep": {
+          "type": "boolean",
+          "default": true,
+          "description": "Carry running tasks over to the cloud when the machine is about to sleep. Requires auto carryover."
+        },
+        "agentmanager.cloud.carryOverOnShutdown": {
+          "type": "boolean",
+          "default": true,
+          "description": "Carry running tasks over to the cloud on shutdown or when the daemon stops. Requires auto carryover."
+        },
+        "agentmanager.cloud.providerStrategy": {
+          "type": "string",
+          "enum": [
+            "same_provider",
+            "switch_provider"
+          ],
+          "enumDescriptions": [
+            "Continue in the same provider's cloud (Claude Code sessions go to Claude Code on the web, Codex sessions to Codex Cloud).",
+            "Allow switching providers when the current one's cloud isn't ready (e.g. hand a Claude Code task to Codex Cloud)."
+          ],
+          "default": "same_provider",
+          "description": "Which provider's cloud receives a carried-over task."
+        },
+        "agentmanager.cloud.requireApproval": {
+          "type": "boolean",
+          "default": false,
+          "description": "Ask for approval before work is handed to Codex Cloud or Claude Code on the web."
+        },
+        "agentmanager.cloud.maxConcurrentRuns": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 8,
+          "description": "Maximum number of cloud runs carried over at the same time."
+        },
+        "agentmanager.cloud.codexEnvId": {
+          "type": "string",
+          "default": "",
+          "description": "Codex Cloud environment id used for carried-over Codex tasks. Create one at chatgpt.com/codex."
+        },
         "agentmanager.sandbox.maxConcurrent": {
           "type": "number",
           "default": 2,
