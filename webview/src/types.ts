@@ -55,6 +55,55 @@ export interface AgentRunDefaults {
   reasoning: string | null;
 }
 
+export interface AgentModelOption {
+  id: string;
+  label: string;
+  aliases: string[];
+  family: string | null;
+  default: boolean;
+  available: boolean;
+  source: string;
+  reasoning: string[];
+  local_provider?: LocalModelProvider | null;
+  local_base_url?: string | null;
+}
+
+export interface AgentModelCatalog {
+  agent: AgentKind;
+  default_model: string | null;
+  default_reasoning: string | null;
+  models: AgentModelOption[];
+  reasoning: string[];
+  binary_path: string | null;
+  version: string | null;
+  source: string;
+  detected_at: string;
+  error: string | null;
+}
+
+export interface LocalModelInfo {
+  id: string;
+  name: string;
+  family: string | null;
+  parameter_size: string | null;
+  quantization: string | null;
+  size: number | null;
+  loaded: boolean;
+}
+
+export interface LocalModelStatus {
+  provider: LocalModelProvider;
+  label: string;
+  base_url: string;
+  server_running: boolean;
+  cli_installed: boolean;
+  cli_path: string | null;
+  authenticated: boolean;
+  version: string | null;
+  models: LocalModelInfo[];
+  error: string | null;
+}
+
 export interface LimitPolicy {
   auto_switch: boolean;
   switch_back: boolean;
@@ -210,6 +259,23 @@ export interface AgentThreadDiff {
   repos: AgentThreadRepoDiff[];
 }
 
+export interface AgentThreadRepoApplyResult {
+  repo_id: string;
+  repo_name: string;
+  target_path: string | null;
+  worktree_path: string | null;
+  files: FileChange[];
+  applied: boolean;
+  blocker: string | null;
+}
+
+export interface AgentThreadApplyResult {
+  thread_id: string;
+  applied: boolean;
+  repos: AgentThreadRepoApplyResult[];
+  blockers: string[];
+}
+
 export type ApprovalKind = "command" | "file_change" | "tool";
 export type ApprovalDecision = "allow" | "allow_for_session" | "deny" | "abort";
 
@@ -236,6 +302,8 @@ export interface ThreadDetails {
   turns: AgentTurn[];
   queued: QueuedTurn[];
   diff: AgentThreadDiff | null;
+  diffState?: "idle" | "loading" | "ready" | "error";
+  applyResult?: AgentThreadApplyResult | null;
   approvals: ApprovalRequest[];
 }
 
@@ -248,6 +316,10 @@ export interface WorkbenchSnapshot {
   repos: Repo[];
   agents: AgentStatus[];
   runDefaults: AgentRunDefaults[];
+  modelCatalog?: AgentModelCatalog[];
+  localModels?: LocalModelStatus[];
+  detectionState?: "idle" | "loading" | "ready" | "error";
+  defaultRepoIds?: string[];
   limitPolicy: LimitPolicy | null;
   sandboxPolicy: SandboxPolicy | null;
   sandboxRuntime: SandboxRuntimeStatus | null;

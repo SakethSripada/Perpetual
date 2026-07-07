@@ -2,6 +2,7 @@ import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState }
 import type { CSSProperties, ReactNode } from "react";
 import type {
   AgentKind,
+  AgentModelOption,
   AgentThread,
   AgentThreadEvent,
   ApprovalDecision,
@@ -21,6 +22,10 @@ import { BrandMark, Icon } from "./icons";
 import { Markdown } from "./markdown";
 
 type PendingMessage = { id: string; text: string };
+type PersistedState = {
+  repoIds?: string[];
+  repoTouched?: boolean;
+};
 
 type VsCodeApi = {
   postMessage(message: unknown): void;
@@ -42,7 +47,17 @@ const vscode =
     setState: () => undefined,
   } satisfies VsCodeApi);
 
+function readPersistedState(): PersistedState {
+  const state = vscode.getState();
+  return state && typeof state === "object" ? (state as PersistedState) : {};
+}
+
+function writePersistedState(state: PersistedState): void {
+  vscode.setState(state);
+}
+
 export default function App() {
+  const persisted = useMemo(() => readPersistedState(), []);
   const [snapshot, setSnapshot] = useState<WorkbenchSnapshot | null>(null);
   const [agent, setAgent] = useState<AgentKind>("claude_code");
   const [permission, setPermission] = useState<PermissionPolicy>("workspace_write");
@@ -51,7 +66,7 @@ export default function App() {
   const [reasoning, setReasoning] = useState("medium");
   const [localProvider, setLocalProvider] = useState<LocalModelProvider | "">("");
   const [localBaseUrl, setLocalBaseUrl] = useState("");
-  const [repoIds, setRepoIds] = useState<string[]>([]);
+  const [repoIds, setRepoIds] = useState<string[]>(persisted.repoIds ?? []);
   const [notice, setNotice] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -67,6 +82,8 @@ export default function App() {
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const runControlsKeyRef = useRef<string>("");
   const handoffRef = useRef<Record<string, string>>({});
+  const repoTouchedRef = useRef(!!persisted.repoTouched);
+  const repoInitKeyRef = useRef("");
 
   useEffect(() => {
     const onMessage = (event: MessageEvent<ExtensionMessage>) => {
@@ -112,6 +129,14 @@ export default function App() {
     return () => window.removeEventListener("message", onMessage);
   }, []);
 
+  useEffect(() => {
+    writePersistedState({
+      ...readPersistedState(),
+      repoIds,
+      repoTouched: repoTouchedRef.current,
+    });
+  }, [repoIds]);
+
   const effectiveSelectedId = navThreadId !== undefined ? navThreadId : snapshot?.selectedThreadId ?? null;
   const selectedThread = useMemo(
     () => snapshot?.threads.find((thread) => thread.id === effectiveSelectedId) ?? null,
@@ -154,7 +179,11 @@ export default function App() {
     if (selectedThread && snapshot.details?.repos.length) {
       setRepoIds(snapshot.details.repos.map((repo) => repo.repo_id));
     } else if (!selectedThread) {
-      setRepoIds(snapshot.repos.map((repo) => repo.id));
+      const repoKey = snapshot.repos.map((repo) => repo.id).join("|");
+      if (!repoTouchedRef.current && repoInitKeyRef.current !== repoKey) {
+        repoInitKeyRef.current = repoKey;
+        setRepoIds(snapshot.defaultRepoIds ?? []);
+      }
     }
   }, [
     effectiveSelectedId,
@@ -174,7 +203,8 @@ export default function App() {
     snapshot?.defaults.reasoning,
     snapshot?.defaults.local_provider,
     snapshot?.defaults.local_base_url,
-    snapshot?.repos.length,
+    snapshot?.repos,
+    snapshot?.defaultRepoIds,
     snapshot?.runDefaults,
   ]);
 
@@ -233,7 +263,7 @@ export default function App() {
 
   const isRunning = selectedThread?.status === "running";
   const details = navigating ? undefined : snapshot?.details;
-  const changesEventId = details ? latestChangesEventId(details) : null;
+  const reposLocked = !!selectedThread && !!details?.repos.some((repo) => !!repo.worktree_path);
 
   // The composer owns its own draft text so typing never re-renders the
   // transcript; it hands us the final text here on submit.
@@ -267,6 +297,14 @@ export default function App() {
     const defaults = runDefaults(snapshot, nextAgent);
     if (!model.trim()) setModel(defaults.model ?? "");
     if (!reasoning.trim()) setReasoning(defaults.reasoning ?? "medium");
+  };
+
+  const setDraftRepoIds = (next: string[]) => {
+    repoTouchedRef.current = true;
+    setRepoIds(next);
+    if (selectedThread && !reposLocked) {
+      vscode.postMessage({ type: "assignRepos", threadId: selectedThread.id, repoIds: next });
+    }
   };
 
   const newSession = () => {
@@ -346,11 +384,20 @@ export default function App() {
             details?.events.map((event) => (
               <Fragment key={event.id}>
                 <MessageView event={event} />
-                {event.id === changesEventId && details.diff && (
-                  <ChangesView diff={details.diff} repos={details.repos} onOpenPath={(target) => vscode.postMessage({ type: "openPath", path: target })} />
-                )}
               </Fragment>
             ))}
+          {selectedThread && details && (
+            <ChangesView
+              threadId={selectedThread.id}
+              diff={details.diff}
+              diffState={details.diffState ?? "idle"}
+              repos={details.repos}
+              applyResult={details.applyResult ?? null}
+              onLoadDiff={(threadId) => vscode.postMessage({ type: "loadDiff", threadId })}
+              onApply={(threadId) => vscode.postMessage({ type: "applyThreadChanges", threadId })}
+              onOpenPath={(target) => vscode.postMessage({ type: "openPath", path: target })}
+            />
+          )}
           {pending.map((item) => (
             <article key={item.id} className="msg user pending">
               <div className="msg-body">{item.text}</div>
@@ -396,7 +443,8 @@ export default function App() {
         localBaseUrl={localBaseUrl}
         setLocalBaseUrl={setLocalBaseUrl}
         repoIds={repoIds}
-        setRepoIds={setRepoIds}
+        setRepoIds={setDraftRepoIds}
+        reposLocked={reposLocked}
         isRunning={isRunning}
         onSend={send}
         onStop={() => selectedThread && vscode.postMessage({ type: "stopThread", threadId: selectedThread.id })}
@@ -440,6 +488,28 @@ export default function App() {
 // One transcript row. Memoized so a snapshot tick only re-renders the messages
 // that actually changed — an unchanged message keeps its parsed Markdown.
 const MessageView = memo(function MessageView({ event }: { event: AgentThreadEvent }) {
+  if (isActivityEvent(event)) {
+    const detail = activityDetail(event);
+    return (
+      <article className="activity-row">
+        <span className="activity-icon">
+          <Icon name={activityIcon(event)} />
+        </span>
+        <div className="activity-main">
+          <div className="activity-title">
+            <span>{activitySummary(event)}</span>
+            <time>{formatTime(event.ts)}</time>
+          </div>
+          {detail && (
+            <details className="activity-detail">
+              <summary>Details</summary>
+              <pre>{detail}</pre>
+            </details>
+          )}
+        </div>
+      </article>
+    );
+  }
   // No role label — the user's bubble vs the agent's plain text is enough to
   // tell who's speaking. Just a subtle timestamp.
   return (
@@ -614,6 +684,133 @@ function Dropdown(props: {
   );
 }
 
+function ModelPicker(props: {
+  agent: AgentKind;
+  snapshot: WorkbenchSnapshot | null;
+  localProvider: LocalModelProvider | null;
+  value: string;
+  onChange(value: string): void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const options = useMemo(
+    () => modelOptions(props.agent, props.snapshot, props.localProvider, props.value),
+    [props.agent, props.snapshot, props.localProvider, props.value]
+  );
+  const normalizedQuery = query.trim().toLowerCase();
+  const selected = options.find((option) => modelIdsEqual(option.value, props.value));
+  const filtered = normalizedQuery
+    ? options.filter(
+        (option) =>
+          option.value.toLowerCase().includes(normalizedQuery) ||
+          option.label.toLowerCase().includes(normalizedQuery) ||
+          option.source.toLowerCase().includes(normalizedQuery)
+      )
+    : options;
+  const custom = query.trim();
+  const canUseCustom = !!custom && !options.some((option) => modelIdsEqual(option.value, custom));
+
+  useEffect(() => {
+    if (open) setQuery("");
+  }, [open]);
+
+  return (
+    <label className="field">
+      <span>
+        Model
+        {props.value.trim() && prettyModel(props.value) !== props.value.trim() && (
+          <em className="field-value">{prettyModel(props.value)}</em>
+        )}
+      </span>
+      <Popover
+        open={open}
+        setOpen={setOpen}
+        placement="above"
+        trigger={({ toggle, ref }) => (
+          <button
+            ref={ref as (el: HTMLButtonElement | null) => void}
+            type="button"
+            className="model-trigger"
+            aria-haspopup="listbox"
+            aria-expanded={open}
+            onClick={toggle}
+          >
+            <span>{selected?.label ?? (props.value ? prettyModel(props.value) : "Default model")}</span>
+            <Icon name="caret" />
+          </button>
+        )}
+      >
+        <div className="menu model-menu" role="listbox">
+          <input
+            className="model-search"
+            autoFocus
+            value={query}
+            placeholder="Search or type a model id"
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && custom) {
+                props.onChange(custom);
+                setOpen(false);
+              }
+            }}
+          />
+          <button
+            type="button"
+            role="option"
+            aria-selected={!props.value.trim()}
+            className={!props.value.trim() ? "menu-item selected" : "menu-item"}
+            onClick={() => {
+              props.onChange("");
+              setOpen(false);
+            }}
+          >
+            <span className="history-text">
+              <span>Default model</span>
+              <small>Use the installed CLI default</small>
+            </span>
+            {!props.value.trim() && <Icon name="check" />}
+          </button>
+          {canUseCustom && (
+            <button
+              type="button"
+              className="menu-item"
+              onClick={() => {
+                props.onChange(custom);
+                setOpen(false);
+              }}
+            >
+              <Icon name="plus" />
+              <span className="history-text">
+                <span>{custom}</span>
+                <small>Use custom model id</small>
+              </span>
+            </button>
+          )}
+          {filtered.map((option) => (
+            <button
+              key={`${option.source}:${option.value}`}
+              type="button"
+              role="option"
+              aria-selected={modelIdsEqual(option.value, props.value)}
+              className={modelIdsEqual(option.value, props.value) ? "menu-item selected" : "menu-item"}
+              onClick={() => {
+                props.onChange(option.value);
+                setOpen(false);
+              }}
+            >
+              <span className="history-text">
+                <span>{option.label}</span>
+                <small>{option.source}</small>
+              </span>
+              {modelIdsEqual(option.value, props.value) && <Icon name="check" />}
+            </button>
+          ))}
+        </div>
+      </Popover>
+    </label>
+  );
+}
+
 function HistoryMenu(props: {
   open: boolean;
   setOpen(open: boolean): void;
@@ -760,6 +957,7 @@ function Composer(props: {
   setLocalBaseUrl(value: string): void;
   repoIds: string[];
   setRepoIds(value: string[]): void;
+  reposLocked: boolean;
   isRunning: boolean;
   onSend(text: string): void;
   onStop(): void;
@@ -858,7 +1056,7 @@ function Composer(props: {
                       <input
                         type="checkbox"
                         checked={checked}
-                        disabled={!!props.selectedThread}
+                        disabled={props.reposLocked}
                         onChange={(event) => {
                           const next = event.target.checked
                             ? [...props.repoIds, repo.id]
@@ -957,32 +1155,21 @@ function Composer(props: {
             >
               <div className="menu options-menu">
                 <div className="menu-head">Run options</div>
-                <label className="field">
-                  <span>
-                    Model
-                    {props.model.trim() && prettyModel(props.model) !== props.model.trim() && (
-                      <em className="field-value">{prettyModel(props.model)}</em>
-                    )}
-                  </span>
-                  <input
-                    list="am-model-suggestions"
-                    value={props.model}
-                    placeholder="Default model"
-                    onChange={(event) => props.setModel(event.target.value)}
-                  />
-                  <datalist id="am-model-suggestions">
-                    {modelSuggestions(props.agent, props.snapshot).map((name) => (
-                      <option key={name} value={name} label={prettyModel(name)} />
-                    ))}
-                  </datalist>
-                </label>
+                <ModelPicker
+                  agent={props.agent}
+                  snapshot={props.snapshot}
+                  localProvider={props.localProvider || null}
+                  value={props.model}
+                  onChange={props.setModel}
+                />
                 <label className="field">
                   <span>Reasoning effort</span>
                   <select value={props.reasoning} onChange={(event) => props.setReasoning(event.target.value)}>
-                    <option value="">Default</option>
-                    <option value="low">Low</option>
-                    <option value="medium">Medium</option>
-                    <option value="high">High</option>
+                    {reasoningOptions(props.agent, props.snapshot).map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
                   </select>
                 </label>
                 <button
@@ -1081,26 +1268,60 @@ const PERMISSIONS: { value: PermissionPolicy; label: string; icon: "eye" | "shie
 ];
 
 function ChangesView(props: {
+  threadId: string;
   diff: NonNullable<WorkbenchSnapshot["details"]>["diff"];
+  diffState: NonNullable<WorkbenchSnapshot["details"]>["diffState"];
   repos: NonNullable<WorkbenchSnapshot["details"]>["repos"];
+  applyResult: NonNullable<WorkbenchSnapshot["details"]>["applyResult"] | null;
+  onLoadDiff(threadId: string): void;
+  onApply(threadId: string): void;
   onOpenPath(path: string): void;
 }) {
   const [open, setOpen] = useState(false);
   const diffFiles = props.diff?.repos.flatMap((repo) => repo.files.map((file) => ({ ...file, repo: repo.repo_name }))) ?? [];
-  if (diffFiles.length === 0) return null;
+  const hasWorktree = props.repos.some((repo) => !!repo.worktree_path);
+  if (!hasWorktree && props.diffState === "idle" && !props.applyResult) return null;
+  const loading = props.diffState === "loading";
+  const loaded = props.diffState === "ready";
+  const blockers = props.applyResult?.blockers ?? [];
 
   return (
     <section className="changes-card">
       <button type="button" className="changes-toggle" onClick={() => setOpen(!open)}>
         <Icon name="caret" className={open ? "caret open" : "caret"} />
-        <span>View Changes</span>
+        <span>Managed worktree</span>
         <span className="changes-summary">
-          {diffFiles.length} file{diffFiles.length === 1 ? "" : "s"}
+          {loading
+            ? "Loading"
+            : loaded
+              ? `${diffFiles.length} file${diffFiles.length === 1 ? "" : "s"}`
+              : "Review changes"}
         </span>
       </button>
 
       {open && (
         <div className="changes-body">
+          <div className="changes-actions">
+            <button
+              type="button"
+              className="secondary-btn"
+              disabled={loading}
+              onClick={() => props.onLoadDiff(props.threadId)}
+            >
+              <Icon name="refresh" />
+              <span>{loaded ? "Reload Diff" : "Load Diff"}</span>
+            </button>
+            <button
+              type="button"
+              className="primary-btn"
+              disabled={loading || (loaded && diffFiles.length === 0)}
+              onClick={() => props.onApply(props.threadId)}
+            >
+              <Icon name="check" />
+              <span>Apply to Repo</span>
+            </button>
+          </div>
+
           {props.repos.map((repo) => (
             <div key={repo.repo_id} className="detail-row">
               <Icon name="repo" />
@@ -1108,21 +1329,38 @@ function ChangesView(props: {
               <small>{repo.branch ?? repo.workspace_backend}</small>
               {repo.worktree_path && (
                 <button type="button" className="link-btn" onClick={() => props.onOpenPath(repo.worktree_path!)}>
-                  Open
+                  Open Worktree
                 </button>
               )}
             </div>
           ))}
 
-          <div className="diff-list">
-            {diffFiles.map((file) => (
-              <div key={`${file.repo}:${file.path}`} className="diff-item">
-                <span className="detail-name">{file.path}</span>
-                <span className="diff-add">+{file.additions}</span>
-                <span className="diff-del">-{file.deletions}</span>
-              </div>
-            ))}
-          </div>
+          {loading && <div className="menu-empty">Loading managed diff...</div>}
+          {props.diffState === "error" && <div className="menu-empty">Could not load the managed diff.</div>}
+          {loaded && diffFiles.length === 0 && <div className="menu-empty">No managed changes to apply.</div>}
+          {diffFiles.length > 0 && (
+            <div className="diff-list">
+              {diffFiles.map((file) => (
+                <div key={`${file.repo}:${file.path}`} className="diff-item">
+                  <span className="detail-name">{file.path}</span>
+                  <span className="diff-add">+{file.additions}</span>
+                  <span className="diff-del">-{file.deletions}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {props.applyResult && (
+            <div className={props.applyResult.applied ? "apply-result ok" : "apply-result blocked"}>
+              <strong>{props.applyResult.applied ? "Applied to visible repo" : "Apply blocked"}</strong>
+              {blockers.length > 0 && blockers.map((blocker) => <span key={blocker}>{blocker}</span>)}
+              {props.applyResult.repos.map((repo) => (
+                <span key={repo.repo_id}>
+                  {repo.repo_name}: {repo.applied ? "applied" : repo.blocker ?? "no changes"}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </section>
@@ -1152,6 +1390,36 @@ function SettingsSheet(props: {
         </header>
 
         <div className="sheet-body">
+          <div className="settings-group">
+            <div className="group-title">Readiness</div>
+            <div className="readiness-grid">
+              {props.snapshot.agents.map((agent) => (
+                <div key={agent.kind} className="readiness-row">
+                  <span>{labelAgent(agent.kind)}</span>
+                  <small>{agent.installed ? (agent.authenticated ? humanize(agent.availability) : "Sign in needed") : "Not installed"}</small>
+                </div>
+              ))}
+              {props.snapshot.localModels?.map((provider) => (
+                <div key={provider.provider} className="readiness-row">
+                  <span>{provider.label}</span>
+                  <small>{provider.server_running ? `${provider.models.length} model${provider.models.length === 1 ? "" : "s"}` : "Offline"}</small>
+                </div>
+              ))}
+              {props.snapshot.sandboxRuntime && (
+                <div className="readiness-row">
+                  <span>Docker Sandbox</span>
+                  <small>{props.snapshot.sandboxRuntime.installed ? (props.snapshot.sandboxRuntime.authenticated ? "Ready" : "Sign in needed") : "Not installed"}</small>
+                </div>
+              )}
+              {props.snapshot.cloudAvailability.map((item) => (
+                <div key={item.agent} className="readiness-row">
+                  <span>{labelAgent(item.agent)} cloud</span>
+                  <small>{item.ready ? "Ready" : item.blockers[0] ?? "Not ready"}</small>
+                </div>
+              ))}
+            </div>
+          </div>
+
           <div className="settings-group">
             <div className="group-title">Limit handling</div>
             <label className="toggle">
@@ -1426,24 +1694,104 @@ function runDefaults(snapshot: WorkbenchSnapshot, agent: AgentKind) {
   return snapshot.runDefaults.find((item) => item.kind === agent) ?? { model: null, reasoning: null };
 }
 
-// Valid model identifiers per agent (kept lowercase so they pass straight to the
-// CLI). The agent's own configured default (e.g. the model picked up from
-// ~/.claude/settings.json) is merged in, deduped against the static list so the
-// same model never shows up twice.
-function modelSuggestions(agent: AgentKind, snapshot: WorkbenchSnapshot | null): string[] {
-  const base =
-    agent === "codex"
-      ? ["gpt-5-codex", "gpt-5", "gpt-4.1", "o3", "o4-mini"]
-      : ["opus", "sonnet", "haiku"];
-  const detected = snapshot ? runDefaults(snapshot, agent).model : null;
-  const merged = detected?.trim() ? [detected.trim(), ...base] : base;
-  const seen = new Set<string>();
-  return merged.filter((name) => {
-    const key = baseModelId(name).toLowerCase();
-    if (!key || seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+type PickerModelOption = {
+  value: string;
+  label: string;
+  source: string;
+};
+
+function modelOptions(
+  agent: AgentKind,
+  snapshot: WorkbenchSnapshot | null,
+  localProvider: LocalModelProvider | null,
+  current: string
+): PickerModelOption[] {
+  const out: PickerModelOption[] = [];
+  const catalog = snapshot?.modelCatalog?.find((item) => item.agent === agent);
+  if (agent === "codex" && localProvider) {
+    const status = snapshot?.localModels?.find((item) => item.provider === localProvider);
+    for (const model of status?.models ?? []) {
+      pushPickerOption(out, {
+        value: model.id,
+        label: model.name || prettyModel(model.id),
+        source: `${status?.label ?? labelLocalProvider(localProvider)}${model.loaded ? " loaded" : ""}`,
+      });
+    }
+  } else {
+    for (const option of catalog?.models ?? []) {
+      pushPickerOption(out, catalogOption(option));
+    }
+  }
+
+  const defaults = snapshot ? runDefaults(snapshot, agent) : { model: null, reasoning: null };
+  if (defaults.model?.trim()) {
+    pushPickerOption(out, {
+      value: defaults.model.trim(),
+      label: prettyModel(defaults.model),
+      source: "CLI default",
+    });
+  }
+  if (current.trim()) {
+    pushPickerOption(out, {
+      value: current.trim(),
+      label: prettyModel(current),
+      source: out.some((option) => modelIdsEqual(option.value, current)) ? "Detected" : "Custom",
+    });
+  }
+  return out;
+}
+
+function catalogOption(option: AgentModelOption): PickerModelOption {
+  return {
+    value: option.id,
+    label: option.label || prettyModel(option.id),
+    source: option.default ? `${sourceLabel(option.source)} default` : sourceLabel(option.source),
+  };
+}
+
+function pushPickerOption(out: PickerModelOption[], option: PickerModelOption): void {
+  if (!option.value.trim()) return;
+  const existing = out.find((item) => modelIdsEqual(item.value, option.value));
+  if (existing) {
+    if (existing.source === "Custom") existing.source = option.source;
+    return;
+  }
+  out.push(option);
+}
+
+function reasoningOptions(agent: AgentKind, snapshot: WorkbenchSnapshot | null): { value: string; label: string }[] {
+  const values = [""];
+  const catalog = snapshot?.modelCatalog?.find((item) => item.agent === agent);
+  for (const value of catalog?.reasoning ?? []) pushReasoning(values, value);
+  const defaults = snapshot ? runDefaults(snapshot, agent) : { model: null, reasoning: null };
+  if (defaults.reasoning) pushReasoning(values, defaults.reasoning);
+  for (const fallback of agent === "claude_code" ? ["low", "medium", "high", "xhigh", "max"] : ["low", "medium", "high"]) {
+    pushReasoning(values, fallback);
+  }
+  return values.map((value) => ({ value, label: value ? humanize(value) : "Default" }));
+}
+
+function pushReasoning(values: string[], value: string): void {
+  const trimmed = value.trim();
+  if (!trimmed) return;
+  if (!values.some((item) => item.toLowerCase() === trimmed.toLowerCase())) values.push(trimmed);
+}
+
+function sourceLabel(source: string): string {
+  switch (source) {
+    case "codex_debug_models":
+      return "Codex";
+    case "claude_help":
+      return "Claude";
+    case "settings":
+      return "Settings";
+    default:
+      return humanize(source);
+  }
+}
+
+function modelIdsEqual(a: string, b: string): boolean {
+  return baseModelId(a).toLowerCase() === baseModelId(b).toLowerCase();
 }
 
 // Strips provider decorations from a model id — e.g. the "[1m]" 1M-context
@@ -1533,6 +1881,81 @@ function labelAgent(agent: AgentKind | null | undefined): string {
   }
 }
 
+function isActivityEvent(event: AgentThreadEvent): boolean {
+  return event.role === "tool" || event.role === "app" || event.role === "system";
+}
+
+function activityIcon(event: AgentThreadEvent) {
+  if (event.kind === "file_changed") return "repo" as const;
+  if (event.kind === "token_usage") return "clock" as const;
+  if (event.kind === "usage_limit" || event.kind === "network_unavailable" || event.kind === "error") return "alert" as const;
+  if (event.role === "tool") return "terminal" as const;
+  return "agent" as const;
+}
+
+function activitySummary(event: AgentThreadEvent): string {
+  const data = asRecord(event.data);
+  if (event.kind === "tool_use") {
+    const name = event.text ? humanize(event.text) : "Tool";
+    const path = toolPath(data?.input);
+    const command = toolCommand(data?.input);
+    if (path) return `${name} ${path}`;
+    if (command) return `${name} ${command}`;
+    return name;
+  }
+  if (event.kind === "tool_result") {
+    return event.text ? `Completed: ${event.text}` : "Tool completed";
+  }
+  if (event.kind === "file_changed") {
+    return event.text ?? "File changed";
+  }
+  if (event.kind === "token_usage") {
+    return event.text ?? "Token usage";
+  }
+  if (event.kind === "session_started") return "Session started";
+  if (event.kind === "session_ended") return `Session ${String(event.text ?? "ended").toLowerCase()}`;
+  if (event.kind === "usage_limit") return event.text ?? "Usage limit reached";
+  if (event.kind === "network_unavailable") return event.text ?? "Network unavailable";
+  if (event.kind === "awaiting_approval") return event.text ?? "Awaiting approval";
+  if (event.kind === "error") return event.text ?? "Error";
+  return event.text ?? humanize(event.kind);
+}
+
+function activityDetail(event: AgentThreadEvent): string | null {
+  const data = asRecord(event.data);
+  if (!data) return null;
+  const detail =
+    typeof data.summary === "string"
+      ? data.summary
+      : data.input !== undefined
+        ? JSON.stringify(data.input, null, 2)
+        : JSON.stringify(data, null, 2);
+  if (!detail || detail === "{}") return null;
+  return truncateDetail(detail, 1800);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+function toolPath(value: unknown): string | null {
+  const input = asRecord(value);
+  const candidate = input?.file_path ?? input?.path ?? input?.filepath ?? input?.filename;
+  return typeof candidate === "string" && candidate.trim() ? candidate.trim() : null;
+}
+
+function toolCommand(value: unknown): string | null {
+  const input = asRecord(value);
+  const candidate = input?.command;
+  if (typeof candidate === "string") return truncateDetail(candidate, 120);
+  if (Array.isArray(candidate)) return truncateDetail(candidate.join(" "), 120);
+  return null;
+}
+
+function truncateDetail(value: string, max: number): string {
+  return value.length <= max ? value : `${value.slice(0, max)}\n\n[details truncated]`;
+}
+
 function humanize(value: string): string {
   return value
     .split("_")
@@ -1551,19 +1974,6 @@ function formatTime(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.valueOf())) return "";
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-
-function latestChangesEventId(details: NonNullable<WorkbenchSnapshot["details"]>): string | null {
-  const hasChanges = details.diff?.repos.some((repo) => repo.files.length > 0) ?? false;
-  if (!hasChanges) return null;
-
-  const latestTurn = [...details.turns]
-    .filter((turn) => turn.state === "completed")
-    .sort((a, b) => Date.parse(b.ended_at ?? b.started_at) - Date.parse(a.ended_at ?? a.started_at))[0];
-  if (!latestTurn) return null;
-
-  const events = details.events.filter((event) => event.turn_id === latestTurn.id);
-  return events.at(-1)?.id ?? null;
 }
 
 function defaultLimitPolicy(): LimitPolicy {

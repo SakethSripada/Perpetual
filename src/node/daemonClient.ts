@@ -39,7 +39,7 @@ export class DaemonClient extends EventEmitter implements DaemonApi {
       };
       socket.once("error", fail);
       socket.once("connect", () => {
-        socket.write(`${JSON.stringify({ token })}\n`);
+        socket.write(`${JSON.stringify({ token, capabilities: ["events_v2"] })}\n`);
       });
       socket.on("data", function onHandshake(chunk) {
         buffer += chunk.toString();
@@ -121,6 +121,14 @@ export class DaemonClient extends EventEmitter implements DaemonApi {
 
   async agentRunDefaults() {
     return responsePayload(await this.requestRaw(variant("agent_run_defaults")), "agent_run_defaults");
+  }
+
+  async agentModelCatalog() {
+    return responsePayload(await this.requestRaw(variant("agent_model_catalog")), "agent_model_catalogs");
+  }
+
+  async detectLocalModels() {
+    return responsePayload(await this.requestRaw(variant("detect_local_models")), "local_model_statuses");
   }
 
   async getLimitPolicy() {
@@ -303,6 +311,13 @@ export class DaemonClient extends EventEmitter implements DaemonApi {
     return responsePayload(await this.requestRaw(variant("thread_diff", { thread_id: threadId })), "agent_thread_diff");
   }
 
+  async applyThreadChanges(threadId: string) {
+    return responsePayload(
+      await this.requestRaw(variant("apply_thread_changes", { thread_id: threadId })),
+      "agent_thread_apply_result"
+    );
+  }
+
   async runAgentThread(
     threadId: string,
     agent: Parameters<DaemonApi["runAgentThread"]>[1],
@@ -387,6 +402,10 @@ export class DaemonClient extends EventEmitter implements DaemonApi {
     );
   }
 
+  async prepareShutdown() {
+    expectUnit(await this.requestRaw(variant("prepare_shutdown")));
+  }
+
   private onData(chunk: string): void {
     this.buffer += chunk;
     for (;;) {
@@ -410,6 +429,16 @@ export class DaemonClient extends EventEmitter implements DaemonApi {
 
     if ("event" in message) {
       this.emit("event", message.event);
+      return;
+    }
+
+    if ("event_v2" in message) {
+      this.emit("event", message.event_v2.event);
+      return;
+    }
+
+    if ("event_gap" in message) {
+      this.emit("event_gap", message.event_gap);
       return;
     }
 

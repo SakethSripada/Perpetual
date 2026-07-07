@@ -5,10 +5,12 @@ import { WorkbenchWebviewProvider } from "./node/webviewProvider";
 
 const VIEW_ID = "agentmanager.workbench";
 const PANEL_VIEW_ID = "agentmanager.workbench.panel";
+let activeDaemon: DaemonManager | null = null;
 
 export function activate(context: vscode.ExtensionContext): void {
-  const output = vscode.window.createOutputChannel("AgentManager");
+  const output = vscode.window.createOutputChannel("Perpetual");
   const daemon = new DaemonManager(context, output);
+  activeDaemon = daemon;
   const controller = new WorkbenchController(context, daemon, output);
   const provider = new WorkbenchWebviewProvider(context, controller);
 
@@ -20,7 +22,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.registerWebviewViewProvider(VIEW_ID, provider, {
       webviewOptions: { retainContextWhenHidden: true },
     }),
-    // Same provider also backs the panel container so AgentManager can live in the
+    // Same provider also backs the panel container so Perpetual can live in the
     // bottom panel (beside Terminal) or be dragged to the secondary sidebar.
     vscode.window.registerWebviewViewProvider(PANEL_VIEW_ID, provider, {
       webviewOptions: { retainContextWhenHidden: true },
@@ -43,6 +45,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 }
 
-export function deactivate(): void {
-  // VS Code disposes context subscriptions automatically.
+export async function deactivate(): Promise<void> {
+  await activeDaemon?.prepareShutdown();
+  activeDaemon = null;
 }

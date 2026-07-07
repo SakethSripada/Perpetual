@@ -1,8 +1,10 @@
 import type {
   AgentKind,
+  AgentModelCatalog,
   AgentRunDefaults,
   AgentStatus,
   AgentThread,
+  AgentThreadApplyResult,
   AgentThreadDiff,
   AgentThreadEvent,
   AgentThreadRepo,
@@ -17,6 +19,7 @@ import type {
   GithubAuthStatus,
   GithubRepository,
   LimitPolicy,
+  LocalModelStatus,
   ContextPacket,
   NewAgentThread,
   NewGithubRepo,
@@ -43,7 +46,9 @@ export type DaemonResponse = string | Record<string, unknown>;
 
 export type ServerMessage =
   | { response: { id: number; ok?: DaemonResponse; err?: string } }
-  | { event: AppEvent };
+  | { event: AppEvent }
+  | { event_v2: { seq: number; event: AppEvent } }
+  | { event_gap: { missed_from: number; missed_to: number } };
 
 export function variant(name: string, payload?: unknown): DaemonRequest {
   return payload === undefined ? name : { [name]: payload };
@@ -72,6 +77,8 @@ export interface DaemonApi {
   connectGithubRepo(token: string, input: NewGithubRepo): Promise<Repo>;
   detectAgents(): Promise<AgentStatus[]>;
   agentRunDefaults(): Promise<AgentRunDefaults[]>;
+  agentModelCatalog(): Promise<AgentModelCatalog[]>;
+  detectLocalModels(): Promise<LocalModelStatus[]>;
   getLimitPolicy(): Promise<LimitPolicy>;
   setLimitPolicy(policy: LimitPolicy): Promise<LimitPolicy>;
   detectSandboxRuntime(): Promise<SandboxRuntimeStatus>;
@@ -116,6 +123,7 @@ export interface DaemonApi {
   assignThreadRepos(threadId: string, repoIds: string[]): Promise<AgentThreadRepo[]>;
   listThreadRepos(threadId: string): Promise<AgentThreadRepo[]>;
   threadDiff(threadId: string): Promise<AgentThreadDiff>;
+  applyThreadChanges(threadId: string): Promise<AgentThreadApplyResult>;
   runAgentThread(
     threadId: string,
     agent: AgentKind,
@@ -138,4 +146,5 @@ export interface DaemonApi {
   deleteQueuedTurn(id: string): Promise<void>;
   updateQueuedTurn(id: string, message: string): Promise<void>;
   reorderQueuedTurns(threadId: string, orderedIds: string[]): Promise<void>;
+  prepareShutdown(): Promise<void>;
 }

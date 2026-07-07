@@ -15,6 +15,8 @@ export class DaemonManager implements vscode.Disposable {
   private child: ChildProcessWithoutNullStreams | null = null;
   private startPromise: Promise<DaemonClient> | null = null;
   private disposed = false;
+  private stdoutBuffer = "";
+  private stderrBuffer = "";
   private readonly events = new vscode.EventEmitter<AppEvent>();
 
   readonly onEvent = this.events.event;
@@ -37,6 +39,20 @@ export class DaemonManager implements vscode.Disposable {
   async ping(): Promise<void> {
     const client = await this.getClient();
     await client.ping();
+  }
+
+  async prepareShutdown(timeoutMs = 5000): Promise<void> {
+    const client = this.client;
+    if (client) {
+      try {
+        await withTimeout(client.prepareShutdown(), timeoutMs);
+        this.output.appendLine("[daemon] shutdown prepared");
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.output.appendLine(`[daemon] shutdown prepare skipped: ${message}`);
+      }
+    }
+    this.dispose();
   }
 
   dispose(): void {
@@ -71,8 +87,8 @@ export class DaemonManager implements vscode.Disposable {
     });
     this.child = child;
 
-    child.stdout.on("data", (chunk) => this.output.append(`[daemon] ${chunk.toString()}`));
-    child.stderr.on("data", (chunk) => this.output.append(`[daemon] ${chunk.toString()}`));
+    child.stdout.on("data", (chunk) => this.appendDaemonOutput("out", chunk.toString()));
+    child.stderr.on("data", (chunk) => this.appendDaemonOutput("err", chunk.toString()));
     child.once("exit", (code, signal) => {
       this.output.appendLine(`[daemon] exited code=${code ?? "null"} signal=${signal ?? "null"}`);
       this.client?.dispose();
@@ -95,6 +111,43 @@ export class DaemonManager implements vscode.Disposable {
     return client;
   }
 
+  private appendDaemonOutput(kind: "out" | "err", chunk: string): void {
+    if (kind === "out") {
+      this.stdoutBuffer += chunk;
+    } else {
+      this.stderrBuffer += chunk;
+    }
+    let emitted = 0;
+    for (;;) {
+      const current = kind === "out" ? this.stdoutBuffer : this.stderrBuffer;
+      const idx = current.indexOf("\n");
+      if (idx < 0) break;
+      const line = current.slice(0, idx).trimEnd();
+      if (kind === "out") {
+        this.stdoutBuffer = current.slice(idx + 1);
+      } else {
+        this.stderrBuffer = current.slice(idx + 1);
+      }
+      if (!line.trim()) continue;
+      emitted += 1;
+      if (emitted <= 20) {
+        this.output.appendLine(`[daemon:${kind}] ${summarizeDaemonLine(line)}`);
+      }
+    }
+    if (emitted > 20) {
+      this.output.appendLine(`[daemon:${kind}] ${emitted - 20} additional log lines suppressed`);
+    }
+    const tail = kind === "out" ? this.stdoutBuffer : this.stderrBuffer;
+    if (tail.length > 4096) {
+      this.output.appendLine(`[daemon:${kind}] ${summarizeDaemonLine(tail)}`);
+      if (kind === "out") {
+        this.stdoutBuffer = "";
+      } else {
+        this.stderrBuffer = "";
+      }
+    }
+  }
+
   private resolveBinary(): string {
     const configured = vscode.workspace
       .getConfiguration("agentmanager")
@@ -102,7 +155,7 @@ export class DaemonManager implements vscode.Disposable {
       .trim();
     if (configured) {
       if (!fs.existsSync(configured)) {
-        throw new Error(`Configured AgentManager daemon does not exist: ${configured}`);
+        throw new Error(`Configured Perpetual daemon does not exist: ${configured}`);
       }
       return configured;
     }
@@ -124,6 +177,30 @@ export class DaemonManager implements vscode.Disposable {
       `No bundled am-daemon binary found for ${target}. Run npm run copy-daemon or set agentmanager.daemonPath.`
     );
   }
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("timed out")), timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
+function summarizeDaemonLine(line: string): string {
+  const redacted = line
+    .replace(/(token|authorization|api[_-]?key|password)=([^,\s]+)/gi, "$1=[redacted]")
+    .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]+/g, "$1[redacted]");
+  if (redacted.length <= 500) return redacted;
+  return `${redacted.slice(0, 500)} ... [truncated]`;
 }
 
 export function currentTarget(platform = process.platform, arch = process.arch): string {

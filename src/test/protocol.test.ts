@@ -63,6 +63,26 @@ test("extracts cloud policy responses", () => {
   assert.equal(policy.enabled, true);
 });
 
+test("serializes launch-quality workbench requests", () => {
+  assert.equal(variant("agent_model_catalog"), "agent_model_catalog");
+  assert.equal(variant("detect_local_models"), "detect_local_models");
+  assert.deepEqual(variant("apply_thread_changes", { thread_id: "t1" }), {
+    apply_thread_changes: { thread_id: "t1" },
+  });
+  assert.equal(variant("prepare_shutdown"), "prepare_shutdown");
+});
+
+test("extracts launch-quality workbench responses", () => {
+  assert.deepEqual(responsePayload({ agent_model_catalogs: [{ agent: "codex" }] }, "agent_model_catalogs"), [
+    { agent: "codex" },
+  ]);
+  assert.deepEqual(responsePayload({ local_model_statuses: [] }, "local_model_statuses"), []);
+  assert.deepEqual(
+    responsePayload({ agent_thread_apply_result: { thread_id: "t1", applied: true } }, "agent_thread_apply_result"),
+    { thread_id: "t1", applied: true }
+  );
+});
+
 test("accepts unit responses only when the daemon returns unit", () => {
   assert.doesNotThrow(() => expectUnit("unit"));
   assert.throws(() => expectUnit("pong"), /expected unit/);
