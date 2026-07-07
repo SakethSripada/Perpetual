@@ -481,6 +481,11 @@ export default function App() {
         }}
         onLocalRepo={() => vscode.postMessage({ type: "connectLocalRepo" })}
         onSandboxLogin={(codex) => vscode.postMessage({ type: "sandboxLogin", codex })}
+        onNewSession={newSession}
+        onRefresh={() => vscode.postMessage({ type: "refresh" })}
+        onReviewChanges={() => selectedThread && vscode.postMessage({ type: "loadDiff", threadId: selectedThread.id })}
+        onOpenSettings={() => setSettingsOpen(true)}
+        onNotice={setNotice}
       />
 
       {settingsOpen && snapshot && (
@@ -961,7 +966,7 @@ function ApprovalCard(props: { approval: ApprovalRequest; onResolve(decision: Ap
   );
 }
 
-function Composer(props: {
+type ComposerProps = {
   snapshot: WorkbenchSnapshot | null;
   selectedThread: AgentThread | null;
   agent: AgentKind;
@@ -987,7 +992,14 @@ function Composer(props: {
   onGithub(): void;
   onLocalRepo(): void;
   onSandboxLogin(codex: boolean): void;
-}) {
+  onNewSession(): void;
+  onRefresh(): void;
+  onReviewChanges(): void;
+  onOpenSettings(): void;
+  onNotice(message: string): void;
+};
+
+function Composer(props: ComposerProps) {
   const [reposOpen, setReposOpen] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [permOpen, setPermOpen] = useState(false);
@@ -1004,11 +1016,21 @@ function Composer(props: {
   const selectedRepos = repos.filter((repo) => props.repoIds.includes(repo.id));
   const noRepoSelected = repos.length > 0 && selectedRepos.length === 0;
   const canSend = !!draft.trim() && !!props.snapshot?.trusted && !noRepoSelected && (!localOn || !!props.model.trim());
+  const slashState = parseSlashDraft(draft);
+  const slashMatches = slashState ? matchingSlashCommands(slashState.query) : [];
   // While the agent is running and the composer is empty, the action button
   // turns into a Stop control (matching Claude Code / Codex). Typing turns it
   // back into a send/queue button.
   const stopMode = props.isRunning && !draft.trim();
   const submit = () => {
+    const command = parseSlashSubmit(draft);
+    if (command && props.snapshot?.trusted) {
+      runSlashCommand(command, props);
+      setDraft("");
+      const el = textareaRef.current;
+      if (el) el.style.height = "auto";
+      return;
+    }
     if (!canSend) return;
     props.onSend(draft);
     setDraft("");
@@ -1035,6 +1057,30 @@ function Composer(props: {
   return (
     <footer className="composer">
       <div className="composer-box">
+        {slashState && slashMatches.length > 0 && (
+          <div className="slash-menu" role="listbox">
+            {slashMatches.slice(0, 8).map((command) => (
+              <button
+                key={command.name}
+                type="button"
+                className="slash-item"
+                role="option"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  setDraft(`/${command.name}${command.takesInput ? " " : ""}`);
+                  requestAnimationFrame(() => {
+                    const el = textareaRef.current;
+                    el?.focus();
+                    if (el) autoGrow(el);
+                  });
+                }}
+              >
+                <span>/{command.name}</span>
+                <small>{command.description}</small>
+              </button>
+            ))}
+          </div>
+        )}
         <textarea
           ref={textareaRef}
           value={draft}
@@ -1047,6 +1093,10 @@ function Composer(props: {
             if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.nativeEvent.isComposing) {
               event.preventDefault();
               submit();
+            }
+            if (event.key === "Tab" && slashState && slashMatches[0]) {
+              event.preventDefault();
+              setDraft(`/${slashMatches[0].name}${slashMatches[0].takesInput ? " " : ""}`);
             }
           }}
         />
@@ -1287,6 +1337,314 @@ function Composer(props: {
       </div>
     </footer>
   );
+}
+
+type ParsedSlashCommand = { name: string; arg: string };
+type SlashCommand = {
+  name: string;
+  aliases?: string[];
+  description: string;
+  takesInput?: boolean;
+  run(arg: string, props: ComposerProps): void;
+};
+
+const SLASH_COMMANDS: SlashCommand[] = [
+  {
+    name: "help",
+    description: "Show available Perpetual slash commands",
+    run: (_arg, props) => props.onNotice(SLASH_HELP),
+  },
+  {
+    name: "plan",
+    description: "Plan first in read-only mode, without editing files",
+    takesInput: true,
+    run: (arg, props) => {
+      props.setPermission("read_only");
+      props.onSend(
+        promptWithArg(
+          "Create a concrete implementation plan. Do not edit files or run destructive commands yet. Include risks, test strategy, and the exact first steps.",
+          arg
+        )
+      );
+    },
+  },
+  {
+    name: "review",
+    aliases: ["pr"],
+    description: "Review code or current managed changes",
+    takesInput: true,
+    run: (arg, props) => {
+      if (!arg.trim() && props.selectedThread) props.onReviewChanges();
+      props.onSend(
+        promptWithArg(
+          "Review the current code/changes. Prioritize correctness bugs, regressions, missing tests, security or data-loss risks, and concrete file-level findings. Keep summary secondary.",
+          arg
+        )
+      );
+    },
+  },
+  {
+    name: "diff",
+    description: "Load the managed worktree diff",
+    run: (_arg, props) => {
+      if (props.selectedThread) props.onReviewChanges();
+      else props.onNotice("Start or select a session before loading a diff.");
+    },
+  },
+  {
+    name: "fix",
+    description: "Ask the agent to implement a fix",
+    takesInput: true,
+    run: (arg, props) =>
+      props.onSend(promptWithArg("Implement the fix end-to-end, keep changes scoped, and verify with the relevant tests/build.", arg)),
+  },
+  {
+    name: "test",
+    description: "Ask the agent to run or add tests",
+    takesInput: true,
+    run: (arg, props) =>
+      props.onSend(promptWithArg("Run the relevant tests. If coverage is missing for the change, add focused tests first, then report the result.", arg)),
+  },
+  {
+    name: "commit",
+    description: "Ask the agent to group and commit current changes",
+    takesInput: true,
+    run: (arg, props) =>
+      props.onSend(promptWithArg("Group the relevant uncommitted changes and commit them using this repository's commit conventions. Leave unrelated changes untouched.", arg)),
+  },
+  {
+    name: "explain",
+    description: "Ask for a concise explanation",
+    takesInput: true,
+    run: (arg, props) => props.onSend(promptWithArg("Explain this clearly and concisely with the relevant code references.", arg)),
+  },
+  {
+    name: "continue",
+    aliases: ["resume"],
+    description: "Resume the current task through Perpetual",
+    takesInput: true,
+    run: (arg, props) => props.onSend(arg.trim() || "Continue from the current state. Re-read recent context and proceed with the next necessary step."),
+  },
+  {
+    name: "agent",
+    description: "Switch agent: /agent claude or /agent codex",
+    takesInput: true,
+    run: (arg, props) => {
+      const normalized = arg.trim().toLowerCase();
+      if (normalized.startsWith("codex")) {
+        props.setAgent("codex");
+        props.onNotice("Agent set to Codex.");
+      } else if (normalized.startsWith("claude")) {
+        props.setAgent("claude_code");
+        props.onNotice("Agent set to Claude.");
+      } else {
+        props.onNotice("Usage: /agent claude or /agent codex");
+      }
+    },
+  },
+  {
+    name: "permission",
+    aliases: ["perm"],
+    description: "Set permissions: read-only, write, or auto",
+    takesInput: true,
+    run: (arg, props) => {
+      const value = parsePermission(arg);
+      if (!value) {
+        props.onNotice("Usage: /permission read-only, /permission write, or /permission auto");
+        return;
+      }
+      props.setPermission(value);
+      props.onNotice(`Permission set to ${permissionComposerLabel(value)}.`);
+    },
+  },
+  {
+    name: "model",
+    description: "Set model override",
+    takesInput: true,
+    run: (arg, props) => {
+      props.setModel(arg.trim());
+      props.onNotice(arg.trim() ? `Model set to ${arg.trim()}.` : "Model override cleared.");
+    },
+  },
+  {
+    name: "reasoning",
+    description: "Set reasoning effort",
+    takesInput: true,
+    run: (arg, props) => {
+      const value = arg.trim() || "medium";
+      props.setReasoning(value);
+      props.onNotice(`Reasoning set to ${value}.`);
+    },
+  },
+  {
+    name: "limits",
+    aliases: ["fallback"],
+    description: "Open auto-switch and limit recovery settings",
+    run: (_arg, props) => props.onOpenSettings(),
+  },
+  {
+    name: "cloud",
+    description: "Open cloud carryover settings",
+    run: (_arg, props) => props.onOpenSettings(),
+  },
+  {
+    name: "sandbox",
+    description: "Toggle Codex Docker sandbox mode",
+    run: (_arg, props) => {
+      props.setAgent("codex");
+      props.setBackend(props.backend === "docker_sandbox" ? "host" : "docker_sandbox");
+      props.onNotice(props.backend === "docker_sandbox" ? "Docker sandbox disabled." : "Agent set to Codex and Docker sandbox enabled.");
+    },
+  },
+  {
+    name: "local",
+    description: "Toggle Codex local model mode",
+    takesInput: true,
+    run: (arg, props) => {
+      props.setAgent("codex");
+      const provider = arg.trim().toLowerCase().startsWith("lm") ? "lm_studio" : "ollama";
+      if (props.localProvider) {
+        props.setLocalProvider("");
+        props.setLocalBaseUrl("");
+        props.onNotice("Local model mode disabled.");
+      } else {
+        props.setLocalProvider(provider);
+        props.setLocalBaseUrl(defaultLocalBaseUrl(provider));
+        props.onNotice(`Agent set to Codex and local model mode enabled for ${labelLocalProvider(provider)}.`);
+      }
+    },
+  },
+  {
+    name: "settings",
+    description: "Open Perpetual settings",
+    run: (_arg, props) => props.onOpenSettings(),
+  },
+  {
+    name: "mcp",
+    description: "Use configured MCP tools through the active agent",
+    takesInput: true,
+    run: (arg, props) =>
+      props.onSend(promptWithArg("Use the configured MCP tools available to this agent where useful. Explain which MCP capability you need and proceed through Perpetual approvals.", arg)),
+  },
+  {
+    name: "plugins",
+    description: "Use installed agent plugins/extensions where useful",
+    takesInput: true,
+    run: (arg, props) =>
+      props.onSend(promptWithArg("Use any installed Claude/Codex plugins or extensions available in this environment where useful. Keep all work inside Perpetual's managed session.", arg)),
+  },
+  {
+    name: "agents",
+    description: "Delegate or coordinate with available subagents",
+    takesInput: true,
+    run: (arg, props) =>
+      props.onSend(promptWithArg("Use available subagents/background-agent style delegation if this agent supports it. Coordinate the work and report back through this Perpetual session.", arg)),
+  },
+  {
+    name: "doctor",
+    description: "Diagnose setup, auth, tools, and repo issues",
+    takesInput: true,
+    run: (arg, props) =>
+      props.onSend(promptWithArg("Diagnose the current setup: agent auth, installed tools, repository state, model/backend settings, and likely blockers. Do not make unrelated changes.", arg)),
+  },
+  {
+    name: "init",
+    description: "Initialize project guidance for future agent runs",
+    takesInput: true,
+    run: (arg, props) =>
+      props.onSend(promptWithArg("Inspect this repository and create or update concise agent guidance files if appropriate, such as AGENTS.md or CLAUDE.md. Keep it accurate and minimal.", arg)),
+  },
+  {
+    name: "new",
+    aliases: ["clear"],
+    description: "Start a new Perpetual session",
+    run: (_arg, props) => props.onNewSession(),
+  },
+  {
+    name: "status",
+    description: "Refresh and summarize current session status",
+    run: (_arg, props) => {
+      props.onRefresh();
+      props.onSend("Summarize current session status: what is done, what is running or queued, blockers, limits/fallback state, changed files, and next action.");
+    },
+  },
+  {
+    name: "refresh",
+    description: "Refresh sessions, agents, and availability",
+    run: (_arg, props) => props.onRefresh(),
+  },
+  {
+    name: "stop",
+    description: "Stop the active run",
+    run: (_arg, props) => {
+      if (props.selectedThread) props.onStop();
+      else props.onNotice("No active session to stop.");
+    },
+  },
+  {
+    name: "repo",
+    description: "Connect a local repository",
+    run: (_arg, props) => props.onLocalRepo(),
+  },
+  {
+    name: "github",
+    description: "Connect a GitHub repository",
+    run: (_arg, props) => props.onGithub(),
+  },
+  {
+    name: "compact",
+    description: "Ask the agent to summarize context and next steps",
+    run: (_arg, props) =>
+      props.onSend("Summarize the current session state, decisions, changed files, blockers, and exact next actions so the task can be resumed later."),
+  },
+];
+
+const SLASH_HELP = `Slash commands: ${SLASH_COMMANDS.map((command) => `/${command.name}`).join(", ")}`;
+
+function parseSlashDraft(value: string): { query: string } | null {
+  const trimmedLeft = value.replace(/^\s+/, "");
+  if (!trimmedLeft.startsWith("/") || trimmedLeft.includes("\n")) return null;
+  const body = trimmedLeft.slice(1);
+  if (body.includes(" ")) return null;
+  return { query: body.toLowerCase() };
+}
+
+function parseSlashSubmit(value: string): ParsedSlashCommand | null {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("/") || trimmed.includes("\n")) return null;
+  const match = trimmed.match(/^\/([A-Za-z][\w-]*)(?:\s+([\s\S]*))?$/);
+  if (!match) return null;
+  return { name: match[1].toLowerCase(), arg: match[2] ?? "" };
+}
+
+function matchingSlashCommands(query: string): SlashCommand[] {
+  return SLASH_COMMANDS.filter((command) =>
+    [command.name, ...(command.aliases ?? [])].some((name) => name.startsWith(query))
+  );
+}
+
+function runSlashCommand(parsed: ParsedSlashCommand, props: ComposerProps): void {
+  const command = SLASH_COMMANDS.find((item) => item.name === parsed.name || item.aliases?.includes(parsed.name));
+  if (!command) {
+    props.onSend(
+      `The user entered the native-style slash command "/${parsed.name}". Interpret it inside this Perpetual session if possible, preserving Perpetual's approvals, auto-switching, limit recovery, and managed worktree flow.\n\n${parsed.arg}`.trim()
+    );
+    return;
+  }
+  command.run(parsed.arg, props);
+}
+
+function promptWithArg(instruction: string, arg: string): string {
+  const trimmed = arg.trim();
+  return trimmed ? `${instruction}\n\nUser request:\n${trimmed}` : instruction;
+}
+
+function parsePermission(value: string): PermissionPolicy | null {
+  const normalized = value.trim().toLowerCase().replace(/_/g, "-");
+  if (["read", "readonly", "read-only", "plan"].includes(normalized)) return "read_only";
+  if (["write", "edit", "workspace", "workspace-write"].includes(normalized)) return "workspace_write";
+  if (["auto", "autonomous", "full", "full-access"].includes(normalized)) return "autonomous";
+  return null;
 }
 
 const PERMISSIONS: { value: PermissionPolicy; label: string; icon: "eye" | "shield" | "bolt" }[] = [
