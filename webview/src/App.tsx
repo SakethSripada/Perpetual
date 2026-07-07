@@ -593,7 +593,7 @@ function Popover(props: {
       const menuHeight = Math.min(menuRef.current?.offsetHeight ?? maxHeight, maxHeight);
       // Anchor by preferred edge, then clamp fully inside the viewport so menus never clip.
       const preferredLeft =
-        align === "center" ? (vw - menuWidth) / 2 : align === "right" ? rect.right - menuWidth : rect.left;
+        align === "center" ? rect.left + rect.width / 2 - menuWidth / 2 : align === "right" ? rect.right - menuWidth : rect.left;
       const left = Math.max(margin, Math.min(preferredLeft, vw - menuWidth - margin));
       const preferredTop = openUp ? rect.top - menuHeight - margin : rect.bottom + margin;
       const top = Math.max(margin, Math.min(preferredTop, vh - menuHeight - margin));
@@ -1017,7 +1017,7 @@ function Composer(props: ComposerProps) {
   const noRepoSelected = repos.length > 0 && selectedRepos.length === 0;
   const canSend = !!draft.trim() && !!props.snapshot?.trusted && !noRepoSelected && (!localOn || !!props.model.trim());
   const slashState = parseSlashDraft(draft);
-  const slashMatches = slashState ? matchingSlashCommands(slashState.query) : [];
+  const slashMatches = slashState ? matchingSlashCommands(slashState.query, props.agent) : [];
   // While the agent is running and the composer is empty, the action button
   // turns into a Stop control (matching Claude Code / Codex). Typing turns it
   // back into a send/queue button.
@@ -1076,7 +1076,7 @@ function Composer(props: ComposerProps) {
                 }}
               >
                 <span>/{command.name}</span>
-                <small>{command.description}</small>
+                <small><em>{commandScopeLabel(command)}</em>{command.description}</small>
               </button>
             ))}
           </div>
@@ -1162,7 +1162,7 @@ function Composer(props: ComposerProps) {
               ariaLabel="Agent"
               title="Agent"
               className="chip-btn agent-chip"
-              icon={<BrandMark size={15} />}
+              icon={<AgentMark agent={props.agent} />}
               value={props.agent}
               placement="above"
               onChange={(value) => props.setAgent(value as AgentKind)}
@@ -1339,10 +1339,27 @@ function Composer(props: ComposerProps) {
   );
 }
 
+function AgentMark({ agent }: { agent: AgentKind }) {
+  if (agent === "codex") {
+    return (
+      <span className="agent-mark codex" aria-hidden="true">
+        <span />
+      </span>
+    );
+  }
+  return (
+    <span className="agent-mark claude" aria-hidden="true">
+      <span />
+    </span>
+  );
+}
+
 type ParsedSlashCommand = { name: string; arg: string };
+type SlashScope = "perpetual" | AgentKind;
 type SlashCommand = {
   name: string;
   aliases?: string[];
+  scopes?: SlashScope[];
   description: string;
   takesInput?: boolean;
   run(arg: string, props: ComposerProps): void;
@@ -1352,7 +1369,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
   {
     name: "help",
     description: "Show available Perpetual slash commands",
-    run: (_arg, props) => props.onNotice(SLASH_HELP),
+    run: (_arg, props) => props.onNotice(slashHelp(props.agent)),
   },
   {
     name: "plan",
@@ -1426,6 +1443,27 @@ const SLASH_COMMANDS: SlashCommand[] = [
     run: (arg, props) => props.onSend(arg.trim() || "Continue from the current state. Re-read recent context and proceed with the next necessary step."),
   },
   {
+    name: "goal",
+    scopes: ["claude_code", "codex"],
+    description: "Set or summarize a task goal",
+    takesInput: true,
+    run: (arg, props) => props.onSend(promptWithArg("Treat this as the persistent goal for the current task. Track progress against it, call out blockers, and keep working across turns until it is satisfied or explicitly cleared.", arg)),
+  },
+  {
+    name: "btw",
+    aliases: ["side"],
+    scopes: ["claude_code", "codex"],
+    description: "Ask a side question",
+    takesInput: true,
+    run: (arg, props) => props.onSend(promptWithArg("Answer this side question briefly without derailing the main task. Do not make code changes unless explicitly requested.", arg)),
+  },
+  {
+    name: "usage",
+    scopes: ["claude_code", "codex"],
+    description: "Summarize usage and limits",
+    run: (_arg, props) => props.onSend("Summarize current usage/limit state available through Perpetual, including fallback status, model/provider availability, and next reset if known."),
+  },
+  {
     name: "agent",
     description: "Switch agent: /agent claude or /agent codex",
     takesInput: true,
@@ -1489,6 +1527,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
   },
   {
     name: "sandbox",
+    scopes: ["codex"],
     description: "Toggle Codex Docker sandbox mode",
     run: (_arg, props) => {
       props.setAgent("codex");
@@ -1498,6 +1537,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
   },
   {
     name: "local",
+    scopes: ["codex"],
     description: "Toggle Codex local model mode",
     takesInput: true,
     run: (arg, props) => {
@@ -1521,6 +1561,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
   },
   {
     name: "mcp",
+    scopes: ["claude_code", "codex"],
     description: "Use configured MCP tools through the active agent",
     takesInput: true,
     run: (arg, props) =>
@@ -1528,6 +1569,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
   },
   {
     name: "plugins",
+    scopes: ["claude_code", "codex"],
     description: "Use installed agent plugins/extensions where useful",
     takesInput: true,
     run: (arg, props) =>
@@ -1535,6 +1577,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
   },
   {
     name: "agents",
+    scopes: ["claude_code", "codex"],
     description: "Delegate or coordinate with available subagents",
     takesInput: true,
     run: (arg, props) =>
@@ -1542,6 +1585,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
   },
   {
     name: "doctor",
+    scopes: ["claude_code", "codex"],
     description: "Diagnose setup, auth, tools, and repo issues",
     takesInput: true,
     run: (arg, props) =>
@@ -1549,6 +1593,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
   },
   {
     name: "init",
+    scopes: ["claude_code", "codex"],
     description: "Initialize project guidance for future agent runs",
     takesInput: true,
     run: (arg, props) =>
@@ -1597,9 +1642,197 @@ const SLASH_COMMANDS: SlashCommand[] = [
     run: (_arg, props) =>
       props.onSend("Summarize the current session state, decisions, changed files, blockers, and exact next actions so the task can be resumed later."),
   },
+  {
+    name: "fast",
+    scopes: ["codex"],
+    description: "Toggle or inspect Codex fast mode",
+    takesInput: true,
+    run: (arg, props) => props.onSend(promptWithArg("Apply or inspect Codex fast mode for this session. If unavailable for the selected model, explain why and continue normally.", arg)),
+  },
+  {
+    name: "personality",
+    scopes: ["codex"],
+    description: "Set Codex response style",
+    takesInput: true,
+    run: (arg, props) => props.onSend(promptWithArg("Adopt this Codex response personality/style for future replies in this Perpetual session. Supported styles include friendly, pragmatic, or none when applicable.", arg)),
+  },
+  {
+    name: "ide",
+    scopes: ["codex"],
+    description: "Use active IDE/editor context",
+    takesInput: true,
+    run: (arg, props) => props.onSend(promptWithArg("Use the current IDE/editor context from this workspace where available: open files, selected repositories, managed diff, and active task context.", arg)),
+  },
+  {
+    name: "apps",
+    aliases: ["app"],
+    scopes: ["codex"],
+    description: "Use Codex apps/connectors",
+    takesInput: true,
+    run: (arg, props) => props.onSend(promptWithArg("Use available Codex apps/connectors if configured. Tell me which connector/app would help and proceed through Perpetual approvals.", arg)),
+  },
+  {
+    name: "hooks",
+    scopes: ["codex"],
+    description: "Inspect Codex hook behavior",
+    takesInput: true,
+    run: (arg, props) => props.onSend(promptWithArg("Inspect or reason about Codex lifecycle hooks relevant to this task. Do not trust or execute unexpected hooks without explicit approval.", arg)),
+  },
+  {
+    name: "approve",
+    scopes: ["codex"],
+    description: "Retry after an approval/review denial",
+    takesInput: true,
+    run: (arg, props) => props.onSend(promptWithArg("Review the recent denied or blocked action, explain why it was denied, and retry only if it is safe under Perpetual approvals.", arg)),
+  },
+  {
+    name: "memories",
+    aliases: ["memory"],
+    scopes: ["codex"],
+    description: "Use or update Codex memory guidance",
+    takesInput: true,
+    run: (arg, props) => props.onSend(promptWithArg("Inspect/update persistent memory guidance only if appropriate. Keep repository guidance explicit and minimal.", arg)),
+  },
+  {
+    name: "import",
+    scopes: ["codex"],
+    description: "Import external agent setup",
+    takesInput: true,
+    run: (arg, props) => props.onSend(promptWithArg("Inspect supported external-agent setup files and suggest how to migrate/import useful guidance into this repository's Perpetual/Codex workflow.", arg)),
+  },
+  {
+    name: "raw",
+    scopes: ["codex"],
+    description: "Request raw copy-friendly output",
+    takesInput: true,
+    run: (arg, props) => props.onSend(promptWithArg("Respond in a raw, copy-friendly format with minimal formatting and no decorative prose.", arg)),
+  },
+  {
+    name: "fork",
+    scopes: ["codex", "claude_code"],
+    description: "Explore a forked approach",
+    takesInput: true,
+    run: (arg, props) => props.onSend(promptWithArg("Explore this as a forked alternative approach while preserving the current path. Compare tradeoffs before making irreversible changes.", arg)),
+  },
+  {
+    name: "debug-config",
+    scopes: ["codex"],
+    description: "Diagnose Codex config layers",
+    takesInput: true,
+    run: (arg, props) => props.onSend(promptWithArg("Diagnose Codex configuration layers, profiles, permissions, sandbox, MCP, plugins, hooks, and model settings relevant to this workspace.", arg)),
+  },
+  {
+    name: "code-review",
+    aliases: ["simplify"],
+    scopes: ["claude_code"],
+    description: "Claude code review workflow",
+    takesInput: true,
+    run: (arg, props) => props.onSend(promptWithArg("Run a Claude Code style code review of the current diff. Prioritize correctness bugs and cleanups. If '--fix' is requested, apply safe fixes and verify them.", arg)),
+  },
+  {
+    name: "security-review",
+    scopes: ["claude_code"],
+    description: "Security review pending changes",
+    takesInput: true,
+    run: (arg, props) => props.onSend(promptWithArg("Review pending changes for security vulnerabilities such as injection, auth/session bugs, data exposure, unsafe filesystem/network behavior, and supply-chain risk.", arg)),
+  },
+  {
+    name: "verify",
+    aliases: ["run"],
+    scopes: ["claude_code"],
+    description: "Build/run app to verify behavior",
+    takesInput: true,
+    run: (arg, props) => props.onSend(promptWithArg("Verify the change by building/running the app or relevant workflow, not only by static checks. Observe behavior and report evidence.", arg)),
+  },
+  {
+    name: "background",
+    aliases: ["bg"],
+    scopes: ["claude_code"],
+    description: "Plan background-agent style work",
+    takesInput: true,
+    run: (arg, props) => props.onSend(promptWithArg("Treat this as a background-agent style task. Break it into independently verifiable units and keep Perpetual updated with progress and blockers.", arg)),
+  },
+  {
+    name: "batch",
+    scopes: ["claude_code"],
+    description: "Decompose large work into parallel units",
+    takesInput: true,
+    run: (arg, props) => props.onSend(promptWithArg("Decompose this large change into independent work units, identify safe sequencing/parallelism, propose verification for each unit, and wait before broad implementation.", arg)),
+  },
+  {
+    name: "branch",
+    scopes: ["claude_code"],
+    description: "Explore an alternate branch",
+    takesInput: true,
+    run: (arg, props) => props.onSend(promptWithArg("Explore this alternate direction as a branch of the current approach. Keep the original assumptions visible and compare tradeoffs.", arg)),
+  },
+  {
+    name: "rewind",
+    aliases: ["checkpoint", "undo"],
+    scopes: ["claude_code"],
+    description: "Recover from a bad direction",
+    takesInput: true,
+    run: (arg, props) => props.onSend(promptWithArg("Identify what should be rewound or undone from the current session. Propose the safest recovery plan before changing files.", arg)),
+  },
+  {
+    name: "context",
+    aliases: ["cost", "stats"],
+    scopes: ["claude_code"],
+    description: "Analyze context usage",
+    takesInput: true,
+    run: (arg, props) => props.onSend(promptWithArg("Analyze what context matters in this session, what can be dropped, and what should be preserved for the next turn.", arg)),
+  },
+  {
+    name: "advisor",
+    scopes: ["claude_code"],
+    description: "Use second-pass advisor behavior",
+    takesInput: true,
+    run: (arg, props) => props.onSend(promptWithArg("Use an advisor-style second-pass critique for key decisions in this task. Call out uncertain assumptions and alternatives before implementing.", arg)),
+  },
+  {
+    name: "loop",
+    aliases: ["proactive"],
+    scopes: ["claude_code"],
+    description: "Create a recurring check loop",
+    takesInput: true,
+    run: (arg, props) => props.onSend(promptWithArg("Set up a self-paced loop for this task: define the check, interval/trigger, stopping condition, and how progress should be reported through Perpetual.", arg)),
+  },
+  {
+    name: "claude-api",
+    scopes: ["claude_code"],
+    description: "Use Claude API reference workflow",
+    takesInput: true,
+    run: (arg, props) => props.onSend(promptWithArg("Use Claude API reference knowledge for this task. If migration is requested, identify affected SDK usage, model IDs, streaming/tool-use changes, and tests.", arg)),
+  },
+  {
+    name: "dataviz",
+    scopes: ["claude_code"],
+    description: "Use data visualization guidance",
+    takesInput: true,
+    run: (arg, props) => props.onSend(promptWithArg("Apply data visualization guidance: choose chart form, color roles, accessibility/contrast, interaction states, and validation steps.", arg)),
+  },
+  {
+    name: "design-sync",
+    scopes: ["claude_code"],
+    description: "Use design-system guidance",
+    takesInput: true,
+    run: (arg, props) => props.onSend(promptWithArg("Inspect the app's design system and apply it faithfully. Reuse existing components/tokens and verify responsive states.", arg)),
+  },
 ];
 
-const SLASH_HELP = `Slash commands: ${SLASH_COMMANDS.map((command) => `/${command.name}`).join(", ")}`;
+function slashHelp(agent: AgentKind): string {
+  return `Slash commands for ${labelAgent(agent)}: ${availableSlashCommands(agent).map((command) => `/${command.name}`).join(", ")}`;
+}
+
+function availableSlashCommands(agent: AgentKind): SlashCommand[] {
+  return SLASH_COMMANDS.filter((command) => !command.scopes || command.scopes.includes("perpetual") || command.scopes.includes(agent));
+}
+
+function commandScopeLabel(command: SlashCommand): string {
+  if (!command.scopes || command.scopes.includes("perpetual")) return "Perpetual";
+  if (command.scopes.length > 1) return "Agent";
+  return labelAgent(command.scopes[0] as AgentKind);
+}
 
 function parseSlashDraft(value: string): { query: string } | null {
   const trimmedLeft = value.replace(/^\s+/, "");
@@ -1617,14 +1850,19 @@ function parseSlashSubmit(value: string): ParsedSlashCommand | null {
   return { name: match[1].toLowerCase(), arg: match[2] ?? "" };
 }
 
-function matchingSlashCommands(query: string): SlashCommand[] {
-  return SLASH_COMMANDS.filter((command) =>
+function matchingSlashCommands(query: string, agent: AgentKind): SlashCommand[] {
+  return availableSlashCommands(agent).filter((command) =>
     [command.name, ...(command.aliases ?? [])].some((name) => name.startsWith(query))
   );
 }
 
 function runSlashCommand(parsed: ParsedSlashCommand, props: ComposerProps): void {
-  const command = SLASH_COMMANDS.find((item) => item.name === parsed.name || item.aliases?.includes(parsed.name));
+  const command = availableSlashCommands(props.agent).find((item) => item.name === parsed.name || item.aliases?.includes(parsed.name));
+  const otherAgentCommand = SLASH_COMMANDS.find((item) => item.name === parsed.name || item.aliases?.includes(parsed.name));
+  if (!command && otherAgentCommand?.scopes?.some((scope) => scope === "claude_code" || scope === "codex")) {
+    props.onNotice(`/${parsed.name} is available for ${otherAgentCommand.scopes.map((scope) => scope === "perpetual" ? "Perpetual" : labelAgent(scope as AgentKind)).join(", ")}, not ${labelAgent(props.agent)}.`);
+    return;
+  }
   if (!command) {
     props.onSend(
       `The user entered the native-style slash command "/${parsed.name}". Interpret it inside this Perpetual session if possible, preserving Perpetual's approvals, auto-switching, limit recovery, and managed worktree flow.\n\n${parsed.arg}`.trim()

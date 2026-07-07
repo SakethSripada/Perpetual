@@ -660,12 +660,24 @@ textarea {
   font-weight: 600;
 }
 .slash-item small {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--am-muted);
   font-size: 12px;
+}
+.slash-item small em {
+  flex: 0 0 auto;
+  min-width: 54px;
+  color: color-mix(in srgb, var(--vscode-foreground) 66%, var(--am-muted));
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 .composer-box:focus-within {
   border-color: color-mix(in srgb, var(--vscode-foreground) 28%, transparent);
@@ -731,6 +743,34 @@ textarea {
 .chip-btn svg {
   flex: 0 0 auto;
   opacity: 0.9;
+}
+.agent-mark {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+.agent-mark.claude span {
+  width: 14px;
+  height: 14px;
+  border-radius: 5px;
+  background:
+    radial-gradient(circle at 50% 50%, var(--vscode-foreground) 0 18%, transparent 19%),
+    conic-gradient(from 0deg, transparent 0 7%, currentColor 7% 11%, transparent 11% 23%, currentColor 23% 27%, transparent 27% 39%, currentColor 39% 43%, transparent 43% 55%, currentColor 55% 59%, transparent 59% 71%, currentColor 71% 75%, transparent 75% 87%, currentColor 87% 91%, transparent 91%);
+  color: color-mix(in srgb, var(--vscode-foreground) 88%, var(--am-muted));
+}
+.agent-mark.codex {
+  border-radius: 5px;
+  border: 1.4px solid color-mix(in srgb, var(--vscode-foreground) 80%, transparent);
+}
+.agent-mark.codex span {
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--vscode-foreground) 86%, var(--am-muted));
 }
 .agent-chip {
   max-width: 120px;
