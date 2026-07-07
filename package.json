@@ -1,12 +1,12 @@
 {
   "name": "agentmanager-vscode",
-  "displayName": "AgentManager",
-  "description": "Run Codex and Claude Code sessions from VS Code with agent routing, handoffs, GitHub repos, and Docker Sandbox support.",
+  "displayName": "Perpetual",
+  "description": "Run Codex and Claude Code sessions from VS Code with model switching, handoffs, GitHub repos, and Docker Sandbox support.",
   "version": "0.1.0",
   "publisher": "agentmanager",
   "license": "SEE LICENSE IN LICENSE",
   "author": {
-    "name": "AgentManager"
+    "name": "Perpetual"
   },
   "homepage": "https://github.com/agentmanager/agentmanager",
   "repository": {
@@ -55,7 +55,7 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
-      "description": "AgentManager can show its view in Restricted Mode, but repository access, local CLI execution, and Docker Sandbox runs require a trusted workspace.",
+      "description": "Perpetual can show its view in Restricted Mode, but repository access, local CLI execution, and Docker Sandbox runs require a trusted workspace.",
       "restrictedConfigurations": [
         "agentmanager.defaultAgent",
         "agentmanager.defaultPermission",
@@ -69,14 +69,14 @@
       "activitybar": [
         {
           "id": "agentmanager",
-          "title": "AgentManager",
+          "title": "Perpetual",
           "icon": "media/activity.svg"
         }
       ],
       "panel": [
         {
           "id": "agentmanagerPanel",
-          "title": "AgentManager",
+          "title": "Perpetual",
           "icon": "media/activity.svg"
         }
       ]
@@ -85,18 +85,18 @@
       "agentmanager": [
         {
           "id": "agentmanager.workbench",
-          "name": "AgentManager",
+          "name": "Perpetual",
           "icon": "media/activity.svg",
-          "contextualTitle": "AgentManager",
+          "contextualTitle": "Perpetual",
           "type": "webview"
         }
       ],
       "agentmanagerPanel": [
         {
           "id": "agentmanager.workbench.panel",
-          "name": "AgentManager",
+          "name": "Perpetual",
           "icon": "media/activity.svg",
-          "contextualTitle": "AgentManager",
+          "contextualTitle": "Perpetual",
           "type": "webview"
         }
       ]
@@ -104,38 +104,38 @@
     "commands": [
       {
         "command": "agentmanager.openWorkbench",
-        "title": "Open AgentManager Panel",
-        "category": "AgentManager",
+        "title": "Open Perpetual Panel",
+        "category": "Perpetual",
         "icon": "$(comment-discussion)"
       },
       {
         "command": "agentmanager.newSession",
         "title": "New Session",
-        "category": "AgentManager",
+        "category": "Perpetual",
         "icon": "$(add)"
       },
       {
         "command": "agentmanager.refresh",
         "title": "Refresh",
-        "category": "AgentManager",
+        "category": "Perpetual",
         "icon": "$(refresh)"
       },
       {
         "command": "agentmanager.connectLocalRepo",
         "title": "Connect Local Repository",
-        "category": "AgentManager",
+        "category": "Perpetual",
         "icon": "$(repo)"
       },
       {
         "command": "agentmanager.connectGithubRepo",
         "title": "Connect GitHub Repository",
-        "category": "AgentManager",
+        "category": "Perpetual",
         "icon": "$(github)"
       },
       {
         "command": "agentmanager.openSettings",
         "title": "Open Settings",
-        "category": "AgentManager",
+        "category": "Perpetual",
         "icon": "$(settings-gear)"
       }
     ],
@@ -169,7 +169,7 @@
       ]
     },
     "configuration": {
-      "title": "AgentManager",
+      "title": "Perpetual",
       "properties": {
         "agentmanager.defaultAgent": {
           "type": "string",
@@ -178,7 +178,7 @@
             "codex"
           ],
           "default": "claude_code",
-          "description": "Default agent for new AgentManager sessions."
+          "description": "Default agent for new Perpetual sessions."
         },
         "agentmanager.defaultPermission": {
           "type": "string",

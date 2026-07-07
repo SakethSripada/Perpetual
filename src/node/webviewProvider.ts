@@ -31,7 +31,7 @@ export class WorkbenchWebviewProvider implements vscode.WebviewViewProvider, vsc
 
     this.panel = vscode.window.createWebviewPanel(
       VIEW_ID,
-      "AgentManager",
+      "Perpetual",
       vscode.ViewColumn.Beside,
       {
         enableScripts: true,
@@ -106,7 +106,7 @@ export class WorkbenchWebviewProvider implements vscode.WebviewViewProvider, vsc
     <meta http-equiv="Content-Security-Policy" content="${csp}">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link nonce="${nonce}" rel="stylesheet" href="${styleUri}">
-    <title>AgentManager</title>
+    <title>Perpetual</title>
   </head>
   <body>
     <div id="root" data-icon="${iconUri}"></div>

@@ -1,15 +1,15 @@
-# AgentManager for VS Code
+# Perpetual for VS Code
 
-AgentManager is a local VS Code workbench for running Claude Code and Codex on
+Perpetual is a local VS Code workbench for running Claude Code and Codex on
 the same task. It keeps session context, repository attachments, queued turns,
 approvals, and usage-limit handoffs in one place so you can move between agents
 without rebuilding state.
 
-![AgentManager workbench](media/screenshot-workbench.png)
+![Perpetual workbench](media/screenshot-workbench.png)
 
 ## Features
 
-- Chat-first AgentManager workbench in the Activity Bar, with the same view
+- Chat-first Perpetual workbench in the Activity Bar, with the same view
   available as a wide VS Code panel.
 - Per-session agent routing for Claude Code and Codex, including permission,
   model, reasoning, and runtime controls.
@@ -35,7 +35,7 @@ without rebuilding state.
 
 ## Getting Started
 
-1. Open the AgentManager icon in the Activity Bar.
+1. Open the Perpetual icon in the Activity Bar.
 2. Attach the current workspace repository, add a local folder, or connect a
    GitHub repository.
 3. Pick Claude or Codex, then choose the permission mode and optional run
@@ -43,10 +43,10 @@ without rebuilding state.
 4. Send a message. If a run is already active, the message is queued as the next
    turn.
 
-AgentManager creates managed workspaces for agent edits so your original working
+Perpetual creates managed workspaces for agent edits so your original working
 tree stays reviewable.
 
-Use **AgentManager: Open AgentManager Panel** from the Command Palette when you
+Use **Perpetual: Open Perpetual Panel** from the Command Palette when you
 want the workbench in VS Code's bottom panel instead of the side bar.
 
 ## Configuration
@@ -67,9 +67,9 @@ policy:
 
 ## Privacy and Security
 
-AgentManager runs locally. Session data, transcripts, and managed workspaces are
+Perpetual runs locally. Session data, transcripts, and managed workspaces are
 stored under the extension's VS Code global storage directory. GitHub access uses
-VS Code's built-in GitHub authentication; AgentManager does not store GitHub
+VS Code's built-in GitHub authentication; Perpetual does not store GitHub
 OAuth tokens in its database.
 
 The extension executes local CLIs and repository operations, so Workspace Trust

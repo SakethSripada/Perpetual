@@ -76,7 +76,7 @@ const FILLED: Partial<Record<IconName, boolean>> = {
   queue: true,
 };
 
-/** The AgentManager mark — same artwork as the activity-bar icon (media/activity.svg),
+/** The Perpetual mark — same artwork as the activity-bar icon (media/activity.svg),
  *  rendered inline so it inherits theme color instead of the heavy PNG tile. */
 export function BrandMark({ className, size = 24 }: { className?: string; size?: number }) {
   return (
