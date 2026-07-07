@@ -369,6 +369,7 @@ export default function App() {
             onSelect={selectThread}
             onDelete={deleteThread}
           />
+          <NativeMenu agent={agent} selectedThreadId={effectiveSelectedId} />
           <IconButton title="Open in editor" onClick={() => vscode.postMessage({ type: "openPanel" })}>
             <Icon name="window" />
           </IconButton>
@@ -830,6 +831,61 @@ function ModelPicker(props: {
         </div>
       </Popover>
     </label>
+  );
+}
+
+type NativeAgentMode = "open" | "plan" | "resume" | "agents";
+
+function NativeMenu(props: { agent: AgentKind; selectedThreadId: string | null }) {
+  const [open, setOpen] = useState(false);
+  const launch = (agent: AgentKind, mode: NativeAgentMode) => {
+    vscode.postMessage({ type: "openNativeAgent", agent, mode, threadId: props.selectedThreadId });
+    setOpen(false);
+  };
+  return (
+    <Popover
+      open={open}
+      setOpen={setOpen}
+      align="center"
+      trigger={({ toggle, ref }) => (
+        <button
+          ref={ref as (el: HTMLButtonElement | null) => void}
+          type="button"
+          className="icon-btn"
+          title="Open native agent CLI"
+          aria-label="Open native agent CLI"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          onClick={toggle}
+        >
+          <Icon name="terminal" />
+        </button>
+      )}
+    >
+      <div className="menu native-menu" role="menu">
+        <button type="button" className="menu-item" role="menuitem" onClick={() => launch(props.agent, "open")}>
+          <Icon name="terminal" />
+          <span>{labelAgent(props.agent)} CLI</span>
+        </button>
+        <div className="menu-sep" />
+        <button type="button" className="menu-item" role="menuitem" onClick={() => launch("claude_code", "plan")}>
+          <Icon name="eye" />
+          <span>Claude Plan Mode</span>
+        </button>
+        <button type="button" className="menu-item" role="menuitem" onClick={() => launch("claude_code", "agents")}>
+          <Icon name="agent" />
+          <span>Claude Agents</span>
+        </button>
+        <button type="button" className="menu-item" role="menuitem" onClick={() => launch("claude_code", "resume")}>
+          <Icon name="history" />
+          <span>Resume Claude</span>
+        </button>
+        <button type="button" className="menu-item" role="menuitem" onClick={() => launch("codex", "resume")}>
+          <Icon name="history" />
+          <span>Resume Codex</span>
+        </button>
+      </div>
+    </Popover>
   );
 }
 

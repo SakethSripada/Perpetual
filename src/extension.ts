@@ -39,6 +39,24 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("agentmanager.connectGithubRepo", () =>
       controller.connectGithubRepoInteractive()
     ),
+    vscode.commands.registerCommand("agentmanager.openNativeClaude", () =>
+      controller.openNativeAgent("claude_code", "open")
+    ),
+    vscode.commands.registerCommand("agentmanager.openNativeClaudePlan", () =>
+      controller.openNativeAgent("claude_code", "plan")
+    ),
+    vscode.commands.registerCommand("agentmanager.openNativeClaudeAgents", () =>
+      controller.openNativeAgent("claude_code", "agents")
+    ),
+    vscode.commands.registerCommand("agentmanager.resumeNativeClaude", () =>
+      controller.openNativeAgent("claude_code", "resume")
+    ),
+    vscode.commands.registerCommand("agentmanager.openNativeCodex", () =>
+      controller.openNativeAgent("codex", "open")
+    ),
+    vscode.commands.registerCommand("agentmanager.resumeNativeCodex", () =>
+      controller.openNativeAgent("codex", "resume")
+    ),
     vscode.commands.registerCommand("agentmanager.openSettings", () =>
       vscode.commands.executeCommand("workbench.action.openSettings", "@ext:agentmanager.agentmanager-vscode")
     )

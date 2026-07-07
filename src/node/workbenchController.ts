@@ -50,6 +50,8 @@ type SubmitMessage = {
   localBaseUrl?: string | null;
 };
 
+export type NativeAgentMode = "open" | "plan" | "resume" | "agents";
+
 type WebviewMessage =
   | { type: "ready" | "refresh" | "newSession" | "connectLocalRepo" | "connectWorkspaceRepos" }
   | { type: "selectThread"; threadId: string | null }
@@ -66,6 +68,7 @@ type WebviewMessage =
   | { type: "setCloudPolicy"; policy: CloudPolicy }
   | { type: "sandboxLogin"; codex?: boolean }
   | { type: "openPath"; path: string }
+  | { type: "openNativeAgent"; agent: AgentKind; mode: NativeAgentMode; threadId?: string | null }
   | { type: "openSettings" | "openPanel" }
   | { type: "deleteQueuedTurn"; id: string }
   | { type: "updateQueuedTurn"; id: string; message: string }
@@ -231,6 +234,9 @@ export class WorkbenchController implements vscode.Disposable {
           return;
         case "openPath":
           await vscode.env.openExternal(vscode.Uri.file(message.path));
+          return;
+        case "openNativeAgent":
+          await this.openNativeAgent(message.agent, message.mode, message.threadId ?? null, reply);
           return;
         case "openSettings":
           await vscode.commands.executeCommand("workbench.action.openSettings", "@ext:agentmanager.agentmanager-vscode");
@@ -548,6 +554,64 @@ export class WorkbenchController implements vscode.Disposable {
     await vscode.env.openExternal(vscode.Uri.parse(prompt.url));
   }
 
+  async openNativeAgent(
+    agent: AgentKind,
+    mode: NativeAgentMode = "open",
+    threadId: string | null = null,
+    reply?: WebviewReply
+  ): Promise<void> {
+    this.assertTrusted();
+    const cwd = await this.nativeWorkingDirectory(threadId);
+    const command = this.nativeAgentCommand(agent, mode);
+    const terminal = vscode.window.createTerminal({
+      name: nativeTerminalName(agent, mode),
+      cwd,
+      isTransient: false,
+    });
+    terminal.show(false);
+    terminal.sendText(command, true);
+    this.notice(reply, `Opened ${nativeTerminalName(agent, mode)} in Terminal.`);
+  }
+
+  private nativeAgentCommand(agent: AgentKind, mode: NativeAgentMode): string {
+    const binary = shellQuote(this.nativeAgentBinary(agent));
+    if (agent === "claude_code") {
+      if (mode === "plan") return `${binary} --permission-mode plan`;
+      if (mode === "resume") return `${binary} --continue`;
+      if (mode === "agents") return `${binary} agents`;
+      return binary;
+    }
+    if (agent === "codex") {
+      if (mode === "resume") return `${binary} resume --last`;
+      return binary;
+    }
+    return binary;
+  }
+
+  private nativeAgentBinary(agent: AgentKind): string {
+    const status = this.detectionCache?.agents.find((item) => item.kind === agent);
+    if (status?.binary_path) return status.binary_path;
+    if (agent === "claude_code") return "claude";
+    if (agent === "codex") return "codex";
+    return nativeAgentLabel(agent).toLowerCase();
+  }
+
+  private async nativeWorkingDirectory(threadId: string | null): Promise<string | undefined> {
+    if (threadId) {
+      try {
+        const client = await this.daemon.getClient();
+        const repos = await client.listThreadRepos(threadId);
+        const repoPath = repos.find((repo) => repo.worktree_path)?.worktree_path;
+        if (repoPath) return repoPath;
+      } catch (err) {
+        this.output.appendLine(`[workbench] native cwd lookup failed: ${formatError(err)}`);
+      }
+    }
+    const activePath = vscode.window.activeTextEditor?.document.uri.fsPath;
+    if (activePath) return gitRoot(path.dirname(activePath));
+    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  }
+
   private async loadDiff(threadId: string): Promise<void> {
     this.diffCache.set(threadId, { state: "loading", diff: null });
     await this.refresh();
@@ -862,6 +926,26 @@ async function gitRoot(folder: string): Promise<string> {
   } catch {
     return folder;
   }
+}
+
+function nativeTerminalName(agent: AgentKind, mode: NativeAgentMode): string {
+  const label = nativeAgentLabel(agent);
+  if (mode === "plan") return `${label} Plan`;
+  if (mode === "resume") return `${label} Resume`;
+  if (mode === "agents") return `${label} Agents`;
+  return label;
+}
+
+function nativeAgentLabel(agent: AgentKind): string {
+  if (agent === "claude_code") return "Claude Code";
+  if (agent === "codex") return "Codex";
+  if (agent === "open_code") return "OpenCode";
+  return agent.charAt(0).toUpperCase() + agent.slice(1);
+}
+
+function shellQuote(value: string): string {
+  if (/^[A-Za-z0-9_./:-]+$/.test(value)) return value;
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 function titleFromMessage(message: string): string {
