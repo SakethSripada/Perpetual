@@ -352,6 +352,8 @@
     "watch:webview": "vite build --config webview/vite.config.ts --watch",
     "copy-daemon": "node scripts/copy-daemon.mjs",
     "check-daemon": "node scripts/check-daemon.mjs",
+    "dev:reload": "node scripts/dev-reload.mjs",
+    "dev:sync": "node scripts/dev-reload.mjs --no-reload",
     "vscode:prepublish": "npm run build",
     "package": "vsce package",
     "package:darwin-arm64": "npm run check-daemon -- --target darwin-arm64 && vsce package --target darwin-arm64",
