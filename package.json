@@ -50,13 +50,7 @@
     "onCommand:agentmanager.newSession",
     "onCommand:agentmanager.refresh",
     "onCommand:agentmanager.connectLocalRepo",
-    "onCommand:agentmanager.connectGithubRepo",
-    "onCommand:agentmanager.openNativeClaude",
-    "onCommand:agentmanager.openNativeClaudePlan",
-    "onCommand:agentmanager.openNativeClaudeAgents",
-    "onCommand:agentmanager.resumeNativeClaude",
-    "onCommand:agentmanager.openNativeCodex",
-    "onCommand:agentmanager.resumeNativeCodex"
+    "onCommand:agentmanager.connectGithubRepo"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
@@ -139,42 +133,6 @@
         "icon": "$(github)"
       },
       {
-        "command": "agentmanager.openNativeClaude",
-        "title": "Open Claude Code CLI",
-        "category": "Perpetual",
-        "icon": "$(terminal)"
-      },
-      {
-        "command": "agentmanager.openNativeClaudePlan",
-        "title": "Open Claude Code Plan Mode",
-        "category": "Perpetual",
-        "icon": "$(list-tree)"
-      },
-      {
-        "command": "agentmanager.openNativeClaudeAgents",
-        "title": "Open Claude Code Agents",
-        "category": "Perpetual",
-        "icon": "$(organization)"
-      },
-      {
-        "command": "agentmanager.resumeNativeClaude",
-        "title": "Resume Claude Code CLI",
-        "category": "Perpetual",
-        "icon": "$(history)"
-      },
-      {
-        "command": "agentmanager.openNativeCodex",
-        "title": "Open Codex CLI",
-        "category": "Perpetual",
-        "icon": "$(terminal)"
-      },
-      {
-        "command": "agentmanager.resumeNativeCodex",
-        "title": "Resume Codex CLI",
-        "category": "Perpetual",
-        "icon": "$(history)"
-      },
-      {
         "command": "agentmanager.openSettings",
         "title": "Open Settings",
         "category": "Perpetual",
@@ -204,24 +162,6 @@
         },
         {
           "command": "agentmanager.connectGithubRepo"
-        },
-        {
-          "command": "agentmanager.openNativeClaude"
-        },
-        {
-          "command": "agentmanager.openNativeClaudePlan"
-        },
-        {
-          "command": "agentmanager.openNativeClaudeAgents"
-        },
-        {
-          "command": "agentmanager.resumeNativeClaude"
-        },
-        {
-          "command": "agentmanager.openNativeCodex"
-        },
-        {
-          "command": "agentmanager.resumeNativeCodex"
         },
         {
           "command": "agentmanager.openSettings"
