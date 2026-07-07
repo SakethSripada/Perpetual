@@ -50,20 +50,7 @@ type SubmitMessage = {
   localBaseUrl?: string | null;
 };
 
-export type NativeAgentMode =
-  | "open"
-  | "plan"
-  | "auto"
-  | "accept_edits"
-  | "resume"
-  | "agents"
-  | "mcp"
-  | "plugins"
-  | "diagnostics"
-  | "cloud"
-  | "fork"
-  | "features"
-  | "app";
+export type NativeAgentMode = "open" | "plan" | "resume" | "agents";
 
 type WebviewMessage =
   | { type: "ready" | "refresh" | "newSession" | "connectLocalRepo" | "connectWorkspaceRepos" }
@@ -575,7 +562,7 @@ export class WorkbenchController implements vscode.Disposable {
   ): Promise<void> {
     this.assertTrusted();
     const cwd = await this.nativeWorkingDirectory(threadId);
-    const command = this.nativeAgentCommand(agent, mode, cwd);
+    const command = this.nativeAgentCommand(agent, mode);
     const terminal = vscode.window.createTerminal({
       name: nativeTerminalName(agent, mode),
       cwd,
@@ -586,28 +573,16 @@ export class WorkbenchController implements vscode.Disposable {
     this.notice(reply, `Opened ${nativeTerminalName(agent, mode)} in Terminal.`);
   }
 
-  private nativeAgentCommand(agent: AgentKind, mode: NativeAgentMode, cwd?: string): string {
+  private nativeAgentCommand(agent: AgentKind, mode: NativeAgentMode): string {
     const binary = shellQuote(this.nativeAgentBinary(agent));
     if (agent === "claude_code") {
       if (mode === "plan") return `${binary} --permission-mode plan`;
-      if (mode === "auto") return `${binary} --permission-mode auto`;
-      if (mode === "accept_edits") return `${binary} --permission-mode acceptEdits`;
-      if (mode === "resume") return `${binary} -c`;
+      if (mode === "resume") return `${binary} --continue`;
       if (mode === "agents") return `${binary} agents`;
-      if (mode === "mcp") return `${binary} mcp`;
-      if (mode === "plugins") return `${binary} plugin`;
-      if (mode === "diagnostics") return `${binary} doctor`;
       return binary;
     }
     if (agent === "codex") {
       if (mode === "resume") return `${binary} resume --last`;
-      if (mode === "fork") return `${binary} fork --last`;
-      if (mode === "cloud") return `${binary} cloud`;
-      if (mode === "mcp") return `${binary} mcp list`;
-      if (mode === "plugins") return `${binary} plugin list`;
-      if (mode === "features") return `${binary} features`;
-      if (mode === "diagnostics") return `${binary} doctor`;
-      if (mode === "app") return `${binary} app ${shellQuote(cwd ?? ".")}`;
       return binary;
     }
     return binary;
@@ -956,17 +931,8 @@ async function gitRoot(folder: string): Promise<string> {
 function nativeTerminalName(agent: AgentKind, mode: NativeAgentMode): string {
   const label = nativeAgentLabel(agent);
   if (mode === "plan") return `${label} Plan`;
-  if (mode === "auto") return `${label} Auto`;
-  if (mode === "accept_edits") return `${label} Accept Edits`;
   if (mode === "resume") return `${label} Resume`;
   if (mode === "agents") return `${label} Agents`;
-  if (mode === "mcp") return `${label} MCP`;
-  if (mode === "plugins") return `${label} Plugins`;
-  if (mode === "diagnostics") return `${label} Doctor`;
-  if (mode === "cloud") return `${label} Cloud`;
-  if (mode === "fork") return `${label} Fork`;
-  if (mode === "features") return `${label} Features`;
-  if (mode === "app") return `${label} App`;
   return label;
 }
 

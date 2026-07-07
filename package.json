@@ -53,22 +53,10 @@
     "onCommand:agentmanager.connectGithubRepo",
     "onCommand:agentmanager.openNativeClaude",
     "onCommand:agentmanager.openNativeClaudePlan",
-    "onCommand:agentmanager.openNativeClaudeAuto",
-    "onCommand:agentmanager.openNativeClaudeAcceptEdits",
     "onCommand:agentmanager.openNativeClaudeAgents",
-    "onCommand:agentmanager.openNativeClaudeMcp",
-    "onCommand:agentmanager.openNativeClaudePlugins",
-    "onCommand:agentmanager.openNativeClaudeDiagnostics",
     "onCommand:agentmanager.resumeNativeClaude",
     "onCommand:agentmanager.openNativeCodex",
-    "onCommand:agentmanager.resumeNativeCodex",
-    "onCommand:agentmanager.forkNativeCodex",
-    "onCommand:agentmanager.openNativeCodexCloud",
-    "onCommand:agentmanager.openNativeCodexMcp",
-    "onCommand:agentmanager.openNativeCodexPlugins",
-    "onCommand:agentmanager.openNativeCodexFeatures",
-    "onCommand:agentmanager.openNativeCodexDiagnostics",
-    "onCommand:agentmanager.openNativeCodexApp"
+    "onCommand:agentmanager.resumeNativeCodex"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
@@ -151,12 +139,6 @@
         "icon": "$(github)"
       },
       {
-        "command": "agentmanager.openSettings",
-        "title": "Open Settings",
-        "category": "Perpetual",
-        "icon": "$(settings-gear)"
-      },
-      {
         "command": "agentmanager.openNativeClaude",
         "title": "Open Claude Code CLI",
         "category": "Perpetual",
@@ -169,40 +151,10 @@
         "icon": "$(list-tree)"
       },
       {
-        "command": "agentmanager.openNativeClaudeAuto",
-        "title": "Open Claude Code Auto Mode",
-        "category": "Perpetual",
-        "icon": "$(zap)"
-      },
-      {
-        "command": "agentmanager.openNativeClaudeAcceptEdits",
-        "title": "Open Claude Code Accept Edits Mode",
-        "category": "Perpetual",
-        "icon": "$(check)"
-      },
-      {
         "command": "agentmanager.openNativeClaudeAgents",
-        "title": "Open Claude Code Background Agents",
+        "title": "Open Claude Code Agents",
         "category": "Perpetual",
         "icon": "$(organization)"
-      },
-      {
-        "command": "agentmanager.openNativeClaudeMcp",
-        "title": "Open Claude Code MCP Manager",
-        "category": "Perpetual",
-        "icon": "$(plug)"
-      },
-      {
-        "command": "agentmanager.openNativeClaudePlugins",
-        "title": "Open Claude Code Plugins",
-        "category": "Perpetual",
-        "icon": "$(extensions)"
-      },
-      {
-        "command": "agentmanager.openNativeClaudeDiagnostics",
-        "title": "Run Claude Code Doctor",
-        "category": "Perpetual",
-        "icon": "$(debug-alt)"
       },
       {
         "command": "agentmanager.resumeNativeClaude",
@@ -223,46 +175,10 @@
         "icon": "$(history)"
       },
       {
-        "command": "agentmanager.forkNativeCodex",
-        "title": "Fork Last Codex Session",
+        "command": "agentmanager.openSettings",
+        "title": "Open Settings",
         "category": "Perpetual",
-        "icon": "$(git-branch)"
-      },
-      {
-        "command": "agentmanager.openNativeCodexCloud",
-        "title": "Open Codex Cloud",
-        "category": "Perpetual",
-        "icon": "$(cloud)"
-      },
-      {
-        "command": "agentmanager.openNativeCodexMcp",
-        "title": "Open Codex MCP Manager",
-        "category": "Perpetual",
-        "icon": "$(plug)"
-      },
-      {
-        "command": "agentmanager.openNativeCodexPlugins",
-        "title": "Open Codex Plugins",
-        "category": "Perpetual",
-        "icon": "$(extensions)"
-      },
-      {
-        "command": "agentmanager.openNativeCodexFeatures",
-        "title": "Open Codex Feature Flags",
-        "category": "Perpetual",
-        "icon": "$(settings)"
-      },
-      {
-        "command": "agentmanager.openNativeCodexDiagnostics",
-        "title": "Run Codex Doctor",
-        "category": "Perpetual",
-        "icon": "$(debug-alt)"
-      },
-      {
-        "command": "agentmanager.openNativeCodexApp",
-        "title": "Open Codex App",
-        "category": "Perpetual",
-        "icon": "$(window)"
+        "icon": "$(settings-gear)"
       }
     ],
     "menus": {
@@ -290,31 +206,13 @@
           "command": "agentmanager.connectGithubRepo"
         },
         {
-          "command": "agentmanager.openSettings"
-        },
-        {
           "command": "agentmanager.openNativeClaude"
         },
         {
           "command": "agentmanager.openNativeClaudePlan"
         },
         {
-          "command": "agentmanager.openNativeClaudeAuto"
-        },
-        {
-          "command": "agentmanager.openNativeClaudeAcceptEdits"
-        },
-        {
           "command": "agentmanager.openNativeClaudeAgents"
-        },
-        {
-          "command": "agentmanager.openNativeClaudeMcp"
-        },
-        {
-          "command": "agentmanager.openNativeClaudePlugins"
-        },
-        {
-          "command": "agentmanager.openNativeClaudeDiagnostics"
         },
         {
           "command": "agentmanager.resumeNativeClaude"
@@ -326,25 +224,7 @@
           "command": "agentmanager.resumeNativeCodex"
         },
         {
-          "command": "agentmanager.forkNativeCodex"
-        },
-        {
-          "command": "agentmanager.openNativeCodexCloud"
-        },
-        {
-          "command": "agentmanager.openNativeCodexMcp"
-        },
-        {
-          "command": "agentmanager.openNativeCodexPlugins"
-        },
-        {
-          "command": "agentmanager.openNativeCodexFeatures"
-        },
-        {
-          "command": "agentmanager.openNativeCodexDiagnostics"
-        },
-        {
-          "command": "agentmanager.openNativeCodexApp"
+          "command": "agentmanager.openSettings"
         }
       ]
     },
