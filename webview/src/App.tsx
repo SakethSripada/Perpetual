@@ -124,6 +124,7 @@ export default function App() {
       }
       if (incoming.type === "notice" || incoming.type === "error") {
         setNotice(incoming.message);
+        if (incoming.type === "error") setPending([]);
         return;
       }
       if (incoming.type === "sandboxLoginPrompt") {
@@ -134,6 +135,12 @@ export default function App() {
     vscode.postMessage({ type: "ready" });
     return () => window.removeEventListener("message", onMessage);
   }, []);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 6500);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
 
   useEffect(() => {
     writePersistedState({
@@ -518,7 +525,6 @@ const MessageView = memo(function MessageView({ event }: { event: AgentThreadEve
         <div className="activity-main">
           <div className="activity-title">
             <span>{activitySummary(event)}</span>
-            <time>{formatTime(event.ts)}</time>
           </div>
           {detail && (
             <details className="activity-detail">
@@ -530,13 +536,8 @@ const MessageView = memo(function MessageView({ event }: { event: AgentThreadEve
       </article>
     );
   }
-  // No role label — the user's bubble vs the agent's plain text is enough to
-  // tell who's speaking. Just a subtle timestamp.
   return (
     <article className={`msg ${messageClass(event.role)}`}>
-      <div className="msg-head">
-        <time>{formatTime(event.ts)}</time>
-      </div>
       <div className="msg-body">{event.text ? <Markdown text={event.text} /> : humanize(event.kind)}</div>
     </article>
   );
@@ -925,10 +926,11 @@ function ApprovalCard(props: { approval: ApprovalRequest; onResolve(decision: Ap
   return (
     <article className="approval-card">
       <div className="approval-head">
-        <span className="approval-badge">
-          <Icon name={APPROVAL_ICON[approval.kind]} />
-        </span>
         <div className="approval-title">
+          <span className="approval-kicker">
+            <Icon name={APPROVAL_ICON[approval.kind]} />
+            Approval request
+          </span>
           <strong>{title}</strong>
           <small>{labelAgent(approval.agent)} needs your approval</small>
         </div>
@@ -937,10 +939,6 @@ function ApprovalCard(props: { approval: ApprovalRequest; onResolve(decision: Ap
       {approval.cwd && <div className="approval-meta">in {approval.cwd}</div>}
       {approval.reason && <div className="approval-reason">{approval.reason}</div>}
       <div className="approval-actions">
-        <button type="button" className="approval-btn allow" title="Allow once" onClick={() => props.onResolve("allow")}>
-          <Icon name="check" />
-          <span>Allow</span>
-        </button>
         <button type="button" className="approval-btn deny" title="Deny this request" onClick={() => props.onResolve("deny")}>
           <Icon name="close" />
           <span>Deny</span>
@@ -953,6 +951,10 @@ function ApprovalCard(props: { approval: ApprovalRequest; onResolve(decision: Ap
         >
           <Icon name="shield" />
           <span>Session</span>
+        </button>
+        <button type="button" className="approval-btn allow" title="Allow once" onClick={() => props.onResolve("allow")}>
+          <Icon name="check" />
+          <span>Allow</span>
         </button>
       </div>
     </article>
@@ -2014,12 +2016,6 @@ function messageClass(role: string): string {
   if (role === "user") return "user";
   if (role === "assistant") return "assistant";
   return "system";
-}
-
-function formatTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.valueOf())) return "";
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 function defaultLimitPolicy(): LimitPolicy {
