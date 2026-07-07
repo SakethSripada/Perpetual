@@ -51,7 +51,7 @@ type SubmitMessage = {
 };
 
 type WebviewMessage =
-  | { type: "ready" | "refresh" | "newSession" | "connectWorkspaceRepos" }
+  | { type: "ready" | "refresh" | "newSession" | "connectLocalRepo" | "connectWorkspaceRepos" }
   | { type: "selectThread"; threadId: string | null }
   | SubmitMessage
   | { type: "stopThread"; threadId: string }
@@ -195,11 +195,14 @@ export class WorkbenchController implements vscode.Disposable {
           await this.connectWorkspaceRepos();
           await this.refresh();
           return;
+        case "connectLocalRepo":
+          await this.connectLocalRepoInteractive(reply);
+          return;
         case "githubList":
           await this.postGithubRepos(reply);
           return;
         case "connectGithubRepo":
-          await this.connectGithubRepo(message.repo);
+          await this.connectGithubRepo(message.repo, reply);
           await this.refresh();
           return;
         case "setLimitPolicy":
@@ -267,7 +270,7 @@ export class WorkbenchController implements vscode.Disposable {
     }
   }
 
-  async connectLocalRepoInteractive(): Promise<void> {
+  async connectLocalRepoInteractive(reply?: WebviewReply): Promise<void> {
     this.assertTrusted();
     const picked = await vscode.window.showOpenDialog({
       canSelectFiles: false,
@@ -282,7 +285,8 @@ export class WorkbenchController implements vscode.Disposable {
     const root = await gitRoot(folder);
     const client = await this.daemon.getClient();
     const project = await client.ensureWorkbenchProject();
-    await client.connectLocalRepo({ project_id: project.id, path: root });
+    const repo = await client.connectLocalRepo({ project_id: project.id, path: root });
+    reply?.({ type: "repoConnected", repo });
     await this.refresh();
   }
 
@@ -399,6 +403,10 @@ export class WorkbenchController implements vscode.Disposable {
 
     const client = await this.daemon.getClient();
     const project = await client.ensureWorkbenchProject();
+    if (!this.reposConnected) {
+      await this.autoConnectWorkspaceRepos(client, project.id);
+      this.reposConnected = true;
+    }
     const defaults = getDefaults();
     const agent = message.agent ?? defaults.agent;
     const permission = message.permission ?? defaults.permission;
@@ -415,8 +423,14 @@ export class WorkbenchController implements vscode.Disposable {
       throw new Error("Choose a local model before running with Ollama or LM Studio.");
     }
 
-    const repoIds = message.repoIds ?? [];
+    const repos = await client.listRepos(project.id).catch(() => []);
+    const repoIds = resolveSubmittedRepoIds(message.repoIds, repos);
     if (message.threadId) {
+      const currentRepos = await client.listThreadRepos(message.threadId).catch(() => []);
+      const hasWorktree = currentRepos.some((repo: { worktree_path: string | null }) => !!repo.worktree_path);
+      if (!hasWorktree) {
+        await client.assignThreadRepos(message.threadId, repoIds);
+      }
       await client.updateAgentThread(message.threadId, {
         preferred_agent: agent,
         permission,
@@ -502,7 +516,7 @@ export class WorkbenchController implements vscode.Disposable {
     return { status, repos };
   }
 
-  private async connectGithubRepo(repo: GithubRepository): Promise<void> {
+  private async connectGithubRepo(repo: GithubRepository, reply?: WebviewReply): Promise<void> {
     this.assertTrusted();
     const token = await this.githubToken();
     const client = await this.daemon.getClient();
@@ -515,7 +529,8 @@ export class WorkbenchController implements vscode.Disposable {
       ssh_url: repo.ssh_url,
       default_branch: repo.default_branch,
     };
-    await client.connectGithubRepo(token, input);
+    const connected = await client.connectGithubRepo(token, input);
+    reply?.({ type: "repoConnected", repo: connected });
   }
 
   private async githubToken(): Promise<string> {
@@ -825,6 +840,19 @@ function pickDefaultRepoIds(repos: Array<{ id: string; local_path: string | null
     return normalizedActive === root || normalizedActive.startsWith(`${root}${path.sep}`);
   });
   return matches.length === 1 ? [matches[0].id] : [];
+}
+
+function resolveSubmittedRepoIds(
+  submitted: string[] | undefined,
+  repos: Array<{ id: string; local_path: string | null }>
+): string[] {
+  const known = new Set(repos.map((repo) => repo.id));
+  const picked = submitted === undefined ? pickDefaultRepoIds(repos) : submitted;
+  const repoIds = Array.from(new Set(picked)).filter((id) => known.has(id));
+  if (repos.length > 0 && repoIds.length === 0) {
+    throw new Error("Select at least one connected repository before starting the agent.");
+  }
+  return repoIds;
 }
 
 async function gitRoot(folder: string): Promise<string> {

@@ -116,6 +116,12 @@ export default function App() {
         setGithubOpen(true);
         return;
       }
+      if (incoming.type === "repoConnected") {
+        repoTouchedRef.current = true;
+        setRepoIds((prev) => (prev.includes(incoming.repo.id) ? prev : [...prev, incoming.repo.id]));
+        setNotice(`Connected ${incoming.repo.name}.`);
+        return;
+      }
       if (incoming.type === "notice" || incoming.type === "error") {
         setNotice(incoming.message);
         return;
@@ -264,18 +270,24 @@ export default function App() {
   const isRunning = selectedThread?.status === "running";
   const details = navigating ? undefined : snapshot?.details;
   const reposLocked = !!selectedThread && !!details?.repos.some((repo) => !!repo.worktree_path);
+  const canReviewChanges = !!selectedThread && !!details?.repos.some((repo) => !!repo.worktree_path);
 
   // The composer owns its own draft text so typing never re-renders the
   // transcript; it hands us the final text here on submit.
   const send = (raw: string) => {
     const text = raw.trim();
     if (!text || !snapshot?.trusted) return;
+    const validRepoIds = snapshot.repos.filter((repo) => repoIds.includes(repo.id)).map((repo) => repo.id);
+    if (snapshot.repos.length > 0 && validRepoIds.length === 0) {
+      setNotice("Select at least one connected repository before starting the agent.");
+      return;
+    }
     setPending((prev) => [...prev, { id: `pending-${Date.now()}-${prev.length}`, text }]);
     vscode.postMessage({
       type: "submit",
       message: text,
       threadId: selectedThread?.id ?? null,
-      repoIds,
+      repoIds: validRepoIds,
       agent,
       permission,
       executionBackend: sanitizeBackend(agent, backend),
@@ -356,6 +368,14 @@ export default function App() {
           <IconButton title="Settings" onClick={() => setSettingsOpen(true)}>
             <Icon name="settings" />
           </IconButton>
+          {canReviewChanges && (
+            <IconButton
+              title="Review changes"
+              onClick={() => vscode.postMessage({ type: "loadDiff", threadId: selectedThread.id })}
+            >
+              <Icon name="repo" />
+            </IconButton>
+          )}
           <IconButton title="Refresh" onClick={() => vscode.postMessage({ type: "refresh" })}>
             <Icon name="refresh" />
           </IconButton>
@@ -452,7 +472,7 @@ export default function App() {
           setGithubLoading(true);
           vscode.postMessage({ type: "githubList" });
         }}
-        onWorkspaceRepos={() => vscode.postMessage({ type: "connectWorkspaceRepos" })}
+        onLocalRepo={() => vscode.postMessage({ type: "connectLocalRepo" })}
         onSandboxLogin={(codex) => vscode.postMessage({ type: "sandboxLogin", codex })}
       />
 
@@ -636,6 +656,7 @@ function Dropdown(props: {
   icon?: ReactNode;
   ariaLabel?: string;
   title?: string;
+  className?: string;
   placement?: "auto" | "above" | "below";
 }) {
   const [open, setOpen] = useState(false);
@@ -649,7 +670,7 @@ function Dropdown(props: {
         <button
           ref={ref as (el: HTMLButtonElement | null) => void}
           type="button"
-          className="chip-btn"
+          className={props.className ?? "chip-btn"}
           title={props.title}
           aria-label={props.ariaLabel}
           aria-haspopup="listbox"
@@ -962,7 +983,7 @@ function Composer(props: {
   onSend(text: string): void;
   onStop(): void;
   onGithub(): void;
-  onWorkspaceRepos(): void;
+  onLocalRepo(): void;
   onSandboxLogin(codex: boolean): void;
 }) {
   const [reposOpen, setReposOpen] = useState(false);
@@ -974,7 +995,13 @@ function Composer(props: {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const localOn = !!props.localProvider;
   const localAllowed = props.agent === "codex";
-  const canSend = !!draft.trim() && !!props.snapshot?.trusted && (!localOn || !!props.model.trim());
+  const sandboxAllowed = props.agent === "codex";
+  const sandboxOn = props.backend === "docker_sandbox";
+  const sandbox = props.snapshot?.sandboxRuntime;
+  const repos = props.snapshot?.repos ?? [];
+  const selectedRepos = repos.filter((repo) => props.repoIds.includes(repo.id));
+  const noRepoSelected = repos.length > 0 && selectedRepos.length === 0;
+  const canSend = !!draft.trim() && !!props.snapshot?.trusted && !noRepoSelected && (!localOn || !!props.model.trim());
   // While the agent is running and the composer is empty, the action button
   // turns into a Stop control (matching Claude Code / Codex). Typing turns it
   // back into a send/queue button.
@@ -986,11 +1013,6 @@ function Composer(props: {
     const el = textareaRef.current;
     if (el) el.style.height = "auto";
   };
-  const sandboxAllowed = props.agent === "codex";
-  const sandboxOn = props.backend === "docker_sandbox";
-  const sandbox = props.snapshot?.sandboxRuntime;
-  const repos = props.snapshot?.repos ?? [];
-  const selectedRepos = repos.filter((repo) => props.repoIds.includes(repo.id));
   const reposLabel =
     selectedRepos.length === 0
       ? "Connect repos"
@@ -998,10 +1020,13 @@ function Composer(props: {
         ? selectedRepos[0].name
         : `${selectedRepos.length} repos`;
   const reposTitle =
-    selectedRepos.length === 0
+    noRepoSelected
+      ? "Select a repository for this run"
+      : selectedRepos.length === 0
       ? "Connected repos — none attached yet"
       : `Connected repos: ${selectedRepos.map((repo) => repo.name).join(", ")}`;
   const perm = PERMISSIONS.find((item) => item.value === props.permission) ?? PERMISSIONS[1];
+  const permissionLabel = permissionComposerLabel(props.permission);
   const optionsActive = sandboxOn || localOn || !!props.model.trim() || (!!props.reasoning && props.reasoning !== "medium");
   const localBaseUrl = props.localBaseUrl.trim() || defaultLocalBaseUrl(props.localProvider || "ollama");
 
@@ -1011,7 +1036,7 @@ function Composer(props: {
         <textarea
           ref={textareaRef}
           value={draft}
-          placeholder={props.isRunning ? "Queue a follow-up…" : "Ask anything — Enter to send, Shift+Enter for newline"}
+          placeholder={props.isRunning ? "Ask for follow-up changes" : "Ask anything"}
           rows={1}
           onChange={(event) => setDraft(event.target.value)}
           onInput={(event) => autoGrow(event.currentTarget)}
@@ -1034,15 +1059,13 @@ function Composer(props: {
                 <button
                   ref={ref as (el: HTMLButtonElement | null) => void}
                   type="button"
-                  className="chip-btn"
+                  className={`composer-icon-btn${noRepoSelected ? " warning" : ""}`}
                   title={reposTitle}
-                  aria-label="Connected repos"
+                  aria-label={reposLabel}
                   onClick={toggle}
                 >
-                  <Icon name="repo" />
-                  <span className="chip-label">{reposLabel}</span>
-                  {selectedRepos.length > 0 && <span className="chip-count">{selectedRepos.length}</span>}
-                  <Icon name="caret" className="chip-caret" />
+                  <Icon name="plus" />
+                  {selectedRepos.length > 0 && <span className="context-dot" />}
                 </button>
               )}
             >
@@ -1072,7 +1095,7 @@ function Composer(props: {
                   );
                 })}
                 <div className="menu-sep" />
-                <button type="button" className="menu-item" onClick={() => { setReposOpen(false); props.onWorkspaceRepos(); }}>
+                <button type="button" className="menu-item" onClick={() => { setReposOpen(false); props.onLocalRepo(); }}>
                   <Icon name="folder" />
                   <span>Add local folder</span>
                 </button>
@@ -1086,7 +1109,8 @@ function Composer(props: {
             <Dropdown
               ariaLabel="Agent"
               title="Agent"
-              icon={<Icon name="agent" />}
+              className="chip-btn agent-chip"
+              icon={<BrandMark size={15} />}
               value={props.agent}
               placement="above"
               onChange={(value) => props.setAgent(value as AgentKind)}
@@ -1104,12 +1128,14 @@ function Composer(props: {
                 <button
                   ref={ref as (el: HTMLButtonElement | null) => void}
                   type="button"
-                  className={`icon-chip${props.permission === "autonomous" ? " danger" : ""}`}
+                  className={`permission-chip${props.permission === "autonomous" ? " danger" : ""}`}
                   title={`Permission: ${perm.label}`}
                   aria-label={`Permission mode: ${perm.label}`}
                   onClick={toggle}
                 >
                   <Icon name={perm.icon} />
+                  <span>{permissionLabel}</span>
+                  <Icon name="caret" className="chip-caret" />
                 </button>
               )}
             >
@@ -1144,7 +1170,7 @@ function Composer(props: {
                 <button
                   ref={ref as (el: HTMLButtonElement | null) => void}
                   type="button"
-                  className={`icon-chip${optionsActive ? " active" : ""}`}
+                  className={`composer-icon-btn${optionsActive ? " active" : ""}`}
                   title="Model, reasoning & sandbox"
                   aria-label="Run options"
                   onClick={toggle}
@@ -1267,6 +1293,17 @@ const PERMISSIONS: { value: PermissionPolicy; label: string; icon: "eye" | "shie
   { value: "autonomous", label: "Autonomous", icon: "bolt" },
 ];
 
+function permissionComposerLabel(permission: PermissionPolicy): string {
+  switch (permission) {
+    case "read_only":
+      return "Read only";
+    case "autonomous":
+      return "Full access";
+    case "workspace_write":
+      return "Write access";
+  }
+}
+
 function ChangesView(props: {
   threadId: string;
   diff: NonNullable<WorkbenchSnapshot["details"]>["diff"];
@@ -1280,22 +1317,31 @@ function ChangesView(props: {
   const [open, setOpen] = useState(false);
   const diffFiles = props.diff?.repos.flatMap((repo) => repo.files.map((file) => ({ ...file, repo: repo.repo_name }))) ?? [];
   const hasWorktree = props.repos.some((repo) => !!repo.worktree_path);
-  if (!hasWorktree && props.diffState === "idle" && !props.applyResult) return null;
+  if (!hasWorktree || (props.diffState === "idle" && !props.applyResult)) return null;
   const loading = props.diffState === "loading";
   const loaded = props.diffState === "ready";
   const blockers = props.applyResult?.blockers ?? [];
+  const additions = diffFiles.reduce((sum, file) => sum + file.additions, 0);
+  const deletions = diffFiles.reduce((sum, file) => sum + file.deletions, 0);
+  const summary = loaded
+    ? `${diffFiles.length} file${diffFiles.length === 1 ? "" : "s"} changed`
+    : loading
+      ? "Loading changes"
+      : "Changes";
 
   return (
     <section className="changes-card">
       <button type="button" className="changes-toggle" onClick={() => setOpen(!open)}>
         <Icon name="caret" className={open ? "caret open" : "caret"} />
-        <span>Managed worktree</span>
+        <span className="changes-title">{summary}</span>
+        {loaded && diffFiles.length > 0 && (
+          <span className="changes-stats">
+            <span className="diff-add">+{additions}</span>
+            <span className="diff-del">-{deletions}</span>
+          </span>
+        )}
         <span className="changes-summary">
-          {loading
-            ? "Loading"
-            : loaded
-              ? `${diffFiles.length} file${diffFiles.length === 1 ? "" : "s"}`
-              : "Review changes"}
+          {open ? "Hide" : loaded ? "Review" : "Load diff"}
         </span>
       </button>
 
@@ -1335,9 +1381,9 @@ function ChangesView(props: {
             </div>
           ))}
 
-          {loading && <div className="menu-empty">Loading managed diff...</div>}
-          {props.diffState === "error" && <div className="menu-empty">Could not load the managed diff.</div>}
-          {loaded && diffFiles.length === 0 && <div className="menu-empty">No managed changes to apply.</div>}
+          {loading && <div className="menu-empty">Loading diff...</div>}
+          {props.diffState === "error" && <div className="menu-empty">Could not load the diff.</div>}
+          {loaded && diffFiles.length === 0 && <div className="menu-empty">No changes to apply.</div>}
           {diffFiles.length > 0 && (
             <div className="diff-list">
               {diffFiles.map((file) => (
@@ -1687,7 +1733,7 @@ function EmptyState({ trusted, compact = false }: { trusted: boolean; compact?: 
 
 function autoGrow(el: HTMLTextAreaElement) {
   el.style.height = "auto";
-  el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+  el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
 }
 
 function runDefaults(snapshot: WorkbenchSnapshot, agent: AgentKind) {

@@ -16,6 +16,10 @@
   --am-radius-sm: 6px;
   --am-ok: var(--vscode-testing-iconPassed, #3fb950);
   --am-warn: var(--vscode-charts-orange, #d18616);
+  --am-composer-bg: color-mix(in srgb, var(--vscode-editor-background) 93%, var(--vscode-foreground) 7%);
+  --am-control-bg: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+  --am-control-bg-hover: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+  --am-control-fg: color-mix(in srgb, var(--vscode-foreground) 74%, transparent);
 }
 
 * {
@@ -75,9 +79,9 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 5px 8px;
-  border-bottom: 1px solid var(--am-border-soft);
+  gap: 10px;
+  padding: 9px 12px 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
   flex: 0 0 auto;
 }
 
@@ -97,7 +101,8 @@ textarea {
 }
 
 .brand-text strong {
-  font-size: 13px;
+  font-size: 14px;
+  font-weight: 650;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -106,17 +111,18 @@ textarea {
 .top-actions {
   display: flex;
   align-items: center;
-  gap: 1px;
+  gap: 3px;
   flex: 0 0 auto;
 }
 /* Compact, evenly-sized toolbar icons that don't crowd the header. */
 .top-actions .icon-btn {
-  width: 24px;
-  height: 24px;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
 }
 .top-actions .icon-btn svg {
-  width: 14px;
-  height: 14px;
+  width: 15px;
+  height: 15px;
 }
 
 /* ---------- icon buttons ---------- */
@@ -134,6 +140,7 @@ textarea {
   background: transparent;
   cursor: pointer;
   opacity: 0.85;
+  transition: background 0.12s ease, opacity 0.12s ease, color 0.12s ease;
 }
 .icon-btn:hover:not(:disabled) {
   background: var(--am-hover);
@@ -240,10 +247,10 @@ textarea {
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 14px 12px 20px;
+  padding: 18px 14px 20px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 
 .msg {
@@ -265,7 +272,7 @@ textarea {
 }
 
 .msg-body {
-  line-height: 1.55;
+  line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -273,9 +280,10 @@ textarea {
 .msg.user .msg-body {
   width: fit-content;
   max-width: min(100%, 72ch);
-  padding: 9px 11px;
-  border-radius: var(--am-radius);
-  background: var(--am-surface-2);
+  padding: 10px 14px;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
+  box-shadow: 0 1px 0 color-mix(in srgb, #fff 5%, transparent) inset;
 }
 
 .msg.system {
@@ -390,12 +398,11 @@ textarea {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 56px;
-  height: 56px;
+  width: 48px;
+  height: 48px;
   margin-bottom: 6px;
-  border-radius: 14px;
   color: var(--vscode-foreground);
-  background: var(--am-surface-2);
+  background: transparent;
 }
 .empty strong {
   color: var(--vscode-foreground);
@@ -409,30 +416,33 @@ textarea {
 /* ---------- inline changes ---------- */
 
 .changes-card {
-  width: min(100%, 680px);
-  border: 1px solid var(--am-border-soft);
-  border-radius: var(--am-radius);
-  background: var(--am-surface);
+  width: min(100%, 720px);
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--vscode-editor-background) 94%, var(--vscode-foreground) 6%);
   overflow: hidden;
 }
 .changes-toggle {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   width: 100%;
   border: 0;
   background: transparent;
-  padding: 7px 9px;
+  padding: 10px 12px;
   cursor: pointer;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
+  color: var(--vscode-foreground);
 }
 .changes-toggle:hover {
-  background: var(--am-hover);
+  background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
 }
 .changes-toggle .caret {
   transition: transform 0.12s ease;
-  opacity: 0.7;
+  opacity: 0.55;
+  width: 15px;
+  height: 15px;
 }
 .changes-toggle .caret.open {
   transform: rotate(0deg);
@@ -440,11 +450,25 @@ textarea {
 .changes-toggle .caret:not(.open) {
   transform: rotate(-90deg);
 }
+.changes-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.changes-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 650;
+}
 .changes-summary {
   margin-left: auto;
-  font-weight: 400;
-  color: var(--am-muted);
-  font-size: 11px;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--vscode-foreground) 78%, transparent);
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -455,9 +479,9 @@ textarea {
 }
 .changes-body {
   display: grid;
-  gap: 8px;
-  padding: 0 9px 9px;
-  max-height: 220px;
+  gap: 10px;
+  padding: 0 12px 12px;
+  max-height: 260px;
   overflow: auto;
 }
 .changes-actions {
@@ -572,52 +596,58 @@ textarea {
 
 .composer {
   min-width: 0;
-  padding: 8px 10px 10px;
-  border-top: 1px solid var(--am-border-soft);
+  padding: 8px 12px 10px;
+  border-top: 1px solid color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
   flex: 0 0 auto;
   container-type: inline-size;
 }
 
 .composer-box {
-  border: 1px solid var(--am-border);
-  border-radius: 14px;
-  background: var(--vscode-input-background, var(--am-surface));
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16);
-  transition: border-color 0.14s ease, box-shadow 0.14s ease;
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 16%, transparent);
+  border-radius: 20px;
+  background: var(--vscode-input-background, var(--am-composer-bg));
+  box-shadow:
+    0 1px 0 color-mix(in srgb, #fff 5%, transparent) inset,
+    0 8px 24px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+  transition: border-color 0.14s ease, box-shadow 0.14s ease, background 0.14s ease;
 }
 .composer-box:focus-within {
-  border-color: color-mix(in srgb, var(--am-accent) 70%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--am-accent) 45%, transparent),
-    0 4px 16px rgba(0, 0, 0, 0.2);
+  border-color: color-mix(in srgb, var(--vscode-foreground) 28%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--vscode-foreground) 12%, transparent),
+    0 10px 28px rgba(0, 0, 0, 0.2);
 }
 
 .composer textarea {
   display: block;
   width: 100%;
-  min-height: 38px;
-  max-height: 200px;
+  min-height: 44px;
+  max-height: 180px;
   resize: none;
   border: 0;
   background: transparent;
-  padding: 11px 13px 3px;
+  padding: 13px 16px 2px;
   line-height: 1.45;
   outline: none;
+  color: var(--vscode-input-foreground, var(--vscode-foreground));
+  font-size: 13px;
 }
 .composer textarea::placeholder {
-  color: var(--am-muted);
+  color: color-mix(in srgb, var(--am-muted) 68%, transparent);
 }
 
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 6px 6px;
+  gap: 7px;
+  padding: 3px 8px 8px;
   min-width: 0;
 }
 .toolbar-chips {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   flex: 1 1 auto;
   min-width: 0;
 }
@@ -626,36 +656,40 @@ textarea {
 .chip-btn {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  height: 28px;
-  max-width: 150px;
+  gap: 6px;
+  height: 30px;
+  max-width: 148px;
   min-width: 0;
-  padding: 0 9px;
-  border: 0;
+  padding: 0 8px;
+  border: 1px solid transparent;
   border-radius: 999px;
   background: transparent;
-  color: var(--vscode-foreground);
+  color: var(--am-control-fg);
   cursor: pointer;
   font-size: 12px;
-  transition: background 0.12s ease;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
 }
 .chip-btn:hover {
-  background: var(--am-hover);
+  background: var(--am-control-bg-hover);
+  color: var(--vscode-foreground);
 }
 .chip-btn svg {
   flex: 0 0 auto;
-  opacity: 0.85;
+  opacity: 0.9;
+}
+.agent-chip {
+  max-width: 120px;
 }
 .chip-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: 500;
+  font-weight: 550;
 }
 .chip-caret {
   width: 12px;
   height: 12px;
-  opacity: 0.55;
+  opacity: 0.58;
 }
 .chip-count {
   display: inline-flex;
@@ -672,38 +706,87 @@ textarea {
   line-height: 1;
 }
 
-/* Compact icon-only control */
+.composer-icon-btn,
 .icon-chip {
   position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   flex: 0 0 auto;
   padding: 0;
   border: 0;
   border-radius: 999px;
   background: transparent;
-  color: var(--vscode-foreground);
+  color: var(--am-control-fg);
   cursor: pointer;
   opacity: 0.9;
   transition: background 0.12s ease, color 0.12s ease, opacity 0.12s ease;
 }
+.composer-icon-btn:hover:not(:disabled),
 .icon-chip:hover:not(:disabled) {
-  background: var(--am-hover);
+  background: var(--am-control-bg-hover);
+  color: var(--vscode-foreground);
   opacity: 1;
 }
+.composer-icon-btn svg,
 .icon-chip svg {
   opacity: 0.9;
 }
+.composer-icon-btn.active,
 .icon-chip.active {
-  color: var(--am-accent);
-  background: color-mix(in srgb, var(--am-accent) 14%, transparent);
+  color: var(--vscode-foreground);
+  background: var(--am-control-bg);
+}
+.composer-icon-btn.warning {
+  color: var(--am-warn);
+  background: color-mix(in srgb, var(--am-warn) 14%, transparent);
 }
 .icon-chip.danger {
   color: var(--am-warn);
   background: color-mix(in srgb, var(--am-warn) 15%, transparent);
+}
+.context-dot {
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+  box-shadow: 0 0 0 2px var(--vscode-input-background, var(--am-composer-bg));
+}
+.permission-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  max-width: 158px;
+  min-width: 0;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--am-control-fg);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.permission-chip:hover {
+  background: var(--am-control-bg-hover);
+  color: var(--vscode-foreground);
+}
+.permission-chip span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.permission-chip.danger {
+  background: transparent;
+  color: var(--am-control-fg);
 }
 .chip-badge {
   position: absolute;
@@ -732,48 +815,65 @@ textarea {
   flex: 0 0 auto;
   border: 0;
   border-radius: 999px;
-  color: var(--vscode-button-foreground);
-  background: var(--vscode-button-background);
+  color: #111;
+  background: #f2f2f2;
   cursor: pointer;
-  transition: background 0.12s ease, transform 0.08s ease, opacity 0.12s ease;
+  transition: background 0.12s ease, transform 0.08s ease, opacity 0.12s ease, box-shadow 0.12s ease;
 }
 .send-btn svg {
-  stroke-width: 1.7;
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.8;
 }
 .send-btn:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
+  background: #ffffff;
+  box-shadow: 0 5px 18px rgba(255, 255, 255, 0.12);
 }
 .send-btn:active:not(:disabled) {
   transform: scale(0.94);
 }
 .send-btn:disabled {
-  opacity: 0.35;
+  opacity: 0.5;
   cursor: default;
 }
 /* While the agent runs and the composer is empty, the button stops the run. */
 .send-btn.stop {
-  background: color-mix(in srgb, var(--vscode-errorForeground, #f85149) 90%, #000);
-  color: #fff;
+  background: #f2f2f2;
+  color: #111;
 }
 .send-btn.stop:hover:not(:disabled) {
-  background: var(--vscode-errorForeground, #f85149);
+  background: #ffffff;
 }
 .send-btn.stop svg {
-  width: 11px;
-  height: 11px;
+  width: 16px;
+  height: 16px;
+}
+
+.send-btn.stop svg path {
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: scale(1.2);
 }
 
 /* Collapse the agent label when the composer gets narrow */
-@container (max-width: 280px) {
-  .chip-btn {
+@container (max-width: 380px) {
+  .agent-chip {
     gap: 0;
-    width: 28px;
+    width: 30px;
     padding: 0;
     justify-content: center;
   }
-  .chip-btn .chip-label,
-  .chip-btn .chip-count,
-  .chip-btn .chip-caret {
+  .agent-chip .chip-label,
+  .agent-chip .chip-caret {
+    display: none;
+  }
+  .permission-chip {
+    width: 30px;
+    padding: 0;
+    justify-content: center;
+  }
+  .permission-chip span,
+  .permission-chip .chip-caret {
     display: none;
   }
 }

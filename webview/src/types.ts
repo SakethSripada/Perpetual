@@ -345,6 +345,7 @@ export interface GithubRepository {
 export type ExtensionMessage =
   | { type: "snapshot"; snapshot: WorkbenchSnapshot }
   | { type: "githubRepos"; repos: GithubRepository[]; status: unknown }
+  | { type: "repoConnected"; repo: Repo }
   | { type: "sandboxLoginPrompt"; prompt: { code: string; url: string }; codex: boolean }
   | { type: "notice"; message: string }
   | { type: "error"; message: string };
