@@ -150,7 +150,7 @@ export default function App() {
   );
   // Details belong to the daemon's current selection; while navigating to a
   // different thread they're stale, so we show a loading state instead.
-  const navigating = navThreadId !== undefined && navThreadId !== (snapshot?.selectedThreadId ?? null);
+  const navigating = navThreadId !== undefined && navThreadId !== null && navThreadId !== (snapshot?.selectedThreadId ?? null);
   useEffect(() => {
     if (!snapshot) return;
     const nextAgent = selectedThread?.active_agent ?? selectedThread?.preferred_agent ?? snapshot.defaults.agent;
@@ -432,7 +432,7 @@ export default function App() {
               }
             />
           ))}
-          {!navigating && (isRunning || pending.length > 0) && !details?.approvals.length && (
+          {!navigating && selectedThread && (isRunning || pending.length > 0) && !details?.approvals.length && (
             <div className="thinking">Working…</div>
           )}
           {!navigating &&
