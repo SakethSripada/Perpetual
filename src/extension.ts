@@ -1,7 +1,8 @@
 import * as vscode from "vscode";
 import { DaemonManager } from "./node/daemonManager";
-import { WorkbenchController } from "./node/workbenchController";
+import { WorkbenchController, type NativeAgentMode } from "./node/workbenchController";
 import { WorkbenchWebviewProvider } from "./node/webviewProvider";
+import type { AgentKind } from "./node/types";
 
 const VIEW_ID = "agentmanager.workbench";
 const PANEL_VIEW_ID = "agentmanager.workbench.panel";
@@ -13,6 +14,8 @@ export function activate(context: vscode.ExtensionContext): void {
   activeDaemon = daemon;
   const controller = new WorkbenchController(context, daemon, output);
   const provider = new WorkbenchWebviewProvider(context, controller);
+  const native = (command: string, agent: AgentKind, mode: NativeAgentMode) =>
+    vscode.commands.registerCommand(command, () => controller.openNativeAgent(agent, mode));
 
   context.subscriptions.push(
     output,
@@ -39,24 +42,24 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("agentmanager.connectGithubRepo", () =>
       controller.connectGithubRepoInteractive()
     ),
-    vscode.commands.registerCommand("agentmanager.openNativeClaude", () =>
-      controller.openNativeAgent("claude_code", "open")
-    ),
-    vscode.commands.registerCommand("agentmanager.openNativeClaudePlan", () =>
-      controller.openNativeAgent("claude_code", "plan")
-    ),
-    vscode.commands.registerCommand("agentmanager.openNativeClaudeAgents", () =>
-      controller.openNativeAgent("claude_code", "agents")
-    ),
-    vscode.commands.registerCommand("agentmanager.resumeNativeClaude", () =>
-      controller.openNativeAgent("claude_code", "resume")
-    ),
-    vscode.commands.registerCommand("agentmanager.openNativeCodex", () =>
-      controller.openNativeAgent("codex", "open")
-    ),
-    vscode.commands.registerCommand("agentmanager.resumeNativeCodex", () =>
-      controller.openNativeAgent("codex", "resume")
-    ),
+    native("agentmanager.openNativeClaude", "claude_code", "open"),
+    native("agentmanager.openNativeClaudePlan", "claude_code", "plan"),
+    native("agentmanager.openNativeClaudeAuto", "claude_code", "auto"),
+    native("agentmanager.openNativeClaudeAcceptEdits", "claude_code", "accept_edits"),
+    native("agentmanager.openNativeClaudeAgents", "claude_code", "agents"),
+    native("agentmanager.openNativeClaudeMcp", "claude_code", "mcp"),
+    native("agentmanager.openNativeClaudePlugins", "claude_code", "plugins"),
+    native("agentmanager.openNativeClaudeDiagnostics", "claude_code", "diagnostics"),
+    native("agentmanager.resumeNativeClaude", "claude_code", "resume"),
+    native("agentmanager.openNativeCodex", "codex", "open"),
+    native("agentmanager.resumeNativeCodex", "codex", "resume"),
+    native("agentmanager.forkNativeCodex", "codex", "fork"),
+    native("agentmanager.openNativeCodexCloud", "codex", "cloud"),
+    native("agentmanager.openNativeCodexMcp", "codex", "mcp"),
+    native("agentmanager.openNativeCodexPlugins", "codex", "plugins"),
+    native("agentmanager.openNativeCodexFeatures", "codex", "features"),
+    native("agentmanager.openNativeCodexDiagnostics", "codex", "diagnostics"),
+    native("agentmanager.openNativeCodexApp", "codex", "app"),
     vscode.commands.registerCommand("agentmanager.openSettings", () =>
       vscode.commands.executeCommand("workbench.action.openSettings", "@ext:agentmanager.agentmanager-vscode")
     )

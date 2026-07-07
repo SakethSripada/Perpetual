@@ -904,6 +904,11 @@ textarea {
   padding: 6px;
   min-width: 180px;
 }
+.native-menu {
+  min-width: 210px;
+  max-height: min(620px, calc(100vh - 32px));
+  overflow-y: auto;
+}
 .menu-head {
   font-size: 10px;
   text-transform: uppercase;
