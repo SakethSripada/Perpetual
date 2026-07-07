@@ -171,6 +171,49 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.limit-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 7px 10px 0;
+  flex: 0 0 auto;
+}
+.limit-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border: 1px solid color-mix(in srgb, var(--am-warn) 32%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--am-warn) 9%, transparent);
+  color: var(--am-muted);
+  font-size: 11px;
+}
+.limit-pill svg {
+  width: 13px;
+  height: 13px;
+  color: var(--am-warn);
+}
+.limit-pill span,
+.limit-pill strong {
+  white-space: nowrap;
+}
+.limit-pill strong {
+  color: var(--vscode-foreground);
+  font-weight: 600;
+}
+.limit-pill.fallback {
+  border-color: color-mix(in srgb, var(--am-accent) 28%, transparent);
+  background: color-mix(in srgb, var(--am-accent) 8%, transparent);
+}
+.limit-pill.fallback svg {
+  color: var(--am-accent);
+}
+
 /* ---------- conversation ---------- */
 
 .conversation {

@@ -3,6 +3,7 @@ import type { CSSProperties, ReactNode } from "react";
 import type {
   AgentKind,
   AgentModelOption,
+  AgentStatus,
   AgentThread,
   AgentThreadEvent,
   ApprovalDecision,
@@ -266,7 +267,7 @@ export default function App() {
       if (status.availability === "limited") {
         const activeFallback = selectedThread?.fallback_agent && selectedThread.active_agent === selectedThread.fallback_agent;
         if (activeFallback && status.kind === selectedThread?.original_agent) continue;
-        const until = status.reset_at ? ` until ${formatTime(status.reset_at)}` : "";
+        const until = status.reset_at ? ` until ${formatResetTime(status.reset_at)}` : "";
         setNotice(`${labelAgent(status.kind)} is rate limited${until}.`);
       } else if (previous === "limited" && status.availability === "available") {
         setNotice(`${labelAgent(status.kind)} is available again.`);
@@ -278,6 +279,7 @@ export default function App() {
   const details = navigating ? undefined : snapshot?.details;
   const reposLocked = !!selectedThread && !!details?.repos.some((repo) => !!repo.worktree_path);
   const canReviewChanges = !!selectedThread && !!details?.repos.some((repo) => !!repo.worktree_path);
+  const limitedAgents = snapshot?.agents.filter((status) => status.availability === "limited") ?? [];
 
   // The composer owns its own draft text so typing never re-renders the
   // transcript; it hands us the final text here on submit.
@@ -400,6 +402,12 @@ export default function App() {
           </IconButton>
         </div>
       )}
+
+      <LimitRecoveryBar
+        limitedAgents={limitedAgents}
+        policy={snapshot?.limitPolicy ?? null}
+        selectedThread={selectedThread}
+      />
 
       <section className="conversation">
         <div className="transcript" ref={transcriptRef}>
@@ -918,6 +926,36 @@ const APPROVAL_ICON: Record<ApprovalRequest["kind"], "terminal" | "repo" | "agen
   file_change: "repo",
   tool: "agent",
 };
+
+function LimitRecoveryBar(props: {
+  limitedAgents: AgentStatus[];
+  policy: LimitPolicy | null;
+  selectedThread: AgentThread | null;
+}) {
+  const activeFallback =
+    props.selectedThread?.fallback_agent &&
+    props.selectedThread.active_agent === props.selectedThread.fallback_agent &&
+    (props.selectedThread.handoff_state === "fallback_active" || !!props.selectedThread.original_agent);
+  if (props.limitedAgents.length === 0 && !activeFallback) return null;
+  return (
+    <div className="limit-bar" role="status">
+      {props.limitedAgents.map((agent) => (
+        <span key={agent.kind} className="limit-pill">
+          <Icon name="clock" />
+          <span>{labelAgent(agent.kind)} limited</span>
+          <strong>{agent.reset_at ? formatResetTime(agent.reset_at) : retryLabel(props.policy)}</strong>
+        </span>
+      ))}
+      {activeFallback && props.selectedThread?.fallback_agent && (
+        <span className="limit-pill fallback">
+          <Icon name="refresh" />
+          <span>Running on {labelAgent(props.selectedThread.fallback_agent)}</span>
+          <strong>{props.policy?.switch_back ? "switch-back armed" : "manual return"}</strong>
+        </span>
+      )}
+    </div>
+  );
+}
 
 function ApprovalCard(props: { approval: ApprovalRequest; onResolve(decision: ApprovalDecision): void }) {
   const { approval } = props;
@@ -2040,7 +2078,7 @@ function SettingsSheet(props: {
               {props.snapshot.agents.map((agent) => (
                 <div key={agent.kind} className="readiness-row">
                   <span>{labelAgent(agent.kind)}</span>
-                  <small>{agent.installed ? (agent.authenticated ? humanize(agent.availability) : "Sign in needed") : "Not installed"}</small>
+                  <small>{agentReadinessLabel(agent, limit)}</small>
                 </div>
               ))}
               {props.snapshot.localModels?.map((provider) => (
@@ -2502,6 +2540,42 @@ function labelLocalProvider(provider: LocalModelProvider | ""): string {
 
 function defaultLocalBaseUrl(provider: LocalModelProvider): string {
   return provider === "lm_studio" ? "http://127.0.0.1:1234" : "http://127.0.0.1:11434";
+}
+
+function agentReadinessLabel(agent: AgentStatus, policy: LimitPolicy | null): string {
+  if (!agent.installed) return "Not installed";
+  if (!agent.authenticated) return "Sign in needed";
+  if (agent.availability === "limited") {
+    return agent.reset_at ? `Limited until ${formatResetTime(agent.reset_at)}` : `Limited - ${retryLabel(policy)}`;
+  }
+  return humanize(agent.availability);
+}
+
+function retryLabel(policy: LimitPolicy | null): string {
+  const retry = policy?.unknown_reset_retry_secs ?? 600;
+  if (retry <= 0) return "reset time unknown";
+  return `reset unknown, rechecking every ${formatDuration(retry * 1000)}`;
+}
+
+function formatResetTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.valueOf())) return "reset time unavailable";
+  const clock = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return `${clock} (${relativeReset(date)})`;
+}
+
+function relativeReset(date: Date): string {
+  const diff = date.getTime() - Date.now();
+  if (diff <= 0) return "ready now";
+  return `in ${formatDuration(diff)}`;
+}
+
+function formatDuration(ms: number): string {
+  const totalMinutes = Math.max(1, Math.round(ms / 60_000));
+  if (totalMinutes < 60) return `${totalMinutes}m`;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
 }
 
 function sanitizeBackend(agent: AgentKind, backend: ExecutionBackend): ExecutionBackend {

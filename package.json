@@ -345,9 +345,10 @@
   "scripts": {
     "clean": "node scripts/clean.mjs",
     "compile": "tsc -p tsconfig.json",
+    "typecheck:webview": "tsc -p webview/tsconfig.json",
     "build:extension": "node scripts/esbuild.mjs --production",
     "build:webview": "vite build --config webview/vite.config.ts",
-    "build": "npm run build:extension && npm run build:webview",
+    "build": "npm run compile && npm run typecheck:webview && npm run build:extension && npm run build:webview",
     "watch:extension": "node scripts/esbuild.mjs --watch",
     "watch:webview": "vite build --config webview/vite.config.ts --watch",
     "copy-daemon": "node scripts/copy-daemon.mjs",
@@ -364,7 +365,7 @@
     "package:win32-arm64": "npm run check-daemon -- --target win32-arm64 && vsce package --target win32-arm64",
     "test:unit": "npm run compile && node --test out/test/*.test.js",
     "test:vscode": "vscode-test --config vscode-test.mjs",
-    "test": "npm run test:unit"
+    "test": "npm run test:unit && npm run typecheck:webview"
   },
   "devDependencies": {
     "@types/node": "^22.15.3",
