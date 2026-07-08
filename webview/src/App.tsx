@@ -385,9 +385,6 @@ export default function App() {
             onSelect={selectThread}
             onDelete={deleteThread}
           />
-          <IconButton title="Open in editor" onClick={() => vscode.postMessage({ type: "openPanel" })}>
-            <Icon name="window" />
-          </IconButton>
           <IconButton title="Settings" onClick={() => setSettingsOpen(true)}>
             <Icon name="settings" />
           </IconButton>
