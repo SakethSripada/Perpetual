@@ -227,12 +227,12 @@
         "agentmanager.autoSwitchOnLimit": {
           "type": "boolean",
           "default": true,
-          "description": "Switch to another ready agent when the current agent hits a usage limit."
+          "description": "When the current agent hits a usage limit, continue the task on the other ready agent."
         },
         "agentmanager.switchBackOnRecovery": {
           "type": "boolean",
           "default": true,
-          "description": "Switch back to the preferred agent after its usage limit resets."
+          "description": "After an automatic agent switch, return to the original agent once it recovers."
         },
         "agentmanager.fallbackPriority": {
           "type": "array",
@@ -247,12 +247,17 @@
               "codex"
             ]
           },
-          "description": "Agent fallback order used when the active agent becomes usage-limited or unavailable."
+          "description": "Advanced: provider order used only when more than one fallback agent is available. With Claude/Codex, Perpetual skips the limited current agent and uses the other one."
+        },
+        "agentmanager.autoResumeOnLimitReset": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically resume paused limit-waiting tasks as soon as the relevant rate limit resets."
         },
         "agentmanager.resumeWithEarliestAgent": {
           "type": "boolean",
           "default": true,
-          "description": "When all agents are limited, resume with the first agent that recovers."
+          "description": "Legacy name for autoResumeOnLimitReset. Kept for existing installations."
         },
         "agentmanager.unknownLimitRetrySeconds": {
           "type": "number",
@@ -288,6 +293,21 @@
           "default": "same_provider",
           "description": "Which provider's cloud receives a carried-over task."
         },
+        "agentmanager.cloud.providerPriority": {
+          "type": "array",
+          "default": [
+            "claude_code",
+            "codex"
+          ],
+          "items": {
+            "type": "string",
+            "enum": [
+              "claude_code",
+              "codex"
+            ]
+          },
+          "description": "When cross-provider cloud handoff is enabled and the current provider is not ready, choose this cloud provider first."
+        },
         "agentmanager.cloud.requireApproval": {
           "type": "boolean",
           "default": false,
@@ -304,6 +324,37 @@
           "type": "string",
           "default": "",
           "description": "Codex Cloud environment id used for carried-over Codex tasks. Create one at chatgpt.com/codex."
+        },
+        "agentmanager.local.autoResumeCloud": {
+          "type": "boolean",
+          "default": true,
+          "description": "Resume cloud agents automatically when network/cloud connectivity returns."
+        },
+        "agentmanager.local.useFallback": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use selected local models when cloud agents are unavailable."
+        },
+        "agentmanager.local.switchBackToCloud": {
+          "type": "boolean",
+          "default": true,
+          "description": "Switch local fallback runs back to cloud agents after connectivity is stable."
+        },
+        "agentmanager.local.probeIntervalSeconds": {
+          "type": "number",
+          "default": 30,
+          "minimum": 5,
+          "description": "How often to probe cloud/local recovery while waiting."
+        },
+        "agentmanager.local.ollamaBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Ollama base URL for detection and local fallback. Empty uses http://127.0.0.1:11434."
+        },
+        "agentmanager.local.lmStudioBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "LM Studio base URL for detection and local fallback. Empty uses http://127.0.0.1:1234."
         },
         "agentmanager.sandbox.maxConcurrent": {
           "type": "number",

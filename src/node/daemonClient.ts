@@ -131,6 +131,14 @@ export class DaemonClient extends EventEmitter implements DaemonApi {
     return responsePayload(await this.requestRaw(variant("detect_local_models")), "local_model_statuses");
   }
 
+  async getLocalModelPolicy() {
+    return responsePayload(await this.requestRaw(variant("get_local_model_policy")), "local_model_policy");
+  }
+
+  async setLocalModelPolicy(policy: Parameters<DaemonApi["setLocalModelPolicy"]>[0]) {
+    return responsePayload(await this.requestRaw(variant("set_local_model_policy", policy)), "local_model_policy");
+  }
+
   async getLimitPolicy() {
     return responsePayload(await this.requestRaw(variant("get_limit_policy")), "limit_policy");
   }

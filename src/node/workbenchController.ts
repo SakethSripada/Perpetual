@@ -20,6 +20,7 @@ import type {
   GithubAuthStatus,
   GithubRepository,
   LimitPolicy,
+  LocalModelPolicy,
   LocalModelStatus,
   LocalModelProvider,
   NewGithubRepo,
@@ -64,6 +65,7 @@ type WebviewMessage =
   | { type: "setLimitPolicy"; policy: LimitPolicy }
   | { type: "setSandboxPolicy"; policy: SandboxPolicy }
   | { type: "setCloudPolicy"; policy: CloudPolicy }
+  | { type: "setLocalModelPolicy"; policy: LocalModelPolicy }
   | { type: "sandboxLogin"; codex?: boolean }
   | { type: "openPath"; path: string }
   | { type: "openSettings" | "openPanel" }
@@ -87,6 +89,7 @@ type DetectionCache = {
   cloudAvailability: CloudAvailability[];
   modelCatalog: AgentModelCatalog[];
   localModels: LocalModelStatus[];
+  localModelPolicy: LocalModelPolicy | null;
   state: "loading" | "ready" | "error";
 };
 
@@ -206,13 +209,15 @@ export class WorkbenchController implements vscode.Disposable {
           await this.refresh();
           return;
         case "setLimitPolicy":
-          await this.withClient((client) => client.setLimitPolicy(message.policy));
+          await this.withClient((client) => client.setLimitPolicy(normalizeLimitPolicy(message.policy)));
+          await this.mirrorLimitPolicyToConfig(normalizeLimitPolicy(message.policy));
           this.lastSyncedSettings = "";
           this.detectionCache = null;
           await this.refresh();
           return;
         case "setSandboxPolicy":
           await this.withClient((client) => client.setSandboxPolicy(message.policy));
+          await this.mirrorSandboxPolicyToConfig(message.policy);
           this.lastSyncedSettings = "";
           this.detectionCache = null;
           await this.refresh();
@@ -222,6 +227,13 @@ export class WorkbenchController implements vscode.Disposable {
           // Mirror into VS Code settings so the next settings sync doesn't undo
           // what the user just applied from the in-webview sheet.
           await this.mirrorCloudPolicyToConfig(message.policy);
+          this.lastSyncedSettings = "";
+          this.detectionCache = null;
+          await this.refresh();
+          return;
+        case "setLocalModelPolicy":
+          await this.withClient((client) => client.setLocalModelPolicy(normalizeLocalModelPolicy(message.policy)));
+          await this.mirrorLocalModelPolicyToConfig(normalizeLocalModelPolicy(message.policy));
           this.lastSyncedSettings = "";
           this.detectionCache = null;
           await this.refresh();
@@ -331,11 +343,12 @@ export class WorkbenchController implements vscode.Disposable {
 
       // Fast path: threads/repos are cheap DB reads; agent + sandbox detection is
       // expensive (CLI probes) so it comes from a short-lived cache.
-      const [threads, repos, detection] = await Promise.all([
+      const [allThreads, repos, detection] = await Promise.all([
         client.listAgentThreads(project.id),
         client.listRepos(project.id),
         this.detect(client),
       ]);
+      const threads = filterAgentThreads(allThreads);
       const {
         agents,
         runDefaults,
@@ -346,6 +359,7 @@ export class WorkbenchController implements vscode.Disposable {
         cloudAvailability,
         modelCatalog,
         localModels,
+        localModelPolicy,
         state: detectionState,
       } =
         detection;
@@ -380,6 +394,7 @@ export class WorkbenchController implements vscode.Disposable {
         runDefaults,
         modelCatalog,
         localModels,
+        localModelPolicy,
         detectionState,
         defaultRepoIds,
         limitPolicy,
@@ -417,7 +432,8 @@ export class WorkbenchController implements vscode.Disposable {
     const localBaseUrl = localProvider
       ? blankToNull(message.localBaseUrl ?? defaults.local_base_url) ?? defaultLocalBaseUrl(localProvider)
       : null;
-    const model = blankToNull(message.model ?? defaults.model);
+    const rawModel = blankToNull(message.model ?? defaults.model);
+    const model = sanitizeModelForAgent(agent, rawModel, localProvider);
     const reasoning = blankToNull(message.reasoning ?? defaults.reasoning);
     if (localProvider && !model) {
       throw new Error("Choose a local model before running with Ollama or LM Studio.");
@@ -601,20 +617,22 @@ export class WorkbenchController implements vscode.Disposable {
         sandboxRuntime,
         cloudPolicy,
         cloudAvailability,
+        localModelPolicy,
       ] =
         await Promise.all([
-          client.detectAgents().catch((err) => {
+          client.detectAgents().then(filterAgentStatuses).catch((err) => {
             this.output.appendLine(`[workbench] agent detection failed: ${formatError(err)}`);
             return [];
           }),
-          client.agentRunDefaults().catch(() => []),
-          client.agentModelCatalog().catch(() => []),
+          client.agentRunDefaults().then(filterRunDefaults).catch(() => []),
+          client.agentModelCatalog().then(filterModelCatalog).catch(() => []),
           client.detectLocalModels().catch(() => []),
-          client.getLimitPolicy().catch(() => null),
+          client.getLimitPolicy().then(normalizeLimitPolicy).catch(() => null),
           client.getSandboxPolicy().catch(() => null),
           client.detectSandboxRuntime().catch(() => null),
-          client.getCloudPolicy().catch(() => null),
-          client.cloudAvailability().catch(() => []),
+          client.getCloudPolicy().then(normalizeCloudPolicy).catch(() => null),
+          client.cloudAvailability().then(filterCloudAvailability).catch(() => []),
+          client.getLocalModelPolicy().then(normalizeLocalModelPolicy).catch(() => null),
         ]);
       const next: DetectionCache = {
         at: Date.now(),
@@ -627,6 +645,7 @@ export class WorkbenchController implements vscode.Disposable {
         cloudAvailability,
         modelCatalog,
         localModels,
+        localModelPolicy,
         state: "ready",
       };
       this.detectionCache = next;
@@ -647,32 +666,45 @@ export class WorkbenchController implements vscode.Disposable {
     const encoded = JSON.stringify(settings);
     if (encoded === this.lastSyncedSettings) return;
 
-    const [limitPolicy, sandboxPolicy, cloudPolicy] = await Promise.all([
+    const [limitPolicy, sandboxPolicy, cloudPolicy, localModelPolicy] = await Promise.all([
       client.getLimitPolicy().catch(() => null),
       client.getSandboxPolicy().catch(() => null),
       client.getCloudPolicy().catch(() => null),
+      client.getLocalModelPolicy().catch(() => null),
     ]);
     if (limitPolicy) {
-      await client.setLimitPolicy({
+      await client.setLimitPolicy(normalizeLimitPolicy({
         ...limitPolicy,
         auto_switch: settings.autoSwitchOnLimit,
         switch_back: settings.switchBackOnRecovery,
         resume_with_earliest: settings.resumeWithEarliestAgent,
         unknown_reset_retry_secs: settings.unknownLimitRetrySeconds,
         agent_priority: settings.fallbackPriority,
-      });
+      }));
     }
     if (cloudPolicy) {
-      await client.setCloudPolicy({
+      await client.setCloudPolicy(normalizeCloudPolicy({
         ...cloudPolicy,
         enabled: settings.cloudAutoCarryover,
         continue_on_sleep: settings.cloudCarryOverOnSleep,
         continue_on_shutdown: settings.cloudCarryOverOnShutdown,
         allow_cross_provider: settings.cloudProviderStrategy === "switch_provider",
+        provider_priority: settings.cloudProviderPriority,
         require_approval: settings.cloudRequireApproval,
         max_concurrent_cloud_runs: settings.cloudMaxConcurrentRuns,
         codex_env_id: blankToNull(settings.cloudCodexEnvId),
-      });
+      }));
+    }
+    if (localModelPolicy) {
+      await client.setLocalModelPolicy(normalizeLocalModelPolicy({
+        ...localModelPolicy,
+        auto_resume_cloud: settings.localAutoResumeCloud,
+        use_local_fallback: settings.localUseFallback,
+        switch_back_to_cloud: settings.localSwitchBackToCloud,
+        probe_interval_secs: settings.localProbeIntervalSeconds,
+        ollama_base_url: blankToNull(settings.localOllamaBaseUrl) ?? localModelPolicy.ollama_base_url,
+        lm_studio_base_url: blankToNull(settings.localLmStudioBaseUrl) ?? localModelPolicy.lm_studio_base_url,
+      }));
     }
     if (sandboxPolicy) {
       await client.setSandboxPolicy({
@@ -705,9 +737,48 @@ export class WorkbenchController implements vscode.Disposable {
         policy.allow_cross_provider ? "switch_provider" : "same_provider",
         target
       ),
+      config.update("cloud.providerPriority", normalizeAgentPriority(policy.provider_priority), target),
       config.update("cloud.requireApproval", policy.require_approval, target),
       config.update("cloud.maxConcurrentRuns", policy.max_concurrent_cloud_runs, target),
       config.update("cloud.codexEnvId", policy.codex_env_id ?? "", target),
+    ]);
+  }
+
+  private async mirrorLimitPolicyToConfig(policy: LimitPolicy): Promise<void> {
+    const config = vscode.workspace.getConfiguration("agentmanager");
+    const target = vscode.ConfigurationTarget.Global;
+    await Promise.all([
+      config.update("autoSwitchOnLimit", policy.auto_switch, target),
+      config.update("switchBackOnRecovery", policy.switch_back, target),
+      config.update("autoResumeOnLimitReset", policy.resume_with_earliest, target),
+      config.update("resumeWithEarliestAgent", policy.resume_with_earliest, target),
+      config.update("unknownLimitRetrySeconds", policy.unknown_reset_retry_secs, target),
+      config.update("fallbackPriority", normalizeAgentPriority(policy.agent_priority), target),
+    ]);
+  }
+
+  private async mirrorSandboxPolicyToConfig(policy: SandboxPolicy): Promise<void> {
+    const config = vscode.workspace.getConfiguration("agentmanager");
+    const target = vscode.ConfigurationTarget.Global;
+    await Promise.all([
+      config.update("defaultExecutionBackend", policy.default_backend, target),
+      config.update("sandbox.maxConcurrent", policy.max_concurrent_sandboxes, target),
+      config.update("sandbox.cpus", policy.cpus, target),
+      config.update("sandbox.memory", policy.memory, target),
+      config.update("sandbox.networkPreset", policy.network_preset, target),
+    ]);
+  }
+
+  private async mirrorLocalModelPolicyToConfig(policy: LocalModelPolicy): Promise<void> {
+    const config = vscode.workspace.getConfiguration("agentmanager");
+    const target = vscode.ConfigurationTarget.Global;
+    await Promise.all([
+      config.update("local.autoResumeCloud", policy.auto_resume_cloud, target),
+      config.update("local.useFallback", policy.use_local_fallback, target),
+      config.update("local.switchBackToCloud", policy.switch_back_to_cloud, target),
+      config.update("local.probeIntervalSeconds", policy.probe_interval_secs, target),
+      config.update("local.ollamaBaseUrl", policy.ollama_base_url, target),
+      config.update("local.lmStudioBaseUrl", policy.lm_studio_base_url, target),
     ]);
   }
 
@@ -795,6 +866,7 @@ function emptyDetectionCache(state: DetectionCache["state"]): DetectionCache {
     cloudAvailability: [],
     modelCatalog: [],
     localModels: [],
+    localModelPolicy: null,
     state,
   };
 }
@@ -811,6 +883,7 @@ function emptySnapshot(trusted: boolean, defaults: WorkbenchDefaults, error: str
     runDefaults: [],
     modelCatalog: [],
     localModels: [],
+    localModelPolicy: null,
     detectionState: "idle",
     defaultRepoIds: [],
     limitPolicy: null,
@@ -872,7 +945,7 @@ function titleFromMessage(message: string): string {
 function getDefaults(): WorkbenchDefaults {
   const config = vscode.workspace.getConfiguration("agentmanager");
   return {
-    agent: config.get<AgentKind>("defaultAgent", "claude_code"),
+    agent: sanitizeAgent(config.get<string>("defaultAgent", "claude_code")),
     permission: config.get<PermissionPolicy>("defaultPermission", "workspace_write"),
     execution_backend: config.get<ExecutionBackend>("defaultExecutionBackend", "host"),
     model: blankToNull(config.get<string>("defaultModel", "")),
@@ -884,20 +957,28 @@ function getDefaults(): WorkbenchDefaults {
 
 function getSettingsSnapshot() {
   const config = vscode.workspace.getConfiguration("agentmanager");
+  const autoResumeOnLimitReset = config.get<boolean | undefined>("autoResumeOnLimitReset", undefined);
   return {
     defaultExecutionBackend: config.get<ExecutionBackend>("defaultExecutionBackend", "host"),
     autoSwitchOnLimit: config.get<boolean>("autoSwitchOnLimit", true),
     switchBackOnRecovery: config.get<boolean>("switchBackOnRecovery", true),
-    resumeWithEarliestAgent: config.get<boolean>("resumeWithEarliestAgent", true),
+    resumeWithEarliestAgent: autoResumeOnLimitReset ?? config.get<boolean>("resumeWithEarliestAgent", true),
     unknownLimitRetrySeconds: config.get<number>("unknownLimitRetrySeconds", 600),
-    fallbackPriority: config.get<AgentKind[]>("fallbackPriority", ["claude_code", "codex"]),
+    fallbackPriority: normalizeAgentPriority(config.get<AgentKind[]>("fallbackPriority", ["claude_code", "codex"])),
     cloudAutoCarryover: config.get<boolean>("cloud.autoCarryover", false),
     cloudCarryOverOnSleep: config.get<boolean>("cloud.carryOverOnSleep", true),
     cloudCarryOverOnShutdown: config.get<boolean>("cloud.carryOverOnShutdown", true),
     cloudProviderStrategy: config.get<string>("cloud.providerStrategy", "same_provider"),
+    cloudProviderPriority: normalizeAgentPriority(config.get<AgentKind[]>("cloud.providerPriority", ["claude_code", "codex"])),
     cloudRequireApproval: config.get<boolean>("cloud.requireApproval", false),
     cloudMaxConcurrentRuns: config.get<number>("cloud.maxConcurrentRuns", 2),
     cloudCodexEnvId: config.get<string>("cloud.codexEnvId", ""),
+    localAutoResumeCloud: config.get<boolean>("local.autoResumeCloud", true),
+    localUseFallback: config.get<boolean>("local.useFallback", true),
+    localSwitchBackToCloud: config.get<boolean>("local.switchBackToCloud", true),
+    localProbeIntervalSeconds: config.get<number>("local.probeIntervalSeconds", 30),
+    localOllamaBaseUrl: config.get<string>("local.ollamaBaseUrl", ""),
+    localLmStudioBaseUrl: config.get<string>("local.lmStudioBaseUrl", ""),
     sandboxMaxConcurrent: config.get<number>("sandbox.maxConcurrent", 2),
     sandboxCpus: config.get<number>("sandbox.cpus", 2),
     sandboxMemory: config.get<string>("sandbox.memory", "4g"),
@@ -912,6 +993,77 @@ function sanitizeBackend(agent: AgentKind, backend: ExecutionBackend): Execution
   return backend;
 }
 
+function sanitizeAgent(value: string | null | undefined): AgentKind {
+  return value === "codex" ? "codex" : "claude_code";
+}
+
+function isSupportedAgent(value: string | null | undefined): value is AgentKind {
+  return value === "claude_code" || value === "codex";
+}
+
+function normalizeAgentPriority(value: readonly AgentKind[] | null | undefined): AgentKind[] {
+  const out: AgentKind[] = [];
+  for (const agent of value ?? []) {
+    if (isSupportedAgent(agent) && !out.includes(agent)) out.push(agent);
+  }
+  for (const agent of ["claude_code", "codex"] as const) {
+    if (!out.includes(agent)) out.push(agent);
+  }
+  return out;
+}
+
+function filterAgentStatuses(items: AgentStatus[]): AgentStatus[] {
+  return items.filter((item) => isSupportedAgent(item.kind));
+}
+
+function filterRunDefaults(items: AgentRunDefaults[]): AgentRunDefaults[] {
+  return items.filter((item) => isSupportedAgent(item.kind));
+}
+
+function filterModelCatalog(items: AgentModelCatalog[]): AgentModelCatalog[] {
+  return items.filter((item) => isSupportedAgent(item.agent));
+}
+
+function filterCloudAvailability(items: CloudAvailability[]): CloudAvailability[] {
+  return items.filter((item) => isSupportedAgent(item.agent));
+}
+
+function filterAgentThreads(items: AgentThread[]): AgentThread[] {
+  return items.filter((item) => {
+    const active = item.active_agent ?? item.preferred_agent;
+    return !active || isSupportedAgent(active);
+  });
+}
+
+function normalizeLimitPolicy(policy: LimitPolicy): LimitPolicy {
+  return {
+    ...policy,
+    agent_priority: normalizeAgentPriority(policy.agent_priority),
+  };
+}
+
+function normalizeCloudPolicy(policy: CloudPolicy): CloudPolicy {
+  return {
+    ...policy,
+    provider_priority: normalizeAgentPriority(policy.provider_priority),
+  };
+}
+
+function normalizeLocalModelPolicy(policy: LocalModelPolicy): LocalModelPolicy {
+  return {
+    ...policy,
+    probe_interval_secs: clampInt(policy.probe_interval_secs, 5, 3600),
+    offline_grace_secs: clampInt(policy.offline_grace_secs, 0, 3600),
+    stable_successes: clampInt(policy.stable_successes, 1, 20),
+    targets: policy.targets.filter((target) => !!target.model.trim()),
+  };
+}
+
+function clampInt(value: number, min: number, max: number): number {
+  const n = Number.isFinite(value) ? Math.trunc(value) : min;
+  return Math.min(max, Math.max(min, n));
+}
+
 function blankToNull(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
@@ -919,6 +1071,36 @@ function blankToNull(value: string | null | undefined): string | null {
 
 function sanitizeLocalProvider(value: string | null | undefined): LocalModelProvider | null {
   return value === "ollama" || value === "lm_studio" ? value : null;
+}
+
+function sanitizeModelForAgent(
+  agent: AgentKind,
+  model: string | null,
+  localProvider: LocalModelProvider | null
+): string | null {
+  if (!model) return null;
+  if (localProvider) return model;
+  return modelCompatibleWithAgent(agent, model) ? model : null;
+}
+
+function modelCompatibleWithAgent(agent: AgentKind, model: string): boolean {
+  const normalized = baseModelId(model).toLowerCase();
+  if (!normalized) return true;
+  if (agent === "codex") return !isClaudeModel(normalized);
+  if (agent === "claude_code") return !isCodexModel(normalized);
+  return true;
+}
+
+function baseModelId(value: string): string {
+  return value.trim().replace(/\[[^\]]*\]$/, "").trim();
+}
+
+function isClaudeModel(model: string): boolean {
+  return ["opus", "sonnet", "haiku", "fable"].includes(model) || model.startsWith("claude-");
+}
+
+function isCodexModel(model: string): boolean {
+  return model.includes("gpt-") || /^o[1-9]/.test(model);
 }
 
 function defaultLocalBaseUrl(provider: LocalModelProvider): string {

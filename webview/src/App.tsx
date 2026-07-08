@@ -14,6 +14,7 @@ import type {
   ExtensionMessage,
   GithubRepository,
   LimitPolicy,
+  LocalModelPolicy,
   LocalModelProvider,
   PermissionPolicy,
   SandboxPolicy,
@@ -291,6 +292,11 @@ export default function App() {
       setNotice("Select at least one connected repository before starting the agent.");
       return;
     }
+    const submittedModel = sanitizeModelForAgent(agent, model, localProvider || null);
+    if (model.trim() && !submittedModel) {
+      setModel("");
+      setNotice(`${prettyModel(model)} is not available for ${labelAgent(agent)}. Using the agent default model.`);
+    }
     setPending((prev) => [...prev, { id: `pending-${Date.now()}-${prev.length}`, text }]);
     vscode.postMessage({
       type: "submit",
@@ -300,7 +306,7 @@ export default function App() {
       agent,
       permission,
       executionBackend: sanitizeBackend(agent, backend),
-      model: model.trim() || null,
+      model: submittedModel,
       reasoning: reasoning.trim() || null,
       localProvider: localProvider || null,
       localBaseUrl: localBaseUrl.trim() || null,
@@ -309,14 +315,22 @@ export default function App() {
 
   const pickAgent = (nextAgent: AgentKind) => {
     setAgent(nextAgent);
+    const compatibleModel = sanitizeModelForAgent(nextAgent, model, null);
     if (nextAgent !== "codex") {
       setBackend("host");
       setLocalProvider("");
       setLocalBaseUrl("");
     }
-    if (!snapshot) return;
+    if (!snapshot) {
+      if (compatibleModel !== model.trim()) setModel("");
+      return;
+    }
     const defaults = runDefaults(snapshot, nextAgent);
-    if (!model.trim()) setModel(defaults.model ?? "");
+    if (compatibleModel !== model.trim()) {
+      setModel(defaults.model ?? "");
+    } else if (!model.trim()) {
+      setModel(defaults.model ?? "");
+    }
     if (!reasoning.trim()) setReasoning(defaults.reasoning ?? "medium");
   };
 
@@ -500,10 +514,11 @@ export default function App() {
         <SettingsSheet
           snapshot={snapshot}
           onClose={() => setSettingsOpen(false)}
-          onApply={(limitPolicy, sandboxPolicy, cloudPolicy) => {
+          onApply={(limitPolicy, sandboxPolicy, cloudPolicy, localModelPolicy) => {
             vscode.postMessage({ type: "setLimitPolicy", policy: limitPolicy });
             vscode.postMessage({ type: "setSandboxPolicy", policy: sandboxPolicy });
             vscode.postMessage({ type: "setCloudPolicy", policy: cloudPolicy });
+            vscode.postMessage({ type: "setLocalModelPolicy", policy: localModelPolicy });
             setSettingsOpen(false);
           }}
           onOpenSettings={() => vscode.postMessage({ type: "openSettings" })}
@@ -1538,8 +1553,14 @@ const SLASH_COMMANDS: SlashCommand[] = [
     description: "Set model override",
     takesInput: true,
     run: (arg, props) => {
-      props.setModel(arg.trim());
-      props.onNotice(arg.trim() ? `Model set to ${arg.trim()}.` : "Model override cleared.");
+      const nextModel = arg.trim();
+      if (nextModel && !props.localProvider && !modelCompatibleWithAgent(props.agent, nextModel)) {
+        props.setModel("");
+        props.onNotice(`${prettyModel(nextModel)} is not available for ${labelAgent(props.agent)}. Model override cleared.`);
+        return;
+      }
+      props.setModel(nextModel);
+      props.onNotice(nextModel ? `Model set to ${nextModel}.` : "Model override cleared.");
     },
   },
   {
@@ -2052,13 +2073,19 @@ function ChangesView(props: {
 function SettingsSheet(props: {
   snapshot: WorkbenchSnapshot;
   onClose(): void;
-  onApply(limitPolicy: LimitPolicy, sandboxPolicy: SandboxPolicy, cloudPolicy: CloudPolicy): void;
+  onApply(
+    limitPolicy: LimitPolicy,
+    sandboxPolicy: SandboxPolicy,
+    cloudPolicy: CloudPolicy,
+    localModelPolicy: LocalModelPolicy
+  ): void;
   onOpenSettings(): void;
 }) {
   const [limit, setLimit] = useState<LimitPolicy>(() => props.snapshot.limitPolicy ?? defaultLimitPolicy());
   const [sandbox, setSandbox] = useState<SandboxPolicy>(() => props.snapshot.sandboxPolicy ?? defaultSandboxPolicy());
   const [cloud, setCloud] = useState<CloudPolicy>(() => props.snapshot.cloudPolicy ?? defaultCloudPolicy());
-  const claudeFirst = limit.agent_priority[0] !== "codex";
+  const [localPolicy, setLocalPolicy] = useState<LocalModelPolicy>(() => props.snapshot.localModelPolicy ?? defaultLocalModelPolicy());
+  const cloudClaudeFirst = (cloud.provider_priority?.[0] ?? "claude_code") !== "codex";
   const cloudBlockers = (props.snapshot.cloudAvailability ?? []).filter((item) => !item.ready);
 
   return (
@@ -2110,15 +2137,7 @@ function SettingsSheet(props: {
                 checked={limit.auto_switch}
                 onChange={(event) => setLimit({ ...limit, auto_switch: event.target.checked })}
               />
-              <span>Auto switch agents on limits</span>
-            </label>
-            <label className="toggle">
-              <input
-                type="checkbox"
-                checked={limit.switch_back}
-                onChange={(event) => setLimit({ ...limit, switch_back: event.target.checked })}
-              />
-              <span>Switch back on recovery</span>
+              <span>Switch to the other agent when the current one is limited</span>
             </label>
             <label className="toggle">
               <input
@@ -2126,29 +2145,19 @@ function SettingsSheet(props: {
                 checked={limit.resume_with_earliest}
                 onChange={(event) => setLimit({ ...limit, resume_with_earliest: event.target.checked })}
               />
-              <span>Resume with earliest agent</span>
+              <span>Resume automatically when rate limits reset</span>
             </label>
-            <div className="field">
-              <span>Fallback order</span>
-              <div className="segmented">
-                <button
-                  type="button"
-                  className={claudeFirst ? "selected" : ""}
-                  onClick={() => setLimit({ ...limit, agent_priority: ["claude_code", "codex"] })}
-                >
-                  Claude first
-                </button>
-                <button
-                  type="button"
-                  className={!claudeFirst ? "selected" : ""}
-                  onClick={() => setLimit({ ...limit, agent_priority: ["codex", "claude_code"] })}
-                >
-                  Codex first
-                </button>
-              </div>
-            </div>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={limit.switch_back}
+                disabled={!limit.auto_switch}
+                onChange={(event) => setLimit({ ...limit, switch_back: event.target.checked })}
+              />
+              <span>Return to the original agent after it recovers</span>
+            </label>
             <label className="field">
-              <span>Retry seconds</span>
+              <span>Retry unknown resets after seconds</span>
               <input
                 type="number"
                 min={0}
@@ -2195,7 +2204,7 @@ function SettingsSheet(props: {
                   <span>Ask before handing work to the cloud</span>
                 </label>
                 <div className="field">
-                  <span>Cloud provider</span>
+                  <span>Cloud handoff</span>
                   <div className="segmented">
                     <button
                       type="button"
@@ -2215,6 +2224,27 @@ function SettingsSheet(props: {
                     </button>
                   </div>
                 </div>
+                {cloud.allow_cross_provider && (
+                  <div className="field">
+                    <span>Use first when switching</span>
+                    <div className="segmented">
+                      <button
+                        type="button"
+                        className={cloudClaudeFirst ? "selected" : ""}
+                        onClick={() => setCloud({ ...cloud, provider_priority: ["claude_code", "codex"] })}
+                      >
+                        Claude Cloud
+                      </button>
+                      <button
+                        type="button"
+                        className={!cloudClaudeFirst ? "selected" : ""}
+                        onClick={() => setCloud({ ...cloud, provider_priority: ["codex", "claude_code"] })}
+                      >
+                        Codex Cloud
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <div className="field-grid">
                   <label className="field">
                     <span>Max cloud runs</span>
@@ -2244,6 +2274,103 @@ function SettingsSheet(props: {
                     {labelAgent(item.agent)} cloud: {item.blockers.length ? item.blockers.join(" ") : "not ready"}
                   </div>
                 ))}
+              </>
+            )}
+          </div>
+
+          <div className="settings-group">
+            <div className="group-title">Local model fallback</div>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={localPolicy.auto_resume_cloud}
+                onChange={(event) => setLocalPolicy({ ...localPolicy, auto_resume_cloud: event.target.checked })}
+              />
+              <span>Resume cloud agents when the network comes back</span>
+            </label>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={localPolicy.use_local_fallback}
+                onChange={(event) => setLocalPolicy({ ...localPolicy, use_local_fallback: event.target.checked })}
+              />
+              <span>Use local models while cloud agents are unavailable</span>
+            </label>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={localPolicy.switch_back_to_cloud}
+                disabled={!localPolicy.use_local_fallback}
+                onChange={(event) => setLocalPolicy({ ...localPolicy, switch_back_to_cloud: event.target.checked })}
+              />
+              <span>Switch back from local models when cloud is stable</span>
+            </label>
+            {localPolicy.use_local_fallback && (
+              <>
+                <div className="field-grid">
+                  <label className="field">
+                    <span>Probe every seconds</span>
+                    <input
+                      type="number"
+                      min={5}
+                      value={localPolicy.probe_interval_secs}
+                      onChange={(event) => setLocalPolicy({ ...localPolicy, probe_interval_secs: Number(event.target.value) })}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Ollama URL</span>
+                    <input
+                      value={localPolicy.ollama_base_url}
+                      onChange={(event) => setLocalPolicy({ ...localPolicy, ollama_base_url: event.target.value })}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>LM Studio URL</span>
+                    <input
+                      value={localPolicy.lm_studio_base_url}
+                      onChange={(event) => setLocalPolicy({ ...localPolicy, lm_studio_base_url: event.target.value })}
+                    />
+                  </label>
+                </div>
+                <div className="field">
+                  <span>Fallback models</span>
+                  <div className="model-targets">
+                    {props.snapshot.localModels?.flatMap((provider) =>
+                      provider.models.map((modelInfo) => {
+                        const active = localPolicy.targets.some(
+                          (target) => target.provider === provider.provider && target.model === modelInfo.id
+                        );
+                        return (
+                          <button
+                            key={`${provider.provider}:${modelInfo.id}`}
+                            type="button"
+                            className={active ? "selected" : ""}
+                            onClick={() => {
+                              const exists = localPolicy.targets.some(
+                                (target) => target.provider === provider.provider && target.model === modelInfo.id
+                              );
+                              const targets = exists
+                                ? localPolicy.targets.filter(
+                                    (target) => !(target.provider === provider.provider && target.model === modelInfo.id)
+                                  )
+                                : [
+                                    ...localPolicy.targets,
+                                    { provider: provider.provider, model: modelInfo.id, base_url: provider.base_url },
+                                  ];
+                              setLocalPolicy({ ...localPolicy, targets });
+                            }}
+                          >
+                            {modelInfo.name || modelInfo.id}
+                            <small>{provider.label}</small>
+                          </button>
+                        );
+                      })
+                    )}
+                    {!(props.snapshot.localModels ?? []).some((provider) => provider.models.length > 0) && (
+                      <div className="menu-empty">No local models detected</div>
+                    )}
+                  </div>
+                </div>
               </>
             )}
           </div>
@@ -2304,7 +2431,7 @@ function SettingsSheet(props: {
           <button type="button" onClick={props.onOpenSettings}>
             VS Code settings
           </button>
-          <button type="button" className="primary" onClick={() => props.onApply(limit, sandbox, cloud)}>
+          <button type="button" className="primary" onClick={() => props.onApply(limit, sandbox, cloud, localPolicy)}>
             Apply
           </button>
         </footer>
@@ -2483,6 +2610,33 @@ function baseModelId(value: string): string {
   return value.trim().replace(/\[[^\]]*\]$/, "").trim();
 }
 
+function sanitizeModelForAgent(
+  agent: AgentKind,
+  model: string,
+  localProvider: LocalModelProvider | null
+): string | null {
+  const trimmed = model.trim();
+  if (!trimmed) return null;
+  if (localProvider) return trimmed;
+  return modelCompatibleWithAgent(agent, trimmed) ? trimmed : null;
+}
+
+function modelCompatibleWithAgent(agent: AgentKind, model: string): boolean {
+  const normalized = baseModelId(model).toLowerCase();
+  if (!normalized) return true;
+  if (agent === "codex") return !isClaudeModel(normalized);
+  if (agent === "claude_code") return !isCodexModel(normalized);
+  return true;
+}
+
+function isClaudeModel(model: string): boolean {
+  return ["opus", "sonnet", "haiku", "fable"].includes(model) || model.startsWith("claude-");
+}
+
+function isCodexModel(model: string): boolean {
+  return model.includes("gpt-") || /^o[1-9]/.test(model);
+}
+
 // Display-only: turn a raw model id into a properly-capitalized name.
 function prettyModel(value: string): string {
   const v = baseModelId(value);
@@ -2588,12 +2742,6 @@ function labelAgent(agent: AgentKind | null | undefined): string {
       return "Claude";
     case "codex":
       return "Codex";
-    case "cursor":
-      return "Cursor";
-    case "gemini":
-      return "Gemini";
-    case "open_code":
-      return "OpenCode";
     default:
       return "Agent";
   }
@@ -2707,12 +2855,29 @@ function defaultCloudPolicy(): CloudPolicy {
     continue_on_sleep: true,
     continue_on_shutdown: true,
     allow_cross_provider: false,
+    provider_priority: ["claude_code", "codex"],
     checkpoint_interval_secs: 120,
     monitor_poll_secs: 30,
     stall_timeout_secs: 900,
     max_concurrent_cloud_runs: 2,
     codex_env_id: null,
     require_approval: false,
+  };
+}
+
+function defaultLocalModelPolicy(): LocalModelPolicy {
+  return {
+    auto_resume_cloud: true,
+    use_local_fallback: true,
+    switch_back_to_cloud: true,
+    probe_interval_secs: 30,
+    offline_grace_secs: 15,
+    stable_successes: 2,
+    ollama_base_url: "http://127.0.0.1:11434",
+    lm_studio_base_url: "http://127.0.0.1:1234",
+    lm_studio_api_token_configured: false,
+    lm_studio_api_token: null,
+    targets: [],
   };
 }
 

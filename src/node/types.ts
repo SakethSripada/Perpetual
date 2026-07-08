@@ -1,4 +1,4 @@
-export type AgentKind = "claude_code" | "codex" | "gemini" | "cursor" | "open_code";
+export type AgentKind = "claude_code" | "codex";
 export type TaskStatus =
   | "draft"
   | "queued"
@@ -137,6 +137,26 @@ export interface LocalModelStatus {
   error: string | null;
 }
 
+export interface LocalModelTarget {
+  provider: LocalModelProvider;
+  model: string;
+  base_url?: string | null;
+}
+
+export interface LocalModelPolicy {
+  auto_resume_cloud: boolean;
+  use_local_fallback: boolean;
+  switch_back_to_cloud: boolean;
+  probe_interval_secs: number;
+  offline_grace_secs: number;
+  stable_successes: number;
+  ollama_base_url: string;
+  lm_studio_base_url: string;
+  lm_studio_api_token_configured: boolean;
+  lm_studio_api_token?: string | null;
+  targets: LocalModelTarget[];
+}
+
 export interface LimitPolicy {
   auto_switch: boolean;
   switch_back: boolean;
@@ -151,6 +171,7 @@ export interface CloudPolicy {
   continue_on_sleep: boolean;
   continue_on_shutdown: boolean;
   allow_cross_provider: boolean;
+  provider_priority: AgentKind[];
   checkpoint_interval_secs: number;
   monitor_poll_secs: number;
   stall_timeout_secs: number;
@@ -538,6 +559,7 @@ export interface WorkbenchSnapshot {
   runDefaults: AgentRunDefaults[];
   modelCatalog?: AgentModelCatalog[];
   localModels?: LocalModelStatus[];
+  localModelPolicy: LocalModelPolicy | null;
   detectionState?: "idle" | "loading" | "ready" | "error";
   defaultRepoIds?: string[];
   limitPolicy: LimitPolicy | null;

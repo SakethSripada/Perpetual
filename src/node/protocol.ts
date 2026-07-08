@@ -19,6 +19,7 @@ import type {
   GithubAuthStatus,
   GithubRepository,
   LimitPolicy,
+  LocalModelPolicy,
   LocalModelStatus,
   ContextPacket,
   NewAgentThread,
@@ -79,6 +80,8 @@ export interface DaemonApi {
   agentRunDefaults(): Promise<AgentRunDefaults[]>;
   agentModelCatalog(): Promise<AgentModelCatalog[]>;
   detectLocalModels(): Promise<LocalModelStatus[]>;
+  getLocalModelPolicy(): Promise<LocalModelPolicy>;
+  setLocalModelPolicy(policy: LocalModelPolicy): Promise<LocalModelPolicy>;
   getLimitPolicy(): Promise<LimitPolicy>;
   setLimitPolicy(policy: LimitPolicy): Promise<LimitPolicy>;
   detectSandboxRuntime(): Promise<SandboxRuntimeStatus>;

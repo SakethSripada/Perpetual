@@ -45,6 +45,7 @@ test("serializes cloud policy requests", () => {
     continue_on_sleep: true,
     continue_on_shutdown: false,
     allow_cross_provider: false,
+    provider_priority: ["claude_code", "codex"],
     checkpoint_interval_secs: 120,
     monitor_poll_secs: 30,
     stall_timeout_secs: 900,
@@ -53,6 +54,23 @@ test("serializes cloud policy requests", () => {
     require_approval: true,
   };
   assert.deepEqual(variant("set_cloud_policy", policy), { set_cloud_policy: policy });
+});
+
+test("serializes local model fallback policy requests", () => {
+  assert.equal(variant("get_local_model_policy"), "get_local_model_policy");
+  const policy = {
+    auto_resume_cloud: true,
+    use_local_fallback: true,
+    switch_back_to_cloud: true,
+    probe_interval_secs: 30,
+    offline_grace_secs: 15,
+    stable_successes: 2,
+    ollama_base_url: "http://127.0.0.1:11434",
+    lm_studio_base_url: "http://127.0.0.1:1234",
+    lm_studio_api_token_configured: false,
+    targets: [{ provider: "ollama", model: "qwen2.5-coder", base_url: "http://127.0.0.1:11434" }],
+  };
+  assert.deepEqual(variant("set_local_model_policy", policy), { set_local_model_policy: policy });
 });
 
 test("extracts cloud policy responses", () => {
@@ -77,6 +95,10 @@ test("extracts launch-quality workbench responses", () => {
     { agent: "codex" },
   ]);
   assert.deepEqual(responsePayload({ local_model_statuses: [] }, "local_model_statuses"), []);
+  assert.deepEqual(
+    responsePayload({ local_model_policy: { use_local_fallback: true } }, "local_model_policy"),
+    { use_local_fallback: true }
+  );
   assert.deepEqual(
     responsePayload({ agent_thread_apply_result: { thread_id: "t1", applied: true } }, "agent_thread_apply_result"),
     { thread_id: "t1", applied: true }

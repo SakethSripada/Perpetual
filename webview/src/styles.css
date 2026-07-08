@@ -1500,6 +1500,33 @@ textarea {
   gap: 10px;
 }
 
+.model-targets {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.model-targets button {
+  border: 1px solid var(--am-border);
+  background: var(--am-surface-2);
+  color: var(--vscode-foreground);
+  border-radius: 8px;
+  padding: 8px 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.model-targets button.selected {
+  border-color: var(--am-accent);
+  background: color-mix(in srgb, var(--am-accent) 18%, transparent);
+}
+
+.model-targets small {
+  display: block;
+  margin-top: 3px;
+  color: var(--am-muted);
+}
+
 .sheet-search {
   display: flex;
   align-items: center;
