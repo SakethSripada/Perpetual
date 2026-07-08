@@ -1,4 +1,12 @@
-import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  memo,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { CSSProperties, ReactNode } from "react";
 import type {
   AgentKind,
@@ -62,18 +70,24 @@ export default function App() {
   const persisted = useMemo(() => readPersistedState(), []);
   const [snapshot, setSnapshot] = useState<WorkbenchSnapshot | null>(null);
   const [agent, setAgent] = useState<AgentKind>("claude_code");
-  const [permission, setPermission] = useState<PermissionPolicy>("workspace_write");
+  const [permission, setPermission] =
+    useState<PermissionPolicy>("workspace_write");
   const [backend, setBackend] = useState<ExecutionBackend>("host");
   const [model, setModel] = useState("");
   const [reasoning, setReasoning] = useState("medium");
-  const [localProvider, setLocalProvider] = useState<LocalModelProvider | "">("");
+  const [localProvider, setLocalProvider] = useState<LocalModelProvider | "">(
+    "",
+  );
   const [localBaseUrl, setLocalBaseUrl] = useState("");
   const [repoIds, setRepoIds] = useState<string[]>(persisted.repoIds ?? []);
   const [notice, setNotice] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [githubOpen, setGithubOpen] = useState(false);
-  const [reviewOpen, setReviewOpen] = useState<{ threadId: string; nonce: number } | null>(null);
+  const [reviewOpen, setReviewOpen] = useState<{
+    threadId: string;
+    nonce: number;
+  } | null>(null);
   const [githubRepos, setGithubRepos] = useState<GithubRepository[]>([]);
   const [githubLoading, setGithubLoading] = useState(false);
   // Optimistically-rendered user messages: shown the instant the user sends, then
@@ -81,7 +95,9 @@ export default function App() {
   const [pending, setPending] = useState<PendingMessage[]>([]);
   // Optimistic thread navigation: reflect the clicked thread instantly instead of
   // waiting for the round-trip. `undefined` means "no navigation in flight".
-  const [navThreadId, setNavThreadId] = useState<string | null | undefined>(undefined);
+  const [navThreadId, setNavThreadId] = useState<string | null | undefined>(
+    undefined,
+  );
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const runControlsKeyRef = useRef<string>("");
   const handoffRef = useRef<Record<string, string>>({});
@@ -95,21 +111,33 @@ export default function App() {
         setSnapshot(incoming.snapshot);
         if (incoming.snapshot.error) setNotice(incoming.snapshot.error);
         // Clear the optimistic navigation once the daemon agrees on the selection.
-        setNavThreadId((nav) => (nav === undefined || nav === incoming.snapshot.selectedThreadId ? undefined : nav));
+        setNavThreadId((nav) =>
+          nav === undefined || nav === incoming.snapshot.selectedThreadId
+            ? undefined
+            : nav,
+        );
         // Drop optimistic bubbles once the real message lands — either as a user
         // event (sent immediately) or as a queued turn (sent while running).
         const events = incoming.snapshot.details?.events ?? [];
         const queued = incoming.snapshot.details?.queued ?? [];
-        const selected = incoming.snapshot.threads.find((thread) => thread.id === incoming.snapshot.selectedThreadId);
+        const selected = incoming.snapshot.threads.find(
+          (thread) => thread.id === incoming.snapshot.selectedThreadId,
+        );
         setPending((prev) =>
           prev.filter(
             (item) =>
               !selected ||
               selected.status === "draft" ||
-              (!events.some((e) => e.role === "user" && (e.text ?? "").trim() === item.text) &&
+              (!events.some(
+                (e) => e.role === "user" && (e.text ?? "").trim() === item.text,
+              ) &&
                 !queued.some((q) => q.message.trim() === item.text) &&
-                !events.some((e) => e.kind === "user_message" && (e.text ?? "").trim() === item.text))
-          )
+                !events.some(
+                  (e) =>
+                    e.kind === "user_message" &&
+                    (e.text ?? "").trim() === item.text,
+                )),
+          ),
         );
         return;
       }
@@ -121,7 +149,9 @@ export default function App() {
       }
       if (incoming.type === "repoConnected") {
         repoTouchedRef.current = true;
-        setRepoIds((prev) => (prev.includes(incoming.repo.id) ? prev : [...prev, incoming.repo.id]));
+        setRepoIds((prev) =>
+          prev.includes(incoming.repo.id) ? prev : [...prev, incoming.repo.id],
+        );
         setNotice(`Connected ${incoming.repo.name}.`);
         return;
       }
@@ -153,24 +183,46 @@ export default function App() {
     });
   }, [repoIds]);
 
-  const effectiveSelectedId = navThreadId !== undefined ? navThreadId : snapshot?.selectedThreadId ?? null;
+  const effectiveSelectedId =
+    navThreadId !== undefined
+      ? navThreadId
+      : (snapshot?.selectedThreadId ?? null);
   const selectedThread = useMemo(
-    () => snapshot?.threads.find((thread) => thread.id === effectiveSelectedId) ?? null,
-    [snapshot, effectiveSelectedId]
+    () =>
+      snapshot?.threads.find((thread) => thread.id === effectiveSelectedId) ??
+      null,
+    [snapshot, effectiveSelectedId],
   );
   // Details belong to the daemon's current selection; while navigating to a
   // different thread they're stale, so we show a loading state instead.
-  const navigating = navThreadId !== undefined && navThreadId !== null && navThreadId !== (snapshot?.selectedThreadId ?? null);
+  const navigating =
+    navThreadId !== undefined &&
+    navThreadId !== null &&
+    navThreadId !== (snapshot?.selectedThreadId ?? null);
   useEffect(() => {
     if (!snapshot) return;
-    const nextAgent = selectedThread?.active_agent ?? selectedThread?.preferred_agent ?? snapshot.defaults.agent;
+    const nextAgent =
+      selectedThread?.active_agent ??
+      selectedThread?.preferred_agent ??
+      snapshot.defaults.agent;
     const defaults = runDefaults(snapshot, nextAgent);
-    const nextPermission = selectedThread?.permission ?? snapshot.defaults.permission;
-    const nextBackend = sanitizeBackend(nextAgent, selectedThread?.execution_backend ?? snapshot.defaults.execution_backend);
-    const nextModel = selectedThread?.model ?? snapshot.defaults.model ?? defaults.model ?? "";
-    const nextReasoning = selectedThread?.reasoning ?? snapshot.defaults.reasoning ?? defaults.reasoning ?? "medium";
-    const nextLocalProvider = selectedThread?.local_provider ?? snapshot.defaults.local_provider ?? "";
-    const nextLocalBaseUrl = selectedThread?.local_base_url ?? snapshot.defaults.local_base_url ?? "";
+    const nextPermission =
+      selectedThread?.permission ?? snapshot.defaults.permission;
+    const nextBackend = sanitizeBackend(
+      nextAgent,
+      selectedThread?.execution_backend ?? snapshot.defaults.execution_backend,
+    );
+    const nextModel =
+      selectedThread?.model ?? snapshot.defaults.model ?? defaults.model ?? "";
+    const nextReasoning =
+      selectedThread?.reasoning ??
+      snapshot.defaults.reasoning ??
+      defaults.reasoning ??
+      "medium";
+    const nextLocalProvider =
+      selectedThread?.local_provider ?? snapshot.defaults.local_provider ?? "";
+    const nextLocalBaseUrl =
+      selectedThread?.local_base_url ?? snapshot.defaults.local_base_url ?? "";
     const runControlsKey = [
       effectiveSelectedId ?? "new",
       nextAgent,
@@ -230,17 +282,22 @@ export default function App() {
     const active = selectedThread.active_agent;
     const original = selectedThread.original_agent;
     const isFallbackActive =
-      !!fallback && active === fallback && (selectedThread.handoff_state === "fallback_active" || !!original);
+      !!fallback &&
+      active === fallback &&
+      (selectedThread.handoff_state === "fallback_active" || !!original);
     const key = isFallbackActive
       ? `${selectedThread.id}:${original ?? "agent"}:${fallback}:${selectedThread.model ?? ""}`
       : `${selectedThread.id}:none`;
     if (handoffRef.current[selectedThread.id] === key) return;
     handoffRef.current[selectedThread.id] = key;
     if (!isFallbackActive) return;
-    const modelNote = selectedThread.original_model !== selectedThread.model
-      ? ` (${formatModelSwitch(selectedThread.original_model, selectedThread.model)})`
-      : "";
-    setNotice(`Rate Limit reached, switched to ${labelAgent(fallback)}${modelNote}.`);
+    const modelNote =
+      selectedThread.original_model !== selectedThread.model
+        ? ` (${formatModelSwitch(selectedThread.original_model, selectedThread.model)})`
+        : "";
+    setNotice(
+      `Rate Limit reached, switched to ${labelAgent(fallback)}${modelNote}.`,
+    );
   }, [
     selectedThread?.id,
     selectedThread?.active_agent,
@@ -256,7 +313,12 @@ export default function App() {
       top: transcriptRef.current.scrollHeight,
       behavior: "auto",
     });
-  }, [snapshot?.details?.events.length, selectedThread?.id, pending.length, reviewOpen?.nonce]);
+  }, [
+    snapshot?.details?.events.length,
+    selectedThread?.id,
+    pending.length,
+    reviewOpen?.nonce,
+  ]);
 
   // Surface agent availability changes as a notice instead of an always-on badge.
   const availabilityRef = useRef<Record<string, AvailabilityState>>({});
@@ -267,11 +329,19 @@ export default function App() {
       availabilityRef.current[status.kind] = status.availability;
       if (!previous || previous === status.availability) continue;
       if (status.availability === "limited") {
-        const activeFallback = selectedThread?.fallback_agent && selectedThread.active_agent === selectedThread.fallback_agent;
-        if (activeFallback && status.kind === selectedThread?.original_agent) continue;
-        const until = status.reset_at ? ` until ${formatResetTime(status.reset_at)}` : "";
+        const activeFallback =
+          selectedThread?.fallback_agent &&
+          selectedThread.active_agent === selectedThread.fallback_agent;
+        if (activeFallback && status.kind === selectedThread?.original_agent)
+          continue;
+        const until = status.reset_at
+          ? ` until ${formatResetTime(status.reset_at)}`
+          : "";
         setNotice(`${labelAgent(status.kind)} is rate limited${until}.`);
-      } else if (previous === "limited" && status.availability === "available") {
+      } else if (
+        previous === "limited" &&
+        status.availability === "available"
+      ) {
         setNotice(`${labelAgent(status.kind)} is available again.`);
       }
     }
@@ -279,26 +349,48 @@ export default function App() {
 
   const isRunning = selectedThread?.status === "running";
   const details = navigating ? undefined : snapshot?.details;
-  const reposLocked = !!selectedThread && !!details?.repos.some((repo) => !!repo.worktree_path);
-  const canReviewChanges = !!selectedThread && !!details?.repos.some((repo) => !!repo.worktree_path);
-  const limitedAgents = snapshot?.agents.filter((status) => status.availability === "limited") ?? [];
+  const reposLocked =
+    !!selectedThread && !!details?.repos.some((repo) => !!repo.worktree_path);
+  const canReviewChanges =
+    !!selectedThread && !!details?.repos.some((repo) => !!repo.worktree_path);
+  const limitedAgents =
+    snapshot?.agents.filter((status) => status.availability === "limited") ??
+    [];
 
   // The composer owns its own draft text so typing never re-renders the
   // transcript; it hands us the final text here on submit.
   const send = (raw: string) => {
     const text = raw.trim();
     if (!text || !snapshot?.trusted) return;
-    const validRepoIds = snapshot.repos.filter((repo) => repoIds.includes(repo.id)).map((repo) => repo.id);
+    const validRepoIds = snapshot.repos
+      .filter((repo) => repoIds.includes(repo.id))
+      .map((repo) => repo.id);
     if (snapshot.repos.length > 0 && validRepoIds.length === 0) {
-      setNotice("Select at least one connected repository before starting the agent.");
+      setNotice(
+        "Select at least one connected repository before starting the agent.",
+      );
       return;
     }
-    const submittedModel = sanitizeModelForAgent(agent, model, localProvider || null);
+    const nativeSlash = isNativeSlashCommandText(text);
+    const submittedLocalProvider =
+      agent === "codex" && (!nativeSlash || !!model.trim())
+        ? localProvider || null
+        : null;
+    const submittedModel = sanitizeModelForAgent(
+      agent,
+      model,
+      submittedLocalProvider,
+    );
     if (model.trim() && !submittedModel) {
       setModel("");
-      setNotice(`${prettyModel(model)} is not available for ${labelAgent(agent)}. Using the agent default model.`);
+      setNotice(
+        `${prettyModel(model)} is not available for ${labelAgent(agent)}. Using the agent default model.`,
+      );
     }
-    setPending((prev) => [...prev, { id: `pending-${Date.now()}-${prev.length}`, text }]);
+    setPending((prev) => [
+      ...prev,
+      { id: `pending-${Date.now()}-${prev.length}`, text },
+    ]);
     vscode.postMessage({
       type: "submit",
       message: text,
@@ -309,8 +401,8 @@ export default function App() {
       executionBackend: sanitizeBackend(agent, backend),
       model: submittedModel,
       reasoning: reasoning.trim() || null,
-      localProvider: localProvider || null,
-      localBaseUrl: localBaseUrl.trim() || null,
+      localProvider: submittedLocalProvider,
+      localBaseUrl: submittedLocalProvider ? localBaseUrl.trim() || null : null,
     });
   };
 
@@ -339,7 +431,11 @@ export default function App() {
     repoTouchedRef.current = true;
     setRepoIds(next);
     if (selectedThread && !reposLocked) {
-      vscode.postMessage({ type: "assignRepos", threadId: selectedThread.id, repoIds: next });
+      vscode.postMessage({
+        type: "assignRepos",
+        threadId: selectedThread.id,
+        repoIds: next,
+      });
     }
   };
 
@@ -369,7 +465,10 @@ export default function App() {
   };
   const reviewChanges = () => {
     if (!selectedThread) return;
-    setReviewOpen((prev) => ({ threadId: selectedThread.id, nonce: (prev?.nonce ?? 0) + 1 }));
+    setReviewOpen((prev) => ({
+      threadId: selectedThread.id,
+      nonce: (prev?.nonce ?? 0) + 1,
+    }));
     vscode.postMessage({ type: "loadDiff", threadId: selectedThread.id });
   };
 
@@ -395,14 +494,14 @@ export default function App() {
             <Icon name="settings" />
           </IconButton>
           {canReviewChanges && (
-            <IconButton
-              title="Review changes"
-              onClick={reviewChanges}
-            >
+            <IconButton title="Review changes" onClick={reviewChanges}>
               <Icon name="repo" />
             </IconButton>
           )}
-          <IconButton title="Refresh" onClick={() => vscode.postMessage({ type: "refresh" })}>
+          <IconButton
+            title="Refresh"
+            onClick={() => vscode.postMessage({ type: "refresh" })}
+          >
             <Icon name="refresh" />
           </IconButton>
           <IconButton title="New session" onClick={newSession}>
@@ -448,21 +547,29 @@ export default function App() {
               key={approval.id}
               approval={approval}
               onResolve={(decision) =>
-                vscode.postMessage({ type: "resolveApproval", id: approval.id, decision })
+                vscode.postMessage({
+                  type: "resolveApproval",
+                  id: approval.id,
+                  decision,
+                })
               }
             />
           ))}
-          {!navigating && selectedThread && (isRunning || pending.length > 0) && !details?.approvals.length && (
-            <div className="thinking">Working…</div>
-          )}
+          {!navigating &&
+            selectedThread &&
+            (isRunning || pending.length > 0) &&
+            !details?.approvals.length && (
+              <div className="thinking">Working…</div>
+            )}
           {!navigating &&
             selectedThread &&
             details &&
             details.events.length === 0 &&
             pending.length === 0 &&
-            !isRunning && <EmptyState trusted={snapshot?.trusted ?? true} compact />}
+            !isRunning && (
+              <EmptyState trusted={snapshot?.trusted ?? true} compact />
+            )}
         </div>
-
       </section>
 
       <Composer
@@ -487,13 +594,21 @@ export default function App() {
         reposLocked={reposLocked}
         isRunning={isRunning}
         onSend={send}
-        onStop={() => selectedThread && vscode.postMessage({ type: "stopThread", threadId: selectedThread.id })}
+        onStop={() =>
+          selectedThread &&
+          vscode.postMessage({
+            type: "stopThread",
+            threadId: selectedThread.id,
+          })
+        }
         onGithub={() => {
           setGithubLoading(true);
           vscode.postMessage({ type: "githubList" });
         }}
         onLocalRepo={() => vscode.postMessage({ type: "connectLocalRepo" })}
-        onSandboxLogin={(codex) => vscode.postMessage({ type: "sandboxLogin", codex })}
+        onSandboxLogin={(codex) =>
+          vscode.postMessage({ type: "sandboxLogin", codex })
+        }
         onNewSession={newSession}
         onRefresh={() => vscode.postMessage({ type: "refresh" })}
         onReviewChanges={reviewChanges}
@@ -508,10 +623,18 @@ export default function App() {
           diffState={details.diffState ?? "idle"}
           repos={details.repos}
           applyResult={details.applyResult ?? null}
-          openSignal={reviewOpen?.threadId === selectedThread.id ? reviewOpen.nonce : 0}
-          onLoadDiff={(threadId) => vscode.postMessage({ type: "loadDiff", threadId })}
-          onApply={(threadId) => vscode.postMessage({ type: "applyThreadChanges", threadId })}
-          onOpenPath={(target) => vscode.postMessage({ type: "openPath", path: target })}
+          openSignal={
+            reviewOpen?.threadId === selectedThread.id ? reviewOpen.nonce : 0
+          }
+          onLoadDiff={(threadId) =>
+            vscode.postMessage({ type: "loadDiff", threadId })
+          }
+          onApply={(threadId) =>
+            vscode.postMessage({ type: "applyThreadChanges", threadId })
+          }
+          onOpenPath={(target) =>
+            vscode.postMessage({ type: "openPath", path: target })
+          }
         />
       )}
 
@@ -519,11 +642,22 @@ export default function App() {
         <SettingsSheet
           snapshot={snapshot}
           onClose={() => setSettingsOpen(false)}
-          onApply={(limitPolicy, sandboxPolicy, cloudPolicy, localModelPolicy) => {
+          onApply={(
+            limitPolicy,
+            sandboxPolicy,
+            cloudPolicy,
+            localModelPolicy,
+          ) => {
             vscode.postMessage({ type: "setLimitPolicy", policy: limitPolicy });
-            vscode.postMessage({ type: "setSandboxPolicy", policy: sandboxPolicy });
+            vscode.postMessage({
+              type: "setSandboxPolicy",
+              policy: sandboxPolicy,
+            });
             vscode.postMessage({ type: "setCloudPolicy", policy: cloudPolicy });
-            vscode.postMessage({ type: "setLocalModelPolicy", policy: localModelPolicy });
+            vscode.postMessage({
+              type: "setLocalModelPolicy",
+              policy: localModelPolicy,
+            });
             setSettingsOpen(false);
           }}
           onOpenSettings={() => vscode.postMessage({ type: "openSettings" })}
@@ -547,7 +681,11 @@ export default function App() {
 
 // One transcript row. Memoized so a snapshot tick only re-renders the messages
 // that actually changed — an unchanged message keeps its parsed Markdown.
-const MessageView = memo(function MessageView({ event }: { event: AgentThreadEvent }) {
+const MessageView = memo(function MessageView({
+  event,
+}: {
+  event: AgentThreadEvent;
+}) {
   if (isActivityEvent(event)) {
     const detail = activityDetail(event);
     return (
@@ -571,14 +709,28 @@ const MessageView = memo(function MessageView({ event }: { event: AgentThreadEve
   }
   return (
     <article className={`msg ${messageClass(event.role)}`}>
-      <div className="msg-body">{event.text ? <Markdown text={event.text} /> : humanize(event.kind)}</div>
+      <div className="msg-body">
+        {event.text ? <Markdown text={event.text} /> : humanize(event.kind)}
+      </div>
     </article>
   );
 });
 
-function IconButton(props: { title: string; onClick(): void; disabled?: boolean; children: ReactNode }) {
+function IconButton(props: {
+  title: string;
+  onClick(): void;
+  disabled?: boolean;
+  children: ReactNode;
+}) {
   return (
-    <button className="icon-btn" type="button" title={props.title} aria-label={props.title} disabled={props.disabled} onClick={props.onClick}>
+    <button
+      className="icon-btn"
+      type="button"
+      title={props.title}
+      aria-label={props.title}
+      disabled={props.disabled}
+      onClick={props.onClick}
+    >
       {props.children}
     </button>
   );
@@ -586,7 +738,11 @@ function IconButton(props: { title: string; onClick(): void; disabled?: boolean;
 
 /** Generic viewport-anchored popover used by toolbar menus. */
 function Popover(props: {
-  trigger: (args: { open: boolean; toggle(): void; ref: (el: HTMLElement | null) => void }) => ReactNode;
+  trigger: (args: {
+    open: boolean;
+    toggle(): void;
+    ref: (el: HTMLElement | null) => void;
+  }) => ReactNode;
   open: boolean;
   setOpen(open: boolean): void;
   align?: "left" | "right" | "center";
@@ -613,18 +769,38 @@ function Popover(props: {
       const vh = window.innerHeight;
       const spaceBelow = vh - rect.bottom - margin;
       const spaceAbove = rect.top - margin;
-      const openUp = placement === "above" || (placement === "auto" && spaceBelow < 220 && spaceAbove > spaceBelow);
+      const openUp =
+        placement === "above" ||
+        (placement === "auto" && spaceBelow < 220 && spaceAbove > spaceBelow);
       const availableHeight = openUp ? spaceAbove : spaceBelow;
       const maxHeight = Math.max(120, Math.min(360, availableHeight));
       const maxWidth = vw - margin * 2;
-      const menuWidth = Math.min(menuRef.current?.offsetWidth ?? rect.width, maxWidth);
-      const menuHeight = Math.min(menuRef.current?.offsetHeight ?? maxHeight, maxHeight);
+      const menuWidth = Math.min(
+        menuRef.current?.offsetWidth ?? rect.width,
+        maxWidth,
+      );
+      const menuHeight = Math.min(
+        menuRef.current?.offsetHeight ?? maxHeight,
+        maxHeight,
+      );
       // Anchor by preferred edge, then clamp fully inside the viewport so menus never clip.
       const preferredLeft =
-        align === "center" ? rect.left + rect.width / 2 - menuWidth / 2 : align === "right" ? rect.right - menuWidth : rect.left;
-      const left = Math.max(margin, Math.min(preferredLeft, vw - menuWidth - margin));
-      const preferredTop = openUp ? rect.top - menuHeight - margin : rect.bottom + margin;
-      const top = Math.max(margin, Math.min(preferredTop, vh - menuHeight - margin));
+        align === "center"
+          ? rect.left + rect.width / 2 - menuWidth / 2
+          : align === "right"
+            ? rect.right - menuWidth
+            : rect.left;
+      const left = Math.max(
+        margin,
+        Math.min(preferredLeft, vw - menuWidth - margin),
+      );
+      const preferredTop = openUp
+        ? rect.top - menuHeight - margin
+        : rect.bottom + margin;
+      const top = Math.max(
+        margin,
+        Math.min(preferredTop, vh - menuHeight - margin),
+      );
       const next: CSSProperties = {
         position: "fixed",
         maxHeight,
@@ -648,7 +824,10 @@ function Popover(props: {
     if (!props.open) return;
     const onPointerDown = (event: MouseEvent) => {
       const target = event.target as Node;
-      if (!menuRef.current?.contains(target) && !triggerRef.current?.contains(target)) {
+      if (
+        !menuRef.current?.contains(target) &&
+        !triggerRef.current?.contains(target)
+      ) {
         props.setOpen(false);
       }
     };
@@ -674,7 +853,15 @@ function Popover(props: {
         <div
           ref={menuRef}
           className="popover"
-          style={menuStyle ?? { position: "fixed", top: 0, left: 0, visibility: "hidden", pointerEvents: "none" }}
+          style={
+            menuStyle ?? {
+              position: "fixed",
+              top: 0,
+              left: 0,
+              visibility: "hidden",
+              pointerEvents: "none",
+            }
+          }
         >
           {props.children}
         </div>
@@ -724,7 +911,9 @@ function Dropdown(props: {
             type="button"
             role="option"
             aria-selected={option.value === props.value}
-            className={option.value === props.value ? "menu-item selected" : "menu-item"}
+            className={
+              option.value === props.value ? "menu-item selected" : "menu-item"
+            }
             onClick={() => {
               props.onChange(option.value);
               setOpen(false);
@@ -749,21 +938,30 @@ function ModelPicker(props: {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const options = useMemo(
-    () => modelOptions(props.agent, props.snapshot, props.localProvider, props.value),
-    [props.agent, props.snapshot, props.localProvider, props.value]
+    () =>
+      modelOptions(
+        props.agent,
+        props.snapshot,
+        props.localProvider,
+        props.value,
+      ),
+    [props.agent, props.snapshot, props.localProvider, props.value],
   );
   const normalizedQuery = query.trim().toLowerCase();
-  const selected = options.find((option) => modelIdsEqual(option.value, props.value));
+  const selected = options.find((option) =>
+    modelIdsEqual(option.value, props.value),
+  );
   const filtered = normalizedQuery
     ? options.filter(
         (option) =>
           option.value.toLowerCase().includes(normalizedQuery) ||
           option.label.toLowerCase().includes(normalizedQuery) ||
-          option.source.toLowerCase().includes(normalizedQuery)
+          option.source.toLowerCase().includes(normalizedQuery),
       )
     : options;
   const custom = query.trim();
-  const canUseCustom = !!custom && !options.some((option) => modelIdsEqual(option.value, custom));
+  const canUseCustom =
+    !!custom && !options.some((option) => modelIdsEqual(option.value, custom));
 
   useEffect(() => {
     if (open) setQuery("");
@@ -773,9 +971,10 @@ function ModelPicker(props: {
     <label className="field">
       <span>
         Model
-        {props.value.trim() && prettyModel(props.value) !== props.value.trim() && (
-          <em className="field-value">{prettyModel(props.value)}</em>
-        )}
+        {props.value.trim() &&
+          prettyModel(props.value) !== props.value.trim() && (
+            <em className="field-value">{prettyModel(props.value)}</em>
+          )}
       </span>
       <Popover
         open={open}
@@ -790,7 +989,10 @@ function ModelPicker(props: {
             aria-expanded={open}
             onClick={toggle}
           >
-            <span>{selected?.label ?? (props.value ? prettyModel(props.value) : "Default model")}</span>
+            <span>
+              {selected?.label ??
+                (props.value ? prettyModel(props.value) : "Default model")}
+            </span>
             <Icon name="caret" />
           </button>
         )}
@@ -847,7 +1049,11 @@ function ModelPicker(props: {
               type="button"
               role="option"
               aria-selected={modelIdsEqual(option.value, props.value)}
-              className={modelIdsEqual(option.value, props.value) ? "menu-item selected" : "menu-item"}
+              className={
+                modelIdsEqual(option.value, props.value)
+                  ? "menu-item selected"
+                  : "menu-item"
+              }
               onClick={() => {
                 props.onChange(option.value);
                 setOpen(false);
@@ -857,7 +1063,9 @@ function ModelPicker(props: {
                 <span>{option.label}</span>
                 <small>{option.source}</small>
               </span>
-              {modelIdsEqual(option.value, props.value) && <Icon name="check" />}
+              {modelIdsEqual(option.value, props.value) && (
+                <Icon name="check" />
+              )}
             </button>
           ))}
         </div>
@@ -897,27 +1105,42 @@ function HistoryMenu(props: {
       <div className="menu history-menu" role="menu">
         <div className="history-menu-head">
           <strong>Sessions</strong>
-          <button type="button" className="history-new" title="New session" aria-label="New session" onClick={props.onNew}>
+          <button
+            type="button"
+            className="history-new"
+            title="New session"
+            aria-label="New session"
+            onClick={props.onNew}
+          >
             <Icon name="plus" />
           </button>
         </div>
-        {threads.length === 0 && <div className="menu-empty">No sessions yet</div>}
+        {threads.length === 0 && (
+          <div className="menu-empty">No sessions yet</div>
+        )}
         {threads.map((thread) => {
           const running = thread.status === "running";
           const selected = thread.id === props.selectedThread?.id;
           return (
-            <div key={thread.id} className={selected ? "history-row selected" : "history-row"}>
+            <div
+              key={thread.id}
+              className={selected ? "history-row selected" : "history-row"}
+            >
               <button
                 type="button"
                 className="history-pick"
                 onClick={() => props.onSelect(thread.id)}
                 title={thread.title}
               >
-                <span className={running ? "history-spinner" : "history-dot"} data-status={thread.status} />
+                <span
+                  className={running ? "history-spinner" : "history-dot"}
+                  data-status={thread.status}
+                />
                 <span className="history-text">
                   <span className="history-title">{thread.title}</span>
                   <small>
-                    {labelAgent(thread.active_agent ?? thread.preferred_agent)} · {humanize(thread.status)}
+                    {labelAgent(thread.active_agent ?? thread.preferred_agent)}{" "}
+                    · {humanize(thread.status)}
                   </small>
                 </span>
               </button>
@@ -941,7 +1164,10 @@ function HistoryMenu(props: {
   );
 }
 
-const APPROVAL_ICON: Record<ApprovalRequest["kind"], "terminal" | "repo" | "agent"> = {
+const APPROVAL_ICON: Record<
+  ApprovalRequest["kind"],
+  "terminal" | "repo" | "agent"
+> = {
   command: "terminal",
   file_change: "repo",
   tool: "agent",
@@ -955,7 +1181,8 @@ function LimitRecoveryBar(props: {
   const activeFallback =
     props.selectedThread?.fallback_agent &&
     props.selectedThread.active_agent === props.selectedThread.fallback_agent &&
-    (props.selectedThread.handoff_state === "fallback_active" || !!props.selectedThread.original_agent);
+    (props.selectedThread.handoff_state === "fallback_active" ||
+      !!props.selectedThread.original_agent);
   if (props.limitedAgents.length === 0 && !activeFallback) return null;
   return (
     <div className="limit-bar" role="status">
@@ -963,21 +1190,32 @@ function LimitRecoveryBar(props: {
         <span key={agent.kind} className="limit-pill">
           <Icon name="clock" />
           <span>{labelAgent(agent.kind)} limited</span>
-          <strong>{agent.reset_at ? formatResetTime(agent.reset_at) : retryLabel(props.policy)}</strong>
+          <strong>
+            {agent.reset_at
+              ? formatResetTime(agent.reset_at)
+              : retryLabel(props.policy)}
+          </strong>
         </span>
       ))}
       {activeFallback && props.selectedThread?.fallback_agent && (
         <span className="limit-pill fallback">
           <Icon name="refresh" />
-          <span>Running on {labelAgent(props.selectedThread.fallback_agent)}</span>
-          <strong>{props.policy?.switch_back ? "switch-back armed" : "manual return"}</strong>
+          <span>
+            Running on {labelAgent(props.selectedThread.fallback_agent)}
+          </span>
+          <strong>
+            {props.policy?.switch_back ? "switch-back armed" : "manual return"}
+          </strong>
         </span>
       )}
     </div>
   );
 }
 
-function ApprovalCard(props: { approval: ApprovalRequest; onResolve(decision: ApprovalDecision): void }) {
+function ApprovalCard(props: {
+  approval: ApprovalRequest;
+  onResolve(decision: ApprovalDecision): void;
+}) {
   const { approval } = props;
   const commandText = approval.command?.join(" ");
   const title =
@@ -998,11 +1236,22 @@ function ApprovalCard(props: { approval: ApprovalRequest; onResolve(decision: Ap
           <small>{labelAgent(approval.agent)} needs your approval</small>
         </div>
       </div>
-      {commandText && <pre className="approval-cmd"><code>{commandText}</code></pre>}
+      {commandText && (
+        <pre className="approval-cmd">
+          <code>{commandText}</code>
+        </pre>
+      )}
       {approval.cwd && <div className="approval-meta">in {approval.cwd}</div>}
-      {approval.reason && <div className="approval-reason">{approval.reason}</div>}
+      {approval.reason && (
+        <div className="approval-reason">{approval.reason}</div>
+      )}
       <div className="approval-actions">
-        <button type="button" className="approval-btn deny" title="Deny this request" onClick={() => props.onResolve("deny")}>
+        <button
+          type="button"
+          className="approval-btn deny"
+          title="Deny this request"
+          onClick={() => props.onResolve("deny")}
+        >
           <Icon name="close" />
           <span>Deny</span>
         </button>
@@ -1015,7 +1264,12 @@ function ApprovalCard(props: { approval: ApprovalRequest; onResolve(decision: Ap
           <Icon name="shield" />
           <span>Session</span>
         </button>
-        <button type="button" className="approval-btn allow" title="Allow once" onClick={() => props.onResolve("allow")}>
+        <button
+          type="button"
+          className="approval-btn allow"
+          title="Allow once"
+          onClick={() => props.onResolve("allow")}
+        >
           <Icon name="check" />
           <span>Allow</span>
         </button>
@@ -1064,6 +1318,7 @@ function Composer(props: ComposerProps) {
   // The draft lives here, not in App, so each keystroke re-renders only the
   // composer — never the transcript. App receives the text only on submit.
   const [draft, setDraft] = useState("");
+  const [selectionStart, setSelectionStart] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const localOn = !!props.localProvider;
   const localAllowed = props.agent === "codex";
@@ -1073,22 +1328,21 @@ function Composer(props: ComposerProps) {
   const repos = props.snapshot?.repos ?? [];
   const selectedRepos = repos.filter((repo) => props.repoIds.includes(repo.id));
   const noRepoSelected = repos.length > 0 && selectedRepos.length === 0;
-  const canSend = !!draft.trim() && !!props.snapshot?.trusted && !noRepoSelected && (!localOn || !!props.model.trim());
-  const slashState = parseSlashDraft(draft);
-  const slashMatches = slashState ? matchingSlashCommands(slashState.query, props.agent) : [];
+  const nativeSlashDraft = isNativeSlashCommandText(draft);
+  const canSend =
+    !!draft.trim() &&
+    !!props.snapshot?.trusted &&
+    !noRepoSelected &&
+    (!localOn || !!props.model.trim() || nativeSlashDraft);
+  const slashState = parseSlashDraft(draft, selectionStart);
+  const slashMatches = slashState
+    ? matchingSlashCommands(slashState.query, props.agent)
+    : [];
   // While the agent is running and the composer is empty, the action button
   // turns into a Stop control (matching Claude Code / Codex). Typing turns it
   // back into a send/queue button.
   const stopMode = props.isRunning && !draft.trim();
   const submit = () => {
-    const command = parseSlashSubmit(draft);
-    if (command && props.snapshot?.trusted) {
-      runSlashCommand(command, props);
-      setDraft("");
-      const el = textareaRef.current;
-      if (el) el.style.height = "auto";
-      return;
-    }
     if (!canSend) return;
     props.onSend(draft);
     setDraft("");
@@ -1101,23 +1355,30 @@ function Composer(props: ComposerProps) {
       : selectedRepos.length === 1
         ? selectedRepos[0].name
         : `${selectedRepos.length} repos`;
-  const reposTitle =
-    noRepoSelected
-      ? "Select a repository for this run"
-      : selectedRepos.length === 0
+  const reposTitle = noRepoSelected
+    ? "Select a repository for this run"
+    : selectedRepos.length === 0
       ? "Connected repos — none attached yet"
       : `Connected repos: ${selectedRepos.map((repo) => repo.name).join(", ")}`;
-  const perm = PERMISSIONS.find((item) => item.value === props.permission) ?? PERMISSIONS[1];
+  const perm =
+    PERMISSIONS.find((item) => item.value === props.permission) ??
+    PERMISSIONS[1];
   const permissionLabel = permissionComposerLabel(props.permission);
-  const optionsActive = sandboxOn || localOn || !!props.model.trim() || (!!props.reasoning && props.reasoning !== "medium");
-  const localBaseUrl = props.localBaseUrl.trim() || defaultLocalBaseUrl(props.localProvider || "ollama");
+  const optionsActive =
+    sandboxOn ||
+    localOn ||
+    !!props.model.trim() ||
+    (!!props.reasoning && props.reasoning !== "medium");
+  const localBaseUrl =
+    props.localBaseUrl.trim() ||
+    defaultLocalBaseUrl(props.localProvider || "ollama");
 
   return (
     <footer className="composer">
       <div className="composer-box">
         {slashState && slashMatches.length > 0 && (
           <div className="slash-menu" role="listbox">
-            {slashMatches.slice(0, 8).map((command) => (
+            {slashMatches.map((command) => (
               <button
                 key={command.name}
                 type="button"
@@ -1125,16 +1386,34 @@ function Composer(props: ComposerProps) {
                 role="option"
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => {
-                  setDraft(`/${command.name}${command.takesInput ? " " : ""}`);
+                  const nextDraft = applySlashCompletion(
+                    draft,
+                    slashState,
+                    command,
+                  );
+                  setDraft(nextDraft);
                   requestAnimationFrame(() => {
                     const el = textareaRef.current;
                     el?.focus();
-                    if (el) autoGrow(el);
+                    if (el) {
+                      const nextCursor = slashCompletionCursor(
+                        slashState,
+                        command,
+                      );
+                      el.setSelectionRange(nextCursor, nextCursor);
+                      setSelectionStart(nextCursor);
+                      autoGrow(el);
+                    }
                   });
                 }}
               >
                 <span>/{command.name}</span>
-                <small><em>{commandScopeLabel(command)}</em>{command.description}</small>
+                <small>
+                  {commandScopeLabel(command) && (
+                    <em>{commandScopeLabel(command)}</em>
+                  )}
+                  {command.description}
+                </small>
               </button>
             ))}
           </div>
@@ -1142,19 +1421,49 @@ function Composer(props: ComposerProps) {
         <textarea
           ref={textareaRef}
           value={draft}
-          placeholder={props.isRunning ? "Ask for follow-up changes" : "Ask anything"}
+          placeholder={
+            props.isRunning ? "Ask for follow-up changes" : "Ask anything"
+          }
           rows={1}
-          onChange={(event) => setDraft(event.target.value)}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            setSelectionStart(event.target.selectionStart);
+          }}
+          onClick={(event) =>
+            setSelectionStart(event.currentTarget.selectionStart)
+          }
+          onKeyUp={(event) =>
+            setSelectionStart(event.currentTarget.selectionStart)
+          }
           onInput={(event) => autoGrow(event.currentTarget)}
           onKeyDown={(event) => {
             // Enter sends; Shift+Enter (or ⌘/Ctrl+Enter) inserts a newline.
-            if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.nativeEvent.isComposing) {
+            if (
+              event.key === "Enter" &&
+              !event.shiftKey &&
+              !event.metaKey &&
+              !event.ctrlKey &&
+              !event.nativeEvent.isComposing
+            ) {
               event.preventDefault();
               submit();
             }
             if (event.key === "Tab" && slashState && slashMatches[0]) {
               event.preventDefault();
-              setDraft(`/${slashMatches[0].name}${slashMatches[0].takesInput ? " " : ""}`);
+              setDraft(
+                applySlashCompletion(draft, slashState, slashMatches[0]),
+              );
+              requestAnimationFrame(() => {
+                const el = textareaRef.current;
+                if (!el) return;
+                const nextCursor = slashCompletionCursor(
+                  slashState,
+                  slashMatches[0],
+                );
+                el.setSelectionRange(nextCursor, nextCursor);
+                setSelectionStart(nextCursor);
+                autoGrow(el);
+              });
             }
           }}
         />
@@ -1181,11 +1490,18 @@ function Composer(props: ComposerProps) {
             >
               <div className="menu repo-menu">
                 <div className="menu-head">Connected Repos</div>
-                {repos.length === 0 && <div className="menu-empty">No repositories connected</div>}
+                {repos.length === 0 && (
+                  <div className="menu-empty">No repositories connected</div>
+                )}
                 {repos.map((repo) => {
                   const checked = props.repoIds.includes(repo.id);
                   return (
-                    <label key={repo.id} className={checked ? "menu-item check selected" : "menu-item check"}>
+                    <label
+                      key={repo.id}
+                      className={
+                        checked ? "menu-item check selected" : "menu-item check"
+                      }
+                    >
                       <input
                         type="checkbox"
                         checked={checked}
@@ -1199,17 +1515,33 @@ function Composer(props: ComposerProps) {
                       />
                       <span className="history-text">
                         <span>{repo.name}</span>
-                        <small>{repo.kind === "github" ? "GitHub" : "Local"}</small>
+                        <small>
+                          {repo.kind === "github" ? "GitHub" : "Local"}
+                        </small>
                       </span>
                     </label>
                   );
                 })}
                 <div className="menu-sep" />
-                <button type="button" className="menu-item" onClick={() => { setReposOpen(false); props.onLocalRepo(); }}>
+                <button
+                  type="button"
+                  className="menu-item"
+                  onClick={() => {
+                    setReposOpen(false);
+                    props.onLocalRepo();
+                  }}
+                >
                   <Icon name="folder" />
                   <span>Add local folder</span>
                 </button>
-                <button type="button" className="menu-item" onClick={() => { setReposOpen(false); props.onGithub(); }}>
+                <button
+                  type="button"
+                  className="menu-item"
+                  onClick={() => {
+                    setReposOpen(false);
+                    props.onGithub();
+                  }}
+                >
                   <Icon name="github" />
                   <span>Add from GitHub</span>
                 </button>
@@ -1257,7 +1589,11 @@ function Composer(props: ComposerProps) {
                     type="button"
                     role="option"
                     aria-selected={option.value === props.permission}
-                    className={option.value === props.permission ? "menu-item selected" : "menu-item"}
+                    className={
+                      option.value === props.permission
+                        ? "menu-item selected"
+                        : "menu-item"
+                    }
                     onClick={() => {
                       props.setPermission(option.value);
                       setPermOpen(false);
@@ -1300,12 +1636,17 @@ function Composer(props: ComposerProps) {
                 />
                 <label className="field">
                   <span>Reasoning effort</span>
-                  <select value={props.reasoning} onChange={(event) => props.setReasoning(event.target.value)}>
-                    {reasoningOptions(props.agent, props.snapshot).map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
+                  <select
+                    value={props.reasoning}
+                    onChange={(event) => props.setReasoning(event.target.value)}
+                  >
+                    {reasoningOptions(props.agent, props.snapshot).map(
+                      (option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ),
+                    )}
                   </select>
                 </label>
                 <button
@@ -1313,33 +1654,51 @@ function Composer(props: ComposerProps) {
                   className={`sandbox-row${sandboxOn ? " on" : ""}${sandboxAllowed ? "" : " disabled"}`}
                   disabled={!sandboxAllowed}
                   aria-pressed={sandboxOn}
-                  title={sandboxAllowed ? "Run in an isolated Docker sandbox" : "Sandbox is available for Codex"}
-                  onClick={() => props.setBackend(sandboxOn ? "host" : "docker_sandbox")}
+                  title={
+                    sandboxAllowed
+                      ? "Run in an isolated Docker sandbox"
+                      : "Sandbox is available for Codex"
+                  }
+                  onClick={() =>
+                    props.setBackend(sandboxOn ? "host" : "docker_sandbox")
+                  }
                 >
                   <Icon name={sandboxOn ? "cube" : "cubeOff"} />
                   <span>Docker sandbox</span>
-                  <span className="sandbox-state">{sandboxOn ? "On" : "Off"}</span>
+                  <span className="sandbox-state">
+                    {sandboxOn ? "On" : "Off"}
+                  </span>
                 </button>
                 <button
                   type="button"
                   className={`sandbox-row${localOn ? " on" : ""}${localAllowed ? "" : " disabled"}`}
                   disabled={!localAllowed}
                   aria-pressed={localOn}
-                  title={localAllowed ? "Run Codex against a local Ollama or LM Studio model" : "Local model runs use Codex"}
+                  title={
+                    localAllowed
+                      ? "Run Codex against a local Ollama or LM Studio model"
+                      : "Local model runs use Codex"
+                  }
                   onClick={() => {
                     if (localOn) {
                       props.setLocalProvider("");
                       props.setLocalBaseUrl("");
                     } else {
-                      const provider = props.snapshot?.defaults.local_provider ?? "ollama";
+                      const provider =
+                        props.snapshot?.defaults.local_provider ?? "ollama";
                       props.setLocalProvider(provider);
-                      props.setLocalBaseUrl(props.snapshot?.defaults.local_base_url ?? defaultLocalBaseUrl(provider));
+                      props.setLocalBaseUrl(
+                        props.snapshot?.defaults.local_base_url ??
+                          defaultLocalBaseUrl(provider),
+                      );
                     }
                   }}
                 >
                   <Icon name="terminal" />
                   <span>Local model</span>
-                  <span className="sandbox-state">{localOn ? labelLocalProvider(props.localProvider) : "Off"}</span>
+                  <span className="sandbox-state">
+                    {localOn ? labelLocalProvider(props.localProvider) : "Off"}
+                  </span>
                 </button>
                 {localOn && (
                   <>
@@ -1348,7 +1707,8 @@ function Composer(props: ComposerProps) {
                       <select
                         value={props.localProvider}
                         onChange={(event) => {
-                          const provider = event.target.value as LocalModelProvider;
+                          const provider = event.target
+                            .value as LocalModelProvider;
                           props.setLocalProvider(provider);
                           props.setLocalBaseUrl(defaultLocalBaseUrl(provider));
                         }}
@@ -1362,18 +1722,28 @@ function Composer(props: ComposerProps) {
                       <input
                         value={props.localBaseUrl}
                         placeholder={localBaseUrl}
-                        onChange={(event) => props.setLocalBaseUrl(event.target.value)}
+                        onChange={(event) =>
+                          props.setLocalBaseUrl(event.target.value)
+                        }
                       />
                     </label>
                   </>
                 )}
                 {sandboxOn && sandbox && !sandbox.authenticated && (
-                  <button type="button" className="menu-item" onClick={() => props.onSandboxLogin(false)}>
+                  <button
+                    type="button"
+                    className="menu-item"
+                    onClick={() => props.onSandboxLogin(false)}
+                  >
                     Sign in to Sandbox
                   </button>
                 )}
                 {sandboxOn && sandbox && !sandbox.codex_authenticated && (
-                  <button type="button" className="menu-item" onClick={() => props.onSandboxLogin(true)}>
+                  <button
+                    type="button"
+                    className="menu-item"
+                    onClick={() => props.onSandboxLogin(true)}
+                  >
                     Sign in to Codex Sandbox
                   </button>
                 )}
@@ -1385,11 +1755,21 @@ function Composer(props: ComposerProps) {
             className={`send-btn${stopMode ? " stop" : ""}`}
             type="button"
             disabled={!stopMode && !canSend}
-            title={stopMode ? "Stop the agent" : props.isRunning ? "Queue message (Enter)" : "Send (Enter)"}
-            aria-label={stopMode ? "Stop" : props.isRunning ? "Queue message" : "Send"}
+            title={
+              stopMode
+                ? "Stop the agent"
+                : props.isRunning
+                  ? "Queue message (Enter)"
+                  : "Send (Enter)"
+            }
+            aria-label={
+              stopMode ? "Stop" : props.isRunning ? "Queue message" : "Send"
+            }
             onClick={stopMode ? props.onStop : submit}
           >
-            <Icon name={stopMode ? "stop" : props.isRunning ? "queue" : "send"} />
+            <Icon
+              name={stopMode ? "stop" : props.isRunning ? "queue" : "send"}
+            />
           </button>
         </div>
       </div>
@@ -1412,544 +1792,721 @@ function AgentMark({ agent }: { agent: AgentKind }) {
   );
 }
 
-type ParsedSlashCommand = { name: string; arg: string };
-type SlashScope = "perpetual" | AgentKind;
 type SlashCommand = {
   name: string;
   aliases?: string[];
-  scopes?: SlashScope[];
+  scopes?: AgentKind[];
   description: string;
   takesInput?: boolean;
-  run(arg: string, props: ComposerProps): void;
 };
 
 const SLASH_COMMANDS: SlashCommand[] = [
   {
     name: "help",
-    description: "Show available Perpetual slash commands",
-    run: (_arg, props) => props.onNotice(slashHelp(props.agent)),
+    scopes: ["claude_code", "codex"],
+    description: "Show native slash-command help",
   },
   {
     name: "plan",
-    description: "Plan first in read-only mode, without editing files",
-    takesInput: true,
-    run: (arg, props) => {
-      props.setPermission("read_only");
-      props.onSend(
-        promptWithArg(
-          "Create a concrete implementation plan. Do not edit files or run destructive commands yet. Include risks, test strategy, and the exact first steps.",
-          arg
-        )
-      );
-    },
-  },
-  {
-    name: "review",
-    aliases: ["pr"],
-    description: "Review code or current managed changes",
-    takesInput: true,
-    run: (arg, props) => {
-      if (!arg.trim() && props.selectedThread) props.onReviewChanges();
-      props.onSend(
-        promptWithArg(
-          "Review the current code/changes. Prioritize correctness bugs, regressions, missing tests, security or data-loss risks, and concrete file-level findings. Keep summary secondary.",
-          arg
-        )
-      );
-    },
-  },
-  {
-    name: "diff",
-    description: "Load the managed worktree diff",
-    run: (_arg, props) => {
-      if (props.selectedThread) props.onReviewChanges();
-      else props.onNotice("Start or select a session before loading a diff.");
-    },
-  },
-  {
-    name: "fix",
-    description: "Ask the agent to implement a fix",
-    takesInput: true,
-    run: (arg, props) =>
-      props.onSend(promptWithArg("Implement the fix end-to-end, keep changes scoped, and verify with the relevant tests/build.", arg)),
-  },
-  {
-    name: "test",
-    description: "Ask the agent to run or add tests",
-    takesInput: true,
-    run: (arg, props) =>
-      props.onSend(promptWithArg("Run the relevant tests. If coverage is missing for the change, add focused tests first, then report the result.", arg)),
-  },
-  {
-    name: "commit",
-    description: "Ask the agent to group and commit current changes",
-    takesInput: true,
-    run: (arg, props) =>
-      props.onSend(promptWithArg("Group the relevant uncommitted changes and commit them using this repository's commit conventions. Leave unrelated changes untouched.", arg)),
-  },
-  {
-    name: "explain",
-    description: "Ask for a concise explanation",
-    takesInput: true,
-    run: (arg, props) => props.onSend(promptWithArg("Explain this clearly and concisely with the relevant code references.", arg)),
-  },
-  {
-    name: "continue",
-    aliases: ["resume"],
-    description: "Resume the current task through Perpetual",
-    takesInput: true,
-    run: (arg, props) => props.onSend(arg.trim() || "Continue from the current state. Re-read recent context and proceed with the next necessary step."),
-  },
-  {
-    name: "goal",
     scopes: ["claude_code", "codex"],
-    description: "Set or summarize a task goal",
+    description: "Enter native plan mode",
     takesInput: true,
-    run: (arg, props) => props.onSend(promptWithArg("Treat this as the persistent goal for the current task. Track progress against it, call out blockers, and keep working across turns until it is satisfied or explicitly cleared.", arg)),
-  },
-  {
-    name: "btw",
-    aliases: ["side"],
-    scopes: ["claude_code", "codex"],
-    description: "Ask a side question",
-    takesInput: true,
-    run: (arg, props) => props.onSend(promptWithArg("Answer this side question briefly without derailing the main task. Do not make code changes unless explicitly requested.", arg)),
-  },
-  {
-    name: "usage",
-    scopes: ["claude_code", "codex"],
-    description: "Summarize usage and limits",
-    run: (_arg, props) => props.onSend("Summarize current usage/limit state available through Perpetual, including fallback status, model/provider availability, and next reset if known."),
-  },
-  {
-    name: "agent",
-    description: "Switch agent: /agent claude or /agent codex",
-    takesInput: true,
-    run: (arg, props) => {
-      const normalized = arg.trim().toLowerCase();
-      if (normalized.startsWith("codex")) {
-        props.setAgent("codex");
-        props.onNotice("Agent set to Codex.");
-      } else if (normalized.startsWith("claude")) {
-        props.setAgent("claude_code");
-        props.onNotice("Agent set to Claude.");
-      } else {
-        props.onNotice("Usage: /agent claude or /agent codex");
-      }
-    },
-  },
-  {
-    name: "permission",
-    aliases: ["perm"],
-    description: "Set permissions: read-only, write, or auto",
-    takesInput: true,
-    run: (arg, props) => {
-      const value = parsePermission(arg);
-      if (!value) {
-        props.onNotice("Usage: /permission read-only, /permission write, or /permission auto");
-        return;
-      }
-      props.setPermission(value);
-      props.onNotice(`Permission set to ${permissionComposerLabel(value)}.`);
-    },
   },
   {
     name: "model",
-    description: "Set model override",
-    takesInput: true,
-    run: (arg, props) => {
-      const nextModel = arg.trim();
-      if (nextModel && !props.localProvider && !modelCompatibleWithAgent(props.agent, nextModel)) {
-        props.setModel("");
-        props.onNotice(`${prettyModel(nextModel)} is not available for ${labelAgent(props.agent)}. Model override cleared.`);
-        return;
-      }
-      props.setModel(nextModel);
-      props.onNotice(nextModel ? `Model set to ${nextModel}.` : "Model override cleared.");
-    },
-  },
-  {
-    name: "reasoning",
-    description: "Set reasoning effort",
-    takesInput: true,
-    run: (arg, props) => {
-      const value = arg.trim() || "medium";
-      props.setReasoning(value);
-      props.onNotice(`Reasoning set to ${value}.`);
-    },
-  },
-  {
-    name: "limits",
-    aliases: ["fallback"],
-    description: "Open auto-switch and limit recovery settings",
-    run: (_arg, props) => props.onOpenSettings(),
-  },
-  {
-    name: "cloud",
-    description: "Open cloud carryover settings",
-    run: (_arg, props) => props.onOpenSettings(),
-  },
-  {
-    name: "sandbox",
-    scopes: ["codex"],
-    description: "Toggle Codex Docker sandbox mode",
-    run: (_arg, props) => {
-      props.setAgent("codex");
-      props.setBackend(props.backend === "docker_sandbox" ? "host" : "docker_sandbox");
-      props.onNotice(props.backend === "docker_sandbox" ? "Docker sandbox disabled." : "Agent set to Codex and Docker sandbox enabled.");
-    },
-  },
-  {
-    name: "local",
-    scopes: ["codex"],
-    description: "Toggle Codex local model mode",
-    takesInput: true,
-    run: (arg, props) => {
-      props.setAgent("codex");
-      const provider = arg.trim().toLowerCase().startsWith("lm") ? "lm_studio" : "ollama";
-      if (props.localProvider) {
-        props.setLocalProvider("");
-        props.setLocalBaseUrl("");
-        props.onNotice("Local model mode disabled.");
-      } else {
-        props.setLocalProvider(provider);
-        props.setLocalBaseUrl(defaultLocalBaseUrl(provider));
-        props.onNotice(`Agent set to Codex and local model mode enabled for ${labelLocalProvider(provider)}.`);
-      }
-    },
-  },
-  {
-    name: "settings",
-    description: "Open Perpetual settings",
-    run: (_arg, props) => props.onOpenSettings(),
-  },
-  {
-    name: "mcp",
     scopes: ["claude_code", "codex"],
-    description: "Use configured MCP tools through the active agent",
+    description: "Switch the active model",
     takesInput: true,
-    run: (arg, props) =>
-      props.onSend(promptWithArg("Use the configured MCP tools available to this agent where useful. Explain which MCP capability you need and proceed through Perpetual approvals.", arg)),
   },
   {
-    name: "plugins",
+    name: "permissions",
+    aliases: ["allowed-tools"],
     scopes: ["claude_code", "codex"],
-    description: "Use installed agent plugins/extensions where useful",
+    description: "Manage the native approval/permission policy",
     takesInput: true,
-    run: (arg, props) =>
-      props.onSend(promptWithArg("Use any installed Claude/Codex plugins or extensions available in this environment where useful. Keep all work inside Perpetual's managed session.", arg)),
   },
   {
-    name: "agents",
+    name: "status",
     scopes: ["claude_code", "codex"],
-    description: "Delegate or coordinate with available subagents",
-    takesInput: true,
-    run: (arg, props) =>
-      props.onSend(promptWithArg("Use available subagents/background-agent style delegation if this agent supports it. Coordinate the work and report back through this Perpetual session.", arg)),
+    description: "Show session configuration and status",
   },
   {
-    name: "doctor",
+    name: "usage",
+    aliases: ["cost", "stats"],
     scopes: ["claude_code", "codex"],
-    description: "Diagnose setup, auth, tools, and repo issues",
+    description: "Show usage, cost, or limits",
+  },
+  {
+    name: "compact",
+    scopes: ["claude_code", "codex"],
+    description: "Summarize context to free tokens",
     takesInput: true,
-    run: (arg, props) =>
-      props.onSend(promptWithArg("Diagnose the current setup: agent auth, installed tools, repository state, model/backend settings, and likely blockers. Do not make unrelated changes.", arg)),
+  },
+  {
+    name: "diff",
+    scopes: ["claude_code", "codex"],
+    description: "Open the native diff view",
   },
   {
     name: "init",
     scopes: ["claude_code", "codex"],
-    description: "Initialize project guidance for future agent runs",
+    description: "Generate repository guidance files",
     takesInput: true,
-    run: (arg, props) =>
-      props.onSend(promptWithArg("Inspect this repository and create or update concise agent guidance files if appropriate, such as AGENTS.md or CLAUDE.md. Keep it accurate and minimal.", arg)),
   },
   {
-    name: "new",
-    aliases: ["clear"],
-    description: "Start a new Perpetual session",
-    run: (_arg, props) => props.onNewSession(),
-  },
-  {
-    name: "status",
-    description: "Refresh and summarize current session status",
-    run: (_arg, props) => {
-      props.onRefresh();
-      props.onSend("Summarize current session status: what is done, what is running or queued, blockers, limits/fallback state, changed files, and next action.");
-    },
-  },
-  {
-    name: "refresh",
-    description: "Refresh sessions, agents, and availability",
-    run: (_arg, props) => props.onRefresh(),
-  },
-  {
-    name: "stop",
-    description: "Stop the active run",
-    run: (_arg, props) => {
-      if (props.selectedThread) props.onStop();
-      else props.onNotice("No active session to stop.");
-    },
-  },
-  {
-    name: "repo",
-    description: "Connect a local repository",
-    run: (_arg, props) => props.onLocalRepo(),
-  },
-  {
-    name: "github",
-    description: "Connect a GitHub repository",
-    run: (_arg, props) => props.onGithub(),
-  },
-  {
-    name: "compact",
-    description: "Ask the agent to summarize context and next steps",
-    run: (_arg, props) =>
-      props.onSend("Summarize the current session state, decisions, changed files, blockers, and exact next actions so the task can be resumed later."),
-  },
-  {
-    name: "fast",
-    scopes: ["codex"],
-    description: "Toggle or inspect Codex fast mode",
+    name: "mcp",
+    scopes: ["claude_code", "codex"],
+    description: "Inspect or manage MCP tools",
     takesInput: true,
-    run: (arg, props) => props.onSend(promptWithArg("Apply or inspect Codex fast mode for this session. If unavailable for the selected model, explain why and continue normally.", arg)),
   },
   {
-    name: "personality",
-    scopes: ["codex"],
-    description: "Set Codex response style",
+    name: "review",
+    scopes: ["claude_code", "codex"],
+    description: "Run the native review workflow",
     takesInput: true,
-    run: (arg, props) => props.onSend(promptWithArg("Adopt this Codex response personality/style for future replies in this Perpetual session. Supported styles include friendly, pragmatic, or none when applicable.", arg)),
   },
   {
-    name: "ide",
-    scopes: ["codex"],
-    description: "Use active IDE/editor context",
+    name: "clear",
+    aliases: ["new", "reset"],
+    scopes: ["claude_code", "codex"],
+    description: "Start a fresh native conversation",
     takesInput: true,
-    run: (arg, props) => props.onSend(promptWithArg("Use the current IDE/editor context from this workspace where available: open files, selected repositories, managed diff, and active task context.", arg)),
   },
   {
-    name: "apps",
-    aliases: ["app"],
-    scopes: ["codex"],
-    description: "Use Codex apps/connectors",
+    name: "resume",
+    aliases: ["continue"],
+    scopes: ["claude_code", "codex"],
+    description: "Resume a saved native conversation",
     takesInput: true,
-    run: (arg, props) => props.onSend(promptWithArg("Use available Codex apps/connectors if configured. Tell me which connector/app would help and proceed through Perpetual approvals.", arg)),
-  },
-  {
-    name: "hooks",
-    scopes: ["codex"],
-    description: "Inspect Codex hook behavior",
-    takesInput: true,
-    run: (arg, props) => props.onSend(promptWithArg("Inspect or reason about Codex lifecycle hooks relevant to this task. Do not trust or execute unexpected hooks without explicit approval.", arg)),
-  },
-  {
-    name: "approve",
-    scopes: ["codex"],
-    description: "Retry after an approval/review denial",
-    takesInput: true,
-    run: (arg, props) => props.onSend(promptWithArg("Review the recent denied or blocked action, explain why it was denied, and retry only if it is safe under Perpetual approvals.", arg)),
-  },
-  {
-    name: "memories",
-    aliases: ["memory"],
-    scopes: ["codex"],
-    description: "Use or update Codex memory guidance",
-    takesInput: true,
-    run: (arg, props) => props.onSend(promptWithArg("Inspect/update persistent memory guidance only if appropriate. Keep repository guidance explicit and minimal.", arg)),
-  },
-  {
-    name: "import",
-    scopes: ["codex"],
-    description: "Import external agent setup",
-    takesInput: true,
-    run: (arg, props) => props.onSend(promptWithArg("Inspect supported external-agent setup files and suggest how to migrate/import useful guidance into this repository's Perpetual/Codex workflow.", arg)),
-  },
-  {
-    name: "raw",
-    scopes: ["codex"],
-    description: "Request raw copy-friendly output",
-    takesInput: true,
-    run: (arg, props) => props.onSend(promptWithArg("Respond in a raw, copy-friendly format with minimal formatting and no decorative prose.", arg)),
   },
   {
     name: "fork",
-    scopes: ["codex", "claude_code"],
-    description: "Explore a forked approach",
+    scopes: ["claude_code", "codex"],
+    description: "Fork or branch the current conversation",
     takesInput: true,
-    run: (arg, props) => props.onSend(promptWithArg("Explore this as a forked alternative approach while preserving the current path. Compare tradeoffs before making irreversible changes.", arg)),
   },
   {
-    name: "debug-config",
-    scopes: ["codex"],
-    description: "Diagnose Codex config layers",
+    name: "goal",
+    scopes: ["claude_code", "codex"],
+    description: "Set, view, pause, resume, or clear a task goal",
     takesInput: true,
-    run: (arg, props) => props.onSend(promptWithArg("Diagnose Codex configuration layers, profiles, permissions, sandbox, MCP, plugins, hooks, and model settings relevant to this workspace.", arg)),
   },
   {
-    name: "code-review",
-    aliases: ["simplify"],
+    name: "fast",
+    scopes: ["claude_code", "codex"],
+    description: "Toggle or inspect fast mode",
+    takesInput: true,
+  },
+  {
+    name: "hooks",
+    scopes: ["claude_code", "codex"],
+    description: "View or manage lifecycle hooks",
+    takesInput: true,
+  },
+  {
+    name: "ide",
+    scopes: ["claude_code", "codex"],
+    description: "Manage IDE/editor context",
+  },
+  {
+    name: "skills",
+    aliases: ["skill"],
+    scopes: ["claude_code", "codex"],
+    description: "Browse or use native skills",
+    takesInput: true,
+  },
+  {
+    name: "plugins",
+    aliases: ["plugin"],
+    scopes: ["claude_code", "codex"],
+    description: "Browse or manage native plugins",
+    takesInput: true,
+  },
+  {
+    name: "agents",
+    aliases: ["agent"],
+    scopes: ["claude_code", "codex"],
+    description: "Manage native subagents or agent threads",
+    takesInput: true,
+  },
+  {
+    name: "doctor",
+    scopes: ["claude_code", "codex"],
+    description: "Diagnose CLI setup and runtime issues",
+    takesInput: true,
+  },
+  {
+    name: "debug",
+    aliases: ["debug-config"],
+    scopes: ["claude_code", "codex"],
+    description: "Enable or inspect native debug diagnostics",
+    takesInput: true,
+  },
+  {
+    name: "feedback",
+    aliases: ["bug", "share"],
+    scopes: ["claude_code", "codex"],
+    description: "Send native feedback or diagnostics",
+    takesInput: true,
+  },
+  {
+    name: "logout",
+    scopes: ["claude_code", "codex"],
+    description: "Sign out of the selected CLI",
+  },
+  {
+    name: "exit",
+    aliases: ["quit"],
+    scopes: ["claude_code", "codex"],
+    description: "Exit or detach the native session",
+  },
+  {
+    name: "stop",
+    scopes: ["claude_code", "codex"],
+    description: "Stop native background work",
+  },
+  {
+    name: "statusline",
+    scopes: ["claude_code", "codex"],
+    description: "Configure native status-line fields",
+    takesInput: true,
+  },
+  {
+    name: "theme",
+    scopes: ["claude_code", "codex"],
+    description: "Configure the native theme",
+    takesInput: true,
+  },
+  {
+    name: "add-dir",
     scopes: ["claude_code"],
-    description: "Claude code review workflow",
+    description: "Add a working directory for Claude Code file access",
     takesInput: true,
-    run: (arg, props) => props.onSend(promptWithArg("Run a Claude Code style code review of the current diff. Prioritize correctness bugs and cleanups. If '--fix' is requested, apply safe fixes and verify them.", arg)),
   },
   {
-    name: "security-review",
+    name: "advisor",
     scopes: ["claude_code"],
-    description: "Security review pending changes",
+    description: "Enable or disable Claude Code advisor",
     takesInput: true,
-    run: (arg, props) => props.onSend(promptWithArg("Review pending changes for security vulnerabilities such as injection, auth/session bugs, data exposure, unsafe filesystem/network behavior, and supply-chain risk.", arg)),
   },
   {
-    name: "verify",
-    aliases: ["run"],
+    name: "autofix-pr",
     scopes: ["claude_code"],
-    description: "Build/run app to verify behavior",
+    description: "Start Claude Code web autofix for the current PR",
     takesInput: true,
-    run: (arg, props) => props.onSend(promptWithArg("Verify the change by building/running the app or relevant workflow, not only by static checks. Observe behavior and report evidence.", arg)),
   },
   {
     name: "background",
     aliases: ["bg"],
     scopes: ["claude_code"],
-    description: "Plan background-agent style work",
+    description: "Detach the Claude Code session to the background",
     takesInput: true,
-    run: (arg, props) => props.onSend(promptWithArg("Treat this as a background-agent style task. Break it into independently verifiable units and keep Perpetual updated with progress and blockers.", arg)),
   },
   {
     name: "batch",
     scopes: ["claude_code"],
-    description: "Decompose large work into parallel units",
+    description: "Run Claude Code batch workflow",
     takesInput: true,
-    run: (arg, props) => props.onSend(promptWithArg("Decompose this large change into independent work units, identify safe sequencing/parallelism, propose verification for each unit, and wait before broad implementation.", arg)),
   },
   {
     name: "branch",
     scopes: ["claude_code"],
-    description: "Explore an alternate branch",
+    description: "Create a Claude Code conversation branch",
     takesInput: true,
-    run: (arg, props) => props.onSend(promptWithArg("Explore this alternate direction as a branch of the current approach. Keep the original assumptions visible and compare tradeoffs.", arg)),
   },
   {
-    name: "rewind",
-    aliases: ["checkpoint", "undo"],
+    name: "btw",
     scopes: ["claude_code"],
-    description: "Recover from a bad direction",
+    description: "Ask a Claude Code side question",
     takesInput: true,
-    run: (arg, props) => props.onSend(promptWithArg("Identify what should be rewound or undone from the current session. Propose the safest recovery plan before changing files.", arg)),
   },
   {
-    name: "context",
-    aliases: ["cost", "stats"],
+    name: "cd",
     scopes: ["claude_code"],
-    description: "Analyze context usage",
+    description: "Move the Claude Code session to a new directory",
     takesInput: true,
-    run: (arg, props) => props.onSend(promptWithArg("Analyze what context matters in this session, what can be dropped, and what should be preserved for the next turn.", arg)),
   },
   {
-    name: "advisor",
+    name: "chrome",
     scopes: ["claude_code"],
-    description: "Use second-pass advisor behavior",
-    takesInput: true,
-    run: (arg, props) => props.onSend(promptWithArg("Use an advisor-style second-pass critique for key decisions in this task. Call out uncertain assumptions and alternatives before implementing.", arg)),
-  },
-  {
-    name: "loop",
-    aliases: ["proactive"],
-    scopes: ["claude_code"],
-    description: "Create a recurring check loop",
-    takesInput: true,
-    run: (arg, props) => props.onSend(promptWithArg("Set up a self-paced loop for this task: define the check, interval/trigger, stopping condition, and how progress should be reported through Perpetual.", arg)),
+    description: "Configure Claude in Chrome settings",
   },
   {
     name: "claude-api",
     scopes: ["claude_code"],
     description: "Use Claude API reference workflow",
     takesInput: true,
-    run: (arg, props) => props.onSend(promptWithArg("Use Claude API reference knowledge for this task. If migration is requested, identify affected SDK usage, model IDs, streaming/tool-use changes, and tests.", arg)),
+  },
+  {
+    name: "code-review",
+    aliases: ["simplify"],
+    scopes: ["claude_code"],
+    description: "Run Claude Code review workflow",
+    takesInput: true,
+  },
+  {
+    name: "color",
+    scopes: ["claude_code"],
+    description: "Set the Claude Code prompt-bar color",
+    takesInput: true,
+  },
+  {
+    name: "config",
+    aliases: ["settings"],
+    scopes: ["claude_code"],
+    description: "Open or set Claude Code configuration",
+    takesInput: true,
+  },
+  {
+    name: "context",
+    scopes: ["claude_code"],
+    description: "Visualize Claude Code context usage",
+    takesInput: true,
   },
   {
     name: "dataviz",
     scopes: ["claude_code"],
-    description: "Use data visualization guidance",
+    description: "Use Claude Code data-visualization guidance",
     takesInput: true,
-    run: (arg, props) => props.onSend(promptWithArg("Apply data visualization guidance: choose chart form, color roles, accessibility/contrast, interaction states, and validation steps.", arg)),
+  },
+  {
+    name: "deep-research",
+    scopes: ["claude_code"],
+    description: "Run Claude Code deep research workflow",
+    takesInput: true,
+  },
+  {
+    name: "design-login",
+    scopes: ["claude_code"],
+    description: "Authorize Claude design-system access",
   },
   {
     name: "design-sync",
     scopes: ["claude_code"],
-    description: "Use design-system guidance",
+    description: "Sync a design system for Claude",
     takesInput: true,
-    run: (arg, props) => props.onSend(promptWithArg("Inspect the app's design system and apply it faithfully. Reuse existing components/tokens and verify responsive states.", arg)),
+  },
+  {
+    name: "desktop",
+    aliases: ["app"],
+    scopes: ["claude_code"],
+    description: "Continue in Claude Code Desktop",
+  },
+  {
+    name: "effort",
+    scopes: ["claude_code"],
+    description: "Set Claude Code effort level",
+    takesInput: true,
+  },
+  {
+    name: "export",
+    scopes: ["claude_code"],
+    description: "Export the Claude Code conversation",
+    takesInput: true,
+  },
+  {
+    name: "fewer-permission-prompts",
+    scopes: ["claude_code"],
+    description: "Generate Claude Code permission allowlists",
+  },
+  {
+    name: "focus",
+    scopes: ["claude_code"],
+    description: "Toggle Claude Code focus view",
+  },
+  {
+    name: "heapdump",
+    scopes: ["claude_code"],
+    description: "Write a Claude Code heap snapshot",
+  },
+  {
+    name: "insights",
+    scopes: ["claude_code"],
+    description: "Analyze Claude Code session history",
+  },
+  {
+    name: "install-github-app",
+    scopes: ["claude_code"],
+    description: "Install the Claude GitHub app",
+    takesInput: true,
+  },
+  {
+    name: "install-slack-app",
+    scopes: ["claude_code"],
+    description: "Install the Claude Slack app",
+  },
+  {
+    name: "keybindings",
+    scopes: ["claude_code"],
+    description: "Open Claude Code keybindings",
+  },
+  {
+    name: "login",
+    scopes: ["claude_code"],
+    description: "Sign in to Claude Code",
+  },
+  {
+    name: "loop",
+    aliases: ["proactive"],
+    scopes: ["claude_code"],
+    description: "Run a Claude Code recurring loop",
+    takesInput: true,
+  },
+  {
+    name: "memory",
+    scopes: ["claude_code"],
+    description: "Edit Claude Code memory files",
+  },
+  {
+    name: "mobile",
+    aliases: ["ios", "android"],
+    scopes: ["claude_code"],
+    description: "Show Claude mobile app QR code",
+  },
+  {
+    name: "passes",
+    scopes: ["claude_code"],
+    description: "Share Claude Code passes",
+  },
+  {
+    name: "powerup",
+    scopes: ["claude_code"],
+    description: "Discover Claude Code features",
+  },
+  {
+    name: "privacy-settings",
+    scopes: ["claude_code"],
+    description: "View Claude privacy settings",
+  },
+  { name: "radio", scopes: ["claude_code"], description: "Open Claude FM" },
+  {
+    name: "recap",
+    scopes: ["claude_code"],
+    description: "Generate a Claude Code session recap",
+  },
+  {
+    name: "release-notes",
+    scopes: ["claude_code"],
+    description: "View Claude Code release notes",
+  },
+  {
+    name: "reload-plugins",
+    scopes: ["claude_code"],
+    description: "Reload Claude Code plugins",
+    takesInput: true,
+  },
+  {
+    name: "reload-skills",
+    scopes: ["claude_code"],
+    description: "Reload Claude Code skills",
+  },
+  {
+    name: "remote-control",
+    aliases: ["rc"],
+    scopes: ["claude_code"],
+    description: "Enable Claude Code remote control",
+  },
+  {
+    name: "remote-env",
+    scopes: ["claude_code"],
+    description: "Choose Claude Code cloud environment",
+  },
+  {
+    name: "rename",
+    scopes: ["claude_code"],
+    description: "Rename the Claude Code session",
+    takesInput: true,
+  },
+  {
+    name: "rewind",
+    aliases: ["checkpoint", "undo"],
+    scopes: ["claude_code"],
+    description: "Rewind Claude Code conversation or code",
+    takesInput: true,
+  },
+  {
+    name: "run",
+    scopes: ["claude_code"],
+    description: "Run and observe the app with Claude Code",
+    takesInput: true,
+  },
+  {
+    name: "run-skill-generator",
+    scopes: ["claude_code"],
+    description: "Generate a Claude Code run/verify skill",
+  },
+  {
+    name: "sandbox",
+    scopes: ["claude_code"],
+    description: "Toggle Claude Code sandbox mode",
+  },
+  {
+    name: "schedule",
+    aliases: ["routines"],
+    scopes: ["claude_code"],
+    description: "Create or manage Claude Code routines",
+    takesInput: true,
+  },
+  {
+    name: "scroll-speed",
+    scopes: ["claude_code"],
+    description: "Adjust Claude Code scroll speed",
+  },
+  {
+    name: "security-review",
+    scopes: ["claude_code"],
+    description: "Run Claude Code security review",
+    takesInput: true,
+  },
+  {
+    name: "setup-bedrock",
+    scopes: ["claude_code"],
+    description: "Configure Claude Code Bedrock authentication",
+  },
+  {
+    name: "setup-vertex",
+    scopes: ["claude_code"],
+    description: "Configure Claude Code Vertex authentication",
+  },
+  {
+    name: "stickers",
+    scopes: ["claude_code"],
+    description: "Order Claude Code stickers",
+  },
+  {
+    name: "tasks",
+    aliases: ["bashes"],
+    scopes: ["claude_code"],
+    description: "View Claude Code background tasks",
+  },
+  {
+    name: "team-onboarding",
+    scopes: ["claude_code"],
+    description: "Generate Claude Code team onboarding",
+  },
+  {
+    name: "teleport",
+    aliases: ["tp"],
+    scopes: ["claude_code"],
+    description: "Pull a Claude web session into the terminal",
+  },
+  {
+    name: "terminal-setup",
+    scopes: ["claude_code"],
+    description: "Configure terminal keybindings",
+  },
+  {
+    name: "tui",
+    scopes: ["claude_code"],
+    description: "Set Claude Code terminal UI renderer",
+    takesInput: true,
+  },
+  {
+    name: "ultraplan",
+    scopes: ["claude_code"],
+    description: "Draft a Claude Code ultraplan",
+    takesInput: true,
+  },
+  {
+    name: "ultrareview",
+    scopes: ["claude_code"],
+    description: "Run a deep Claude Code review",
+    takesInput: true,
+  },
+  {
+    name: "upgrade",
+    scopes: ["claude_code"],
+    description: "Open Claude plan upgrade flow",
+  },
+  {
+    name: "usage-credits",
+    scopes: ["claude_code"],
+    description: "Configure Claude usage credits",
+  },
+  {
+    name: "verify",
+    scopes: ["claude_code"],
+    description: "Verify behavior by running the app",
+    takesInput: true,
+  },
+  {
+    name: "voice",
+    scopes: ["claude_code"],
+    description: "Configure Claude Code voice input",
+    takesInput: true,
+  },
+  {
+    name: "web-setup",
+    scopes: ["claude_code"],
+    description: "Connect GitHub for Claude Code web",
+  },
+  {
+    name: "workflows",
+    scopes: ["claude_code"],
+    description: "Open Claude Code workflow progress",
+  },
+  {
+    name: "keymap",
+    scopes: ["codex"],
+    description: "Remap Codex TUI keyboard shortcuts",
+  },
+  {
+    name: "vim",
+    scopes: ["codex"],
+    description: "Toggle Codex composer Vim mode",
+  },
+  {
+    name: "sandbox-add-read-dir",
+    scopes: ["codex"],
+    description: "Grant Codex sandbox read access",
+    takesInput: true,
+  },
+  {
+    name: "apps",
+    aliases: ["app"],
+    scopes: ["codex"],
+    description: "Browse Codex apps/connectors",
+    takesInput: true,
+  },
+  {
+    name: "archive",
+    scopes: ["codex"],
+    description: "Archive the Codex session and exit",
+  },
+  {
+    name: "delete",
+    scopes: ["codex"],
+    description: "Delete the Codex session and exit",
+  },
+  {
+    name: "copy",
+    scopes: ["codex"],
+    description: "Copy recent Codex output",
+    takesInput: true,
+  },
+  {
+    name: "experimental",
+    scopes: ["codex"],
+    description: "Toggle Codex experimental features",
+  },
+  {
+    name: "approve",
+    scopes: ["codex"],
+    description: "Approve a recent Codex review denial",
+  },
+  {
+    name: "memories",
+    aliases: ["memory"],
+    scopes: ["codex"],
+    description: "Configure Codex memories",
+  },
+  {
+    name: "import",
+    scopes: ["codex"],
+    description: "Import external agent setup into Codex",
+  },
+  {
+    name: "mention",
+    scopes: ["codex"],
+    description: "Attach a file or folder to Codex",
+    takesInput: true,
+  },
+  {
+    name: "personality",
+    scopes: ["codex"],
+    description: "Choose Codex response style",
+    takesInput: true,
+  },
+  {
+    name: "ps",
+    scopes: ["codex"],
+    description: "Show Codex background terminals",
+  },
+  {
+    name: "side",
+    aliases: ["btw"],
+    scopes: ["codex"],
+    description: "Start a Codex side conversation",
+    takesInput: true,
+  },
+  {
+    name: "raw",
+    scopes: ["codex"],
+    description: "Toggle Codex raw scrollback mode",
+  },
+  {
+    name: "title",
+    scopes: ["codex"],
+    description: "Configure Codex terminal title fields",
   },
 ];
 
-function slashHelp(agent: AgentKind): string {
-  return `Slash commands for ${labelAgent(agent)}: ${availableSlashCommands(agent).map((command) => `/${command.name}`).join(", ")}`;
-}
-
 function availableSlashCommands(agent: AgentKind): SlashCommand[] {
-  return SLASH_COMMANDS.filter((command) => !command.scopes || command.scopes.includes("perpetual") || command.scopes.includes(agent));
-}
-
-function commandScopeLabel(command: SlashCommand): string {
-  if (!command.scopes || command.scopes.includes("perpetual")) return "Perpetual";
-  if (command.scopes.length > 1) return "Agent";
-  return labelAgent(command.scopes[0] as AgentKind);
-}
-
-function parseSlashDraft(value: string): { query: string } | null {
-  const trimmedLeft = value.replace(/^\s+/, "");
-  if (!trimmedLeft.startsWith("/") || trimmedLeft.includes("\n")) return null;
-  const body = trimmedLeft.slice(1);
-  if (body.includes(" ")) return null;
-  return { query: body.toLowerCase() };
-}
-
-function parseSlashSubmit(value: string): ParsedSlashCommand | null {
-  const trimmed = value.trim();
-  if (!trimmed.startsWith("/") || trimmed.includes("\n")) return null;
-  const match = trimmed.match(/^\/([A-Za-z][\w-]*)(?:\s+([\s\S]*))?$/);
-  if (!match) return null;
-  return { name: match[1].toLowerCase(), arg: match[2] ?? "" };
-}
-
-function matchingSlashCommands(query: string, agent: AgentKind): SlashCommand[] {
-  return availableSlashCommands(agent).filter((command) =>
-    [command.name, ...(command.aliases ?? [])].some((name) => name.startsWith(query))
+  return SLASH_COMMANDS.filter(
+    (command) => !command.scopes || command.scopes.includes(agent),
   );
 }
 
-function runSlashCommand(parsed: ParsedSlashCommand, props: ComposerProps): void {
-  const command = availableSlashCommands(props.agent).find((item) => item.name === parsed.name || item.aliases?.includes(parsed.name));
-  const otherAgentCommand = SLASH_COMMANDS.find((item) => item.name === parsed.name || item.aliases?.includes(parsed.name));
-  if (!command && otherAgentCommand?.scopes?.some((scope) => scope === "claude_code" || scope === "codex")) {
-    props.onNotice(`/${parsed.name} is available for ${otherAgentCommand.scopes.map((scope) => scope === "perpetual" ? "Perpetual" : labelAgent(scope as AgentKind)).join(", ")}, not ${labelAgent(props.agent)}.`);
-    return;
-  }
-  if (!command) {
-    props.onSend(
-      `The user entered the native-style slash command "/${parsed.name}". Interpret it inside this Perpetual session if possible, preserving Perpetual's approvals, auto-switching, limit recovery, and managed worktree flow.\n\n${parsed.arg}`.trim()
-    );
-    return;
-  }
-  command.run(parsed.arg, props);
+function commandScopeLabel(command: SlashCommand): string {
+  if (!command.scopes) return "";
+  return command.scopes.map(labelAgent).join(" / ");
 }
 
-function promptWithArg(instruction: string, arg: string): string {
-  const trimmed = arg.trim();
-  return trimmed ? `${instruction}\n\nUser request:\n${trimmed}` : instruction;
+function parseSlashDraft(
+  value: string,
+  selectionStart = value.length,
+): { query: string; start: number; end: number } | null {
+  const cursor = Math.max(0, Math.min(selectionStart, value.length));
+  const beforeCursor = value.slice(0, cursor);
+  const start = beforeCursor.search(/(^|[\s([{])\/[A-Za-z-_:]*$/);
+  if (start < 0) return null;
+  const prefix = beforeCursor[start];
+  const slashStart = prefix === "/" ? start : start + 1;
+  const afterCursor = value.slice(cursor);
+  const suffix = afterCursor.match(/^[A-Za-z-_:]*/)?.[0] ?? "";
+  const end = cursor + suffix.length;
+  const token = value.slice(slashStart + 1, end);
+  if (token.includes("\n")) return null;
+  return { query: token.toLowerCase(), start: slashStart, end };
 }
 
-function parsePermission(value: string): PermissionPolicy | null {
-  const normalized = value.trim().toLowerCase().replace(/_/g, "-");
-  if (["read", "readonly", "read-only", "plan"].includes(normalized)) return "read_only";
-  if (["write", "edit", "workspace", "workspace-write"].includes(normalized)) return "workspace_write";
-  if (["auto", "autonomous", "full", "full-access"].includes(normalized)) return "autonomous";
-  return null;
+function isNativeSlashCommandText(value: string): boolean {
+  const trimmedLeft = value.replace(/^\s+/, "");
+  return /^\/[A-Za-z]/.test(trimmedLeft);
 }
 
-const PERMISSIONS: { value: PermissionPolicy; label: string; icon: "eye" | "shield" | "bolt" }[] = [
+function matchingSlashCommands(
+  query: string,
+  agent: AgentKind,
+): SlashCommand[] {
+  return availableSlashCommands(agent).filter((command) =>
+    [command.name, ...(command.aliases ?? [])].some((name) =>
+      name.startsWith(query),
+    ),
+  );
+}
+
+function applySlashCompletion(
+  value: string,
+  slashState: { start: number; end: number },
+  command: SlashCommand,
+): string {
+  const replacement = `/${command.name}${command.takesInput ? " " : ""}`;
+  return `${value.slice(0, slashState.start)}${replacement}${value.slice(slashState.end)}`;
+}
+
+function slashCompletionCursor(
+  slashState: { start: number },
+  command: SlashCommand,
+): number {
+  return slashState.start + command.name.length + 1 + (command.takesInput ? 1 : 0);
+}
+
+const PERMISSIONS: {
+  value: PermissionPolicy;
+  label: string;
+  icon: "eye" | "shield" | "bolt";
+}[] = [
   { value: "read_only", label: "Read only", icon: "eye" },
   { value: "workspace_write", label: "Write", icon: "shield" },
   { value: "autonomous", label: "Autonomous", icon: "bolt" },
@@ -1978,7 +2535,10 @@ function ChangesView(props: {
   onOpenPath(path: string): void;
 }) {
   const [open, setOpen] = useState(false);
-  const diffFiles = props.diff?.repos.flatMap((repo) => repo.files.map((file) => ({ ...file, repo: repo.repo_name }))) ?? [];
+  const diffFiles =
+    props.diff?.repos.flatMap((repo) =>
+      repo.files.map((file) => ({ ...file, repo: repo.repo_name })),
+    ) ?? [];
   const hasWorktree = props.repos.some((repo) => !!repo.worktree_path);
   useEffect(() => {
     if (props.openSignal > 0) setOpen(true);
@@ -1996,7 +2556,11 @@ function ChangesView(props: {
       : "Changes";
 
   return (
-    <div className="sheet-backdrop changes-backdrop" role="presentation" onMouseDown={() => setOpen(false)}>
+    <div
+      className="sheet-backdrop changes-backdrop"
+      role="presentation"
+      onMouseDown={() => setOpen(false)}
+    >
       <section
         className="sheet changes-sheet"
         role="dialog"
@@ -2021,7 +2585,12 @@ function ChangesView(props: {
 
         <div className="sheet-body changes-body">
           <div className="changes-actions">
-            <button type="button" className="secondary-btn" disabled={loading} onClick={() => props.onLoadDiff(props.threadId)}>
+            <button
+              type="button"
+              className="secondary-btn"
+              disabled={loading}
+              onClick={() => props.onLoadDiff(props.threadId)}
+            >
               <Icon name="refresh" />
               <span>{loaded ? "Reload Diff" : "Load Diff"}</span>
             </button>
@@ -2041,7 +2610,11 @@ function ChangesView(props: {
               <span className="detail-name">{repo.repo_name}</span>
               <small>{repo.branch ?? repo.workspace_backend}</small>
               {repo.worktree_path && (
-                <button type="button" className="link-btn" onClick={() => props.onOpenPath(repo.worktree_path!)}>
+                <button
+                  type="button"
+                  className="link-btn"
+                  onClick={() => props.onOpenPath(repo.worktree_path!)}
+                >
                   Open Worktree
                 </button>
               )}
@@ -2049,8 +2622,12 @@ function ChangesView(props: {
           ))}
 
           {loading && <div className="menu-empty">Loading diff...</div>}
-          {props.diffState === "error" && <div className="menu-empty">Could not load the diff.</div>}
-          {loaded && diffFiles.length === 0 && <div className="menu-empty">No changes to apply.</div>}
+          {props.diffState === "error" && (
+            <div className="menu-empty">Could not load the diff.</div>
+          )}
+          {loaded && diffFiles.length === 0 && (
+            <div className="menu-empty">No changes to apply.</div>
+          )}
           {diffFiles.length > 0 && (
             <div className="diff-list">
               {diffFiles.map((file) => (
@@ -2064,12 +2641,24 @@ function ChangesView(props: {
           )}
 
           {props.applyResult && (
-            <div className={props.applyResult.applied ? "apply-result ok" : "apply-result blocked"}>
-              <strong>{props.applyResult.applied ? "Applied to visible repo" : "Apply blocked"}</strong>
-              {blockers.length > 0 && blockers.map((blocker) => <span key={blocker}>{blocker}</span>)}
+            <div
+              className={
+                props.applyResult.applied
+                  ? "apply-result ok"
+                  : "apply-result blocked"
+              }
+            >
+              <strong>
+                {props.applyResult.applied
+                  ? "Applied to visible repo"
+                  : "Apply blocked"}
+              </strong>
+              {blockers.length > 0 &&
+                blockers.map((blocker) => <span key={blocker}>{blocker}</span>)}
               {props.applyResult.repos.map((repo) => (
                 <span key={repo.repo_id}>
-                  {repo.repo_name}: {repo.applied ? "applied" : repo.blocker ?? "no changes"}
+                  {repo.repo_name}:{" "}
+                  {repo.applied ? "applied" : (repo.blocker ?? "no changes")}
                 </span>
               ))}
             </div>
@@ -2087,20 +2676,34 @@ function SettingsSheet(props: {
     limitPolicy: LimitPolicy,
     sandboxPolicy: SandboxPolicy,
     cloudPolicy: CloudPolicy,
-    localModelPolicy: LocalModelPolicy
+    localModelPolicy: LocalModelPolicy,
   ): void;
   onOpenSettings(): void;
 }) {
-  const [limit, setLimit] = useState<LimitPolicy>(() => props.snapshot.limitPolicy ?? defaultLimitPolicy());
-  const [sandbox, setSandbox] = useState<SandboxPolicy>(() => props.snapshot.sandboxPolicy ?? defaultSandboxPolicy());
-  const [cloud, setCloud] = useState<CloudPolicy>(() => props.snapshot.cloudPolicy ?? defaultCloudPolicy());
-  const [localPolicy, setLocalPolicy] = useState<LocalModelPolicy>(() => props.snapshot.localModelPolicy ?? defaultLocalModelPolicy());
-  const cloudClaudeFirst = (cloud.provider_priority?.[0] ?? "claude_code") !== "codex";
-  const cloudBlockers = (props.snapshot.cloudAvailability ?? []).filter((item) => !item.ready);
+  const [limit, setLimit] = useState<LimitPolicy>(
+    () => props.snapshot.limitPolicy ?? defaultLimitPolicy(),
+  );
+  const [sandbox, setSandbox] = useState<SandboxPolicy>(
+    () => props.snapshot.sandboxPolicy ?? defaultSandboxPolicy(),
+  );
+  const [cloud, setCloud] = useState<CloudPolicy>(
+    () => props.snapshot.cloudPolicy ?? defaultCloudPolicy(),
+  );
+  const [localPolicy, setLocalPolicy] = useState<LocalModelPolicy>(
+    () => props.snapshot.localModelPolicy ?? defaultLocalModelPolicy(),
+  );
+  const cloudClaudeFirst =
+    (cloud.provider_priority?.[0] ?? "claude_code") !== "codex";
+  const cloudBlockers = (props.snapshot.cloudAvailability ?? []).filter(
+    (item) => !item.ready,
+  );
 
   return (
     <div className="sheet-backdrop" onMouseDown={props.onClose}>
-      <section className="sheet" onMouseDown={(event) => event.stopPropagation()}>
+      <section
+        className="sheet"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
         <header>
           <strong>Settings</strong>
           <IconButton title="Close" onClick={props.onClose}>
@@ -2121,19 +2724,31 @@ function SettingsSheet(props: {
               {props.snapshot.localModels?.map((provider) => (
                 <div key={provider.provider} className="readiness-row">
                   <span>{provider.label}</span>
-                  <small>{provider.server_running ? `${provider.models.length} model${provider.models.length === 1 ? "" : "s"}` : "Offline"}</small>
+                  <small>
+                    {provider.server_running
+                      ? `${provider.models.length} model${provider.models.length === 1 ? "" : "s"}`
+                      : "Offline"}
+                  </small>
                 </div>
               ))}
               {props.snapshot.sandboxRuntime && (
                 <div className="readiness-row">
                   <span>Docker Sandbox</span>
-                  <small>{props.snapshot.sandboxRuntime.installed ? (props.snapshot.sandboxRuntime.authenticated ? "Ready" : "Sign in needed") : "Not installed"}</small>
+                  <small>
+                    {props.snapshot.sandboxRuntime.installed
+                      ? props.snapshot.sandboxRuntime.authenticated
+                        ? "Ready"
+                        : "Sign in needed"
+                      : "Not installed"}
+                  </small>
                 </div>
               )}
               {props.snapshot.cloudAvailability.map((item) => (
                 <div key={item.agent} className="readiness-row">
                   <span>{labelAgent(item.agent)} cloud</span>
-                  <small>{item.ready ? "Ready" : item.blockers[0] ?? "Not ready"}</small>
+                  <small>
+                    {item.ready ? "Ready" : (item.blockers[0] ?? "Not ready")}
+                  </small>
                 </div>
               ))}
             </div>
@@ -2145,15 +2760,24 @@ function SettingsSheet(props: {
               <input
                 type="checkbox"
                 checked={limit.auto_switch}
-                onChange={(event) => setLimit({ ...limit, auto_switch: event.target.checked })}
+                onChange={(event) =>
+                  setLimit({ ...limit, auto_switch: event.target.checked })
+                }
               />
-              <span>Switch to the other agent when the current one is limited</span>
+              <span>
+                Switch to the other agent when the current one is limited
+              </span>
             </label>
             <label className="toggle">
               <input
                 type="checkbox"
                 checked={limit.resume_with_earliest}
-                onChange={(event) => setLimit({ ...limit, resume_with_earliest: event.target.checked })}
+                onChange={(event) =>
+                  setLimit({
+                    ...limit,
+                    resume_with_earliest: event.target.checked,
+                  })
+                }
               />
               <span>Resume automatically when rate limits reset</span>
             </label>
@@ -2162,7 +2786,9 @@ function SettingsSheet(props: {
                 type="checkbox"
                 checked={limit.switch_back}
                 disabled={!limit.auto_switch}
-                onChange={(event) => setLimit({ ...limit, switch_back: event.target.checked })}
+                onChange={(event) =>
+                  setLimit({ ...limit, switch_back: event.target.checked })
+                }
               />
               <span>Return to the original agent after it recovers</span>
             </label>
@@ -2172,7 +2798,12 @@ function SettingsSheet(props: {
                 type="number"
                 min={0}
                 value={limit.unknown_reset_retry_secs}
-                onChange={(event) => setLimit({ ...limit, unknown_reset_retry_secs: Number(event.target.value) })}
+                onChange={(event) =>
+                  setLimit({
+                    ...limit,
+                    unknown_reset_retry_secs: Number(event.target.value),
+                  })
+                }
               />
             </label>
           </div>
@@ -2183,7 +2814,9 @@ function SettingsSheet(props: {
               <input
                 type="checkbox"
                 checked={cloud.enabled}
-                onChange={(event) => setCloud({ ...cloud, enabled: event.target.checked })}
+                onChange={(event) =>
+                  setCloud({ ...cloud, enabled: event.target.checked })
+                }
               />
               <span>Auto carryover tasks to the cloud</span>
             </label>
@@ -2193,7 +2826,12 @@ function SettingsSheet(props: {
                   <input
                     type="checkbox"
                     checked={cloud.continue_on_sleep}
-                    onChange={(event) => setCloud({ ...cloud, continue_on_sleep: event.target.checked })}
+                    onChange={(event) =>
+                      setCloud({
+                        ...cloud,
+                        continue_on_sleep: event.target.checked,
+                      })
+                    }
                   />
                   <span>Carry over when the machine sleeps</span>
                 </label>
@@ -2201,7 +2839,12 @@ function SettingsSheet(props: {
                   <input
                     type="checkbox"
                     checked={cloud.continue_on_shutdown}
-                    onChange={(event) => setCloud({ ...cloud, continue_on_shutdown: event.target.checked })}
+                    onChange={(event) =>
+                      setCloud({
+                        ...cloud,
+                        continue_on_shutdown: event.target.checked,
+                      })
+                    }
                   />
                   <span>Carry over on shutdown</span>
                 </label>
@@ -2209,7 +2852,12 @@ function SettingsSheet(props: {
                   <input
                     type="checkbox"
                     checked={cloud.require_approval}
-                    onChange={(event) => setCloud({ ...cloud, require_approval: event.target.checked })}
+                    onChange={(event) =>
+                      setCloud({
+                        ...cloud,
+                        require_approval: event.target.checked,
+                      })
+                    }
                   />
                   <span>Ask before handing work to the cloud</span>
                 </label>
@@ -2220,7 +2868,9 @@ function SettingsSheet(props: {
                       type="button"
                       className={!cloud.allow_cross_provider ? "selected" : ""}
                       title="Claude Code tasks continue on Claude Code on the web; Codex tasks on Codex Cloud."
-                      onClick={() => setCloud({ ...cloud, allow_cross_provider: false })}
+                      onClick={() =>
+                        setCloud({ ...cloud, allow_cross_provider: false })
+                      }
                     >
                       Same provider
                     </button>
@@ -2228,7 +2878,9 @@ function SettingsSheet(props: {
                       type="button"
                       className={cloud.allow_cross_provider ? "selected" : ""}
                       title="Hand the task to the other provider's cloud when the current one isn't ready."
-                      onClick={() => setCloud({ ...cloud, allow_cross_provider: true })}
+                      onClick={() =>
+                        setCloud({ ...cloud, allow_cross_provider: true })
+                      }
                     >
                       Allow switching
                     </button>
@@ -2241,14 +2893,24 @@ function SettingsSheet(props: {
                       <button
                         type="button"
                         className={cloudClaudeFirst ? "selected" : ""}
-                        onClick={() => setCloud({ ...cloud, provider_priority: ["claude_code", "codex"] })}
+                        onClick={() =>
+                          setCloud({
+                            ...cloud,
+                            provider_priority: ["claude_code", "codex"],
+                          })
+                        }
                       >
                         Claude Cloud
                       </button>
                       <button
                         type="button"
                         className={!cloudClaudeFirst ? "selected" : ""}
-                        onClick={() => setCloud({ ...cloud, provider_priority: ["codex", "claude_code"] })}
+                        onClick={() =>
+                          setCloud({
+                            ...cloud,
+                            provider_priority: ["codex", "claude_code"],
+                          })
+                        }
                       >
                         Codex Cloud
                       </button>
@@ -2264,7 +2926,10 @@ function SettingsSheet(props: {
                       max={8}
                       value={cloud.max_concurrent_cloud_runs}
                       onChange={(event) =>
-                        setCloud({ ...cloud, max_concurrent_cloud_runs: Number(event.target.value) })
+                        setCloud({
+                          ...cloud,
+                          max_concurrent_cloud_runs: Number(event.target.value),
+                        })
                       }
                     />
                   </label>
@@ -2274,14 +2939,20 @@ function SettingsSheet(props: {
                       value={cloud.codex_env_id ?? ""}
                       placeholder="From chatgpt.com/codex"
                       onChange={(event) =>
-                        setCloud({ ...cloud, codex_env_id: event.target.value.trim() || null })
+                        setCloud({
+                          ...cloud,
+                          codex_env_id: event.target.value.trim() || null,
+                        })
                       }
                     />
                   </label>
                 </div>
                 {cloudBlockers.map((item) => (
                   <div key={item.agent} className="menu-empty">
-                    {labelAgent(item.agent)} cloud: {item.blockers.length ? item.blockers.join(" ") : "not ready"}
+                    {labelAgent(item.agent)} cloud:{" "}
+                    {item.blockers.length
+                      ? item.blockers.join(" ")
+                      : "not ready"}
                   </div>
                 ))}
               </>
@@ -2294,7 +2965,12 @@ function SettingsSheet(props: {
               <input
                 type="checkbox"
                 checked={localPolicy.auto_resume_cloud}
-                onChange={(event) => setLocalPolicy({ ...localPolicy, auto_resume_cloud: event.target.checked })}
+                onChange={(event) =>
+                  setLocalPolicy({
+                    ...localPolicy,
+                    auto_resume_cloud: event.target.checked,
+                  })
+                }
               />
               <span>Resume cloud agents when the network comes back</span>
             </label>
@@ -2302,7 +2978,12 @@ function SettingsSheet(props: {
               <input
                 type="checkbox"
                 checked={localPolicy.use_local_fallback}
-                onChange={(event) => setLocalPolicy({ ...localPolicy, use_local_fallback: event.target.checked })}
+                onChange={(event) =>
+                  setLocalPolicy({
+                    ...localPolicy,
+                    use_local_fallback: event.target.checked,
+                  })
+                }
               />
               <span>Use local models while cloud agents are unavailable</span>
             </label>
@@ -2311,7 +2992,12 @@ function SettingsSheet(props: {
                 type="checkbox"
                 checked={localPolicy.switch_back_to_cloud}
                 disabled={!localPolicy.use_local_fallback}
-                onChange={(event) => setLocalPolicy({ ...localPolicy, switch_back_to_cloud: event.target.checked })}
+                onChange={(event) =>
+                  setLocalPolicy({
+                    ...localPolicy,
+                    switch_back_to_cloud: event.target.checked,
+                  })
+                }
               />
               <span>Switch back from local models when cloud is stable</span>
             </label>
@@ -2324,21 +3010,36 @@ function SettingsSheet(props: {
                       type="number"
                       min={5}
                       value={localPolicy.probe_interval_secs}
-                      onChange={(event) => setLocalPolicy({ ...localPolicy, probe_interval_secs: Number(event.target.value) })}
+                      onChange={(event) =>
+                        setLocalPolicy({
+                          ...localPolicy,
+                          probe_interval_secs: Number(event.target.value),
+                        })
+                      }
                     />
                   </label>
                   <label className="field">
                     <span>Ollama URL</span>
                     <input
                       value={localPolicy.ollama_base_url}
-                      onChange={(event) => setLocalPolicy({ ...localPolicy, ollama_base_url: event.target.value })}
+                      onChange={(event) =>
+                        setLocalPolicy({
+                          ...localPolicy,
+                          ollama_base_url: event.target.value,
+                        })
+                      }
                     />
                   </label>
                   <label className="field">
                     <span>LM Studio URL</span>
                     <input
                       value={localPolicy.lm_studio_base_url}
-                      onChange={(event) => setLocalPolicy({ ...localPolicy, lm_studio_base_url: event.target.value })}
+                      onChange={(event) =>
+                        setLocalPolicy({
+                          ...localPolicy,
+                          lm_studio_base_url: event.target.value,
+                        })
+                      }
                     />
                   </label>
                 </div>
@@ -2348,7 +3049,9 @@ function SettingsSheet(props: {
                     {props.snapshot.localModels?.flatMap((provider) =>
                       provider.models.map((modelInfo) => {
                         const active = localPolicy.targets.some(
-                          (target) => target.provider === provider.provider && target.model === modelInfo.id
+                          (target) =>
+                            target.provider === provider.provider &&
+                            target.model === modelInfo.id,
                         );
                         return (
                           <button
@@ -2357,15 +3060,25 @@ function SettingsSheet(props: {
                             className={active ? "selected" : ""}
                             onClick={() => {
                               const exists = localPolicy.targets.some(
-                                (target) => target.provider === provider.provider && target.model === modelInfo.id
+                                (target) =>
+                                  target.provider === provider.provider &&
+                                  target.model === modelInfo.id,
                               );
                               const targets = exists
                                 ? localPolicy.targets.filter(
-                                    (target) => !(target.provider === provider.provider && target.model === modelInfo.id)
+                                    (target) =>
+                                      !(
+                                        target.provider === provider.provider &&
+                                        target.model === modelInfo.id
+                                      ),
                                   )
                                 : [
                                     ...localPolicy.targets,
-                                    { provider: provider.provider, model: modelInfo.id, base_url: provider.base_url },
+                                    {
+                                      provider: provider.provider,
+                                      model: modelInfo.id,
+                                      base_url: provider.base_url,
+                                    },
                                   ];
                               setLocalPolicy({ ...localPolicy, targets });
                             }}
@@ -2374,9 +3087,11 @@ function SettingsSheet(props: {
                             <small>{provider.label}</small>
                           </button>
                         );
-                      })
+                      }),
                     )}
-                    {!(props.snapshot.localModels ?? []).some((provider) => provider.models.length > 0) && (
+                    {!(props.snapshot.localModels ?? []).some(
+                      (provider) => provider.models.length > 0,
+                    ) && (
                       <div className="menu-empty">No local models detected</div>
                     )}
                   </div>
@@ -2391,7 +3106,12 @@ function SettingsSheet(props: {
               <span>Default runtime</span>
               <select
                 value={sandbox.default_backend}
-                onChange={(event) => setSandbox({ ...sandbox, default_backend: event.target.value as ExecutionBackend })}
+                onChange={(event) =>
+                  setSandbox({
+                    ...sandbox,
+                    default_backend: event.target.value as ExecutionBackend,
+                  })
+                }
               >
                 <option value="host">Host</option>
                 <option value="docker_sandbox">Docker Sandbox</option>
@@ -2405,7 +3125,12 @@ function SettingsSheet(props: {
                   min={1}
                   max={8}
                   value={sandbox.max_concurrent_sandboxes}
-                  onChange={(event) => setSandbox({ ...sandbox, max_concurrent_sandboxes: Number(event.target.value) })}
+                  onChange={(event) =>
+                    setSandbox({
+                      ...sandbox,
+                      max_concurrent_sandboxes: Number(event.target.value),
+                    })
+                  }
                 />
               </label>
               <label className="field">
@@ -2415,18 +3140,30 @@ function SettingsSheet(props: {
                   min={1}
                   max={16}
                   value={sandbox.cpus}
-                  onChange={(event) => setSandbox({ ...sandbox, cpus: Number(event.target.value) })}
+                  onChange={(event) =>
+                    setSandbox({ ...sandbox, cpus: Number(event.target.value) })
+                  }
                 />
               </label>
               <label className="field">
                 <span>Memory</span>
-                <input value={sandbox.memory} onChange={(event) => setSandbox({ ...sandbox, memory: event.target.value })} />
+                <input
+                  value={sandbox.memory}
+                  onChange={(event) =>
+                    setSandbox({ ...sandbox, memory: event.target.value })
+                  }
+                />
               </label>
               <label className="field">
                 <span>Network</span>
                 <select
                   value={sandbox.network_preset}
-                  onChange={(event) => setSandbox({ ...sandbox, network_preset: event.target.value })}
+                  onChange={(event) =>
+                    setSandbox({
+                      ...sandbox,
+                      network_preset: event.target.value,
+                    })
+                  }
                 >
                   <option value="balanced">Balanced</option>
                   <option value="open">Open</option>
@@ -2441,7 +3178,11 @@ function SettingsSheet(props: {
           <button type="button" onClick={props.onOpenSettings}>
             VS Code settings
           </button>
-          <button type="button" className="primary" onClick={() => props.onApply(limit, sandbox, cloud, localPolicy)}>
+          <button
+            type="button"
+            className="primary"
+            onClick={() => props.onApply(limit, sandbox, cloud, localPolicy)}
+          >
             Apply
           </button>
         </footer>
@@ -2457,10 +3198,15 @@ function GithubSheet(props: {
   onConnect(repo: GithubRepository): void;
 }) {
   const [query, setQuery] = useState("");
-  const filtered = props.repos.filter((repo) => repo.full_name.toLowerCase().includes(query.toLowerCase()));
+  const filtered = props.repos.filter((repo) =>
+    repo.full_name.toLowerCase().includes(query.toLowerCase()),
+  );
   return (
     <div className="sheet-backdrop" onMouseDown={props.onClose}>
-      <section className="sheet repo-sheet" onMouseDown={(event) => event.stopPropagation()}>
+      <section
+        className="sheet repo-sheet"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
         <header>
           <strong>Add from GitHub</strong>
           <IconButton title="Close" onClick={props.onClose}>
@@ -2469,18 +3215,35 @@ function GithubSheet(props: {
         </header>
         <div className="sheet-search">
           <Icon name="search" />
-          <input autoFocus placeholder="Filter repositories" value={query} onChange={(event) => setQuery(event.target.value)} />
+          <input
+            autoFocus
+            placeholder="Filter repositories"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
         </div>
         <div className="github-list">
-          {props.loading && <div className="menu-empty">Loading repositories…</div>}
-          {!props.loading && filtered.length === 0 && <div className="menu-empty">No matching repositories</div>}
+          {props.loading && (
+            <div className="menu-empty">Loading repositories…</div>
+          )}
+          {!props.loading && filtered.length === 0 && (
+            <div className="menu-empty">No matching repositories</div>
+          )}
           {!props.loading &&
             filtered.map((repo) => (
-              <button key={repo.id} type="button" className="github-row" onClick={() => props.onConnect(repo)}>
+              <button
+                key={repo.id}
+                type="button"
+                className="github-row"
+                onClick={() => props.onConnect(repo)}
+              >
                 <Icon name={repo.private ? "lock" : "github"} />
                 <span className="history-text">
                   <span>{repo.full_name}</span>
-                  <small>{repo.private ? "Private" : "Public"} · {repo.default_branch}</small>
+                  <small>
+                    {repo.private ? "Private" : "Public"} ·{" "}
+                    {repo.default_branch}
+                  </small>
                 </span>
               </button>
             ))}
@@ -2490,7 +3253,13 @@ function GithubSheet(props: {
   );
 }
 
-function EmptyState({ trusted, compact = false }: { trusted: boolean; compact?: boolean }) {
+function EmptyState({
+  trusted,
+  compact = false,
+}: {
+  trusted: boolean;
+  compact?: boolean;
+}) {
   return (
     <div className={compact ? "empty compact" : "empty"}>
       <span className="empty-mark">
@@ -2498,7 +3267,9 @@ function EmptyState({ trusted, compact = false }: { trusted: boolean; compact?: 
       </span>
       <strong>{trusted ? "Start a session" : "Restricted Mode"}</strong>
       <span>
-        {trusted ? "Pick an agent and ask anything from the composer below." : "Trust this workspace to run agents."}
+        {trusted
+          ? "Pick an agent and ask anything from the composer below."
+          : "Trust this workspace to run agents."}
       </span>
     </div>
   );
@@ -2510,7 +3281,12 @@ function autoGrow(el: HTMLTextAreaElement) {
 }
 
 function runDefaults(snapshot: WorkbenchSnapshot, agent: AgentKind) {
-  return snapshot.runDefaults.find((item) => item.kind === agent) ?? { model: null, reasoning: null };
+  return (
+    snapshot.runDefaults.find((item) => item.kind === agent) ?? {
+      model: null,
+      reasoning: null,
+    }
+  );
 }
 
 type PickerModelOption = {
@@ -2523,12 +3299,14 @@ function modelOptions(
   agent: AgentKind,
   snapshot: WorkbenchSnapshot | null,
   localProvider: LocalModelProvider | null,
-  current: string
+  current: string,
 ): PickerModelOption[] {
   const out: PickerModelOption[] = [];
   const catalog = snapshot?.modelCatalog?.find((item) => item.agent === agent);
   if (agent === "codex" && localProvider) {
-    const status = snapshot?.localModels?.find((item) => item.provider === localProvider);
+    const status = snapshot?.localModels?.find(
+      (item) => item.provider === localProvider,
+    );
     for (const model of status?.models ?? []) {
       pushPickerOption(out, {
         value: model.id,
@@ -2542,7 +3320,9 @@ function modelOptions(
     }
   }
 
-  const defaults = snapshot ? runDefaults(snapshot, agent) : { model: null, reasoning: null };
+  const defaults = snapshot
+    ? runDefaults(snapshot, agent)
+    : { model: null, reasoning: null };
   if (defaults.model?.trim()) {
     pushPickerOption(out, {
       value: defaults.model.trim(),
@@ -2554,7 +3334,9 @@ function modelOptions(
     pushPickerOption(out, {
       value: current.trim(),
       label: prettyModel(current),
-      source: out.some((option) => modelIdsEqual(option.value, current)) ? "Detected" : "Custom",
+      source: out.some((option) => modelIdsEqual(option.value, current))
+        ? "Detected"
+        : "Custom",
     });
   }
   return out;
@@ -2564,11 +3346,16 @@ function catalogOption(option: AgentModelOption): PickerModelOption {
   return {
     value: option.id,
     label: option.label || prettyModel(option.id),
-    source: option.default ? `${sourceLabel(option.source)} default` : sourceLabel(option.source),
+    source: option.default
+      ? `${sourceLabel(option.source)} default`
+      : sourceLabel(option.source),
   };
 }
 
-function pushPickerOption(out: PickerModelOption[], option: PickerModelOption): void {
+function pushPickerOption(
+  out: PickerModelOption[],
+  option: PickerModelOption,
+): void {
   if (!option.value.trim()) return;
   const existing = out.find((item) => modelIdsEqual(item.value, option.value));
   if (existing) {
@@ -2578,22 +3365,33 @@ function pushPickerOption(out: PickerModelOption[], option: PickerModelOption): 
   out.push(option);
 }
 
-function reasoningOptions(agent: AgentKind, snapshot: WorkbenchSnapshot | null): { value: string; label: string }[] {
+function reasoningOptions(
+  agent: AgentKind,
+  snapshot: WorkbenchSnapshot | null,
+): { value: string; label: string }[] {
   const values = [""];
   const catalog = snapshot?.modelCatalog?.find((item) => item.agent === agent);
   for (const value of catalog?.reasoning ?? []) pushReasoning(values, value);
-  const defaults = snapshot ? runDefaults(snapshot, agent) : { model: null, reasoning: null };
+  const defaults = snapshot
+    ? runDefaults(snapshot, agent)
+    : { model: null, reasoning: null };
   if (defaults.reasoning) pushReasoning(values, defaults.reasoning);
-  for (const fallback of agent === "claude_code" ? ["low", "medium", "high", "xhigh", "max"] : ["low", "medium", "high"]) {
+  for (const fallback of agent === "claude_code"
+    ? ["low", "medium", "high", "xhigh", "max"]
+    : ["low", "medium", "high"]) {
     pushReasoning(values, fallback);
   }
-  return values.map((value) => ({ value, label: value ? humanize(value) : "Default" }));
+  return values.map((value) => ({
+    value,
+    label: value ? humanize(value) : "Default",
+  }));
 }
 
 function pushReasoning(values: string[], value: string): void {
   const trimmed = value.trim();
   if (!trimmed) return;
-  if (!values.some((item) => item.toLowerCase() === trimmed.toLowerCase())) values.push(trimmed);
+  if (!values.some((item) => item.toLowerCase() === trimmed.toLowerCase()))
+    values.push(trimmed);
 }
 
 function sourceLabel(source: string): string {
@@ -2617,13 +3415,16 @@ function modelIdsEqual(a: string, b: string): boolean {
 // suffix Claude Code appends — so display and dedupe work on the base id.
 // The raw id (suffix included) is still what gets passed to the CLI.
 function baseModelId(value: string): string {
-  return value.trim().replace(/\[[^\]]*\]$/, "").trim();
+  return value
+    .trim()
+    .replace(/\[[^\]]*\]$/, "")
+    .trim();
 }
 
 function sanitizeModelForAgent(
   agent: AgentKind,
   model: string,
-  localProvider: LocalModelProvider | null
+  localProvider: LocalModelProvider | null,
 ): string | null {
   const trimmed = model.trim();
   if (!trimmed) return null;
@@ -2640,7 +3441,10 @@ function modelCompatibleWithAgent(agent: AgentKind, model: string): boolean {
 }
 
 function isClaudeModel(model: string): boolean {
-  return ["opus", "sonnet", "haiku", "fable"].includes(model) || model.startsWith("claude-");
+  return (
+    ["opus", "sonnet", "haiku", "fable"].includes(model) ||
+    model.startsWith("claude-")
+  );
 }
 
 function isCodexModel(model: string): boolean {
@@ -2689,28 +3493,47 @@ function prettyModel(value: string): string {
     if (version.length) words.push(version.join("."));
     return words.join(" ");
   }
-  return v.replace(/\bgpt\b/gi, "GPT").replace(/(^|[\s\-_])([a-z])/g, (_match, sep, ch) => sep + ch.toUpperCase());
+  return v
+    .replace(/\bgpt\b/gi, "GPT")
+    .replace(
+      /(^|[\s\-_])([a-z])/g,
+      (_match, sep, ch) => sep + ch.toUpperCase(),
+    );
 }
 
-function formatModelSwitch(from: string | null | undefined, to: string | null | undefined): string {
+function formatModelSwitch(
+  from: string | null | undefined,
+  to: string | null | undefined,
+): string {
   const fromLabel = from ? prettyModel(from) : "default model";
   const toLabel = to ? prettyModel(to) : "default model";
   return `${fromLabel} -> ${toLabel}`;
 }
 
 function labelLocalProvider(provider: LocalModelProvider | ""): string {
-  return provider === "lm_studio" ? "LM Studio" : provider === "ollama" ? "Ollama" : "Off";
+  return provider === "lm_studio"
+    ? "LM Studio"
+    : provider === "ollama"
+      ? "Ollama"
+      : "Off";
 }
 
 function defaultLocalBaseUrl(provider: LocalModelProvider): string {
-  return provider === "lm_studio" ? "http://127.0.0.1:1234" : "http://127.0.0.1:11434";
+  return provider === "lm_studio"
+    ? "http://127.0.0.1:1234"
+    : "http://127.0.0.1:11434";
 }
 
-function agentReadinessLabel(agent: AgentStatus, policy: LimitPolicy | null): string {
+function agentReadinessLabel(
+  agent: AgentStatus,
+  policy: LimitPolicy | null,
+): string {
   if (!agent.installed) return "Not installed";
   if (!agent.authenticated) return "Sign in needed";
   if (agent.availability === "limited") {
-    return agent.reset_at ? `Limited until ${formatResetTime(agent.reset_at)}` : `Limited - ${retryLabel(policy)}`;
+    return agent.reset_at
+      ? `Limited until ${formatResetTime(agent.reset_at)}`
+      : `Limited - ${retryLabel(policy)}`;
   }
   return humanize(agent.availability);
 }
@@ -2724,7 +3547,10 @@ function retryLabel(policy: LimitPolicy | null): string {
 function formatResetTime(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.valueOf())) return "reset time unavailable";
-  const clock = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const clock = date.toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
   return `${clock} (${relativeReset(date)})`;
 }
 
@@ -2742,7 +3568,10 @@ function formatDuration(ms: number): string {
   return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
 }
 
-function sanitizeBackend(agent: AgentKind, backend: ExecutionBackend): ExecutionBackend {
+function sanitizeBackend(
+  agent: AgentKind,
+  backend: ExecutionBackend,
+): ExecutionBackend {
   return backend === "docker_sandbox" && agent !== "codex" ? "host" : backend;
 }
 
@@ -2758,13 +3587,20 @@ function labelAgent(agent: AgentKind | null | undefined): string {
 }
 
 function isActivityEvent(event: AgentThreadEvent): boolean {
-  return event.role === "tool" || event.role === "app" || event.role === "system";
+  return (
+    event.role === "tool" || event.role === "app" || event.role === "system"
+  );
 }
 
 function activityIcon(event: AgentThreadEvent) {
   if (event.kind === "file_changed") return "repo" as const;
   if (event.kind === "token_usage") return "clock" as const;
-  if (event.kind === "usage_limit" || event.kind === "network_unavailable" || event.kind === "error") return "alert" as const;
+  if (
+    event.kind === "usage_limit" ||
+    event.kind === "network_unavailable" ||
+    event.kind === "error"
+  )
+    return "alert" as const;
   if (event.role === "tool") return "terminal" as const;
   return "agent" as const;
 }
@@ -2789,10 +3625,13 @@ function activitySummary(event: AgentThreadEvent): string {
     return event.text ?? "Token usage";
   }
   if (event.kind === "session_started") return "Session started";
-  if (event.kind === "session_ended") return `Session ${String(event.text ?? "ended").toLowerCase()}`;
+  if (event.kind === "session_ended")
+    return `Session ${String(event.text ?? "ended").toLowerCase()}`;
   if (event.kind === "usage_limit") return event.text ?? "Usage limit reached";
-  if (event.kind === "network_unavailable") return event.text ?? "Network unavailable";
-  if (event.kind === "awaiting_approval") return event.text ?? "Awaiting approval";
+  if (event.kind === "network_unavailable")
+    return event.text ?? "Network unavailable";
+  if (event.kind === "awaiting_approval")
+    return event.text ?? "Awaiting approval";
   if (event.kind === "error") return event.text ?? "Error";
   return event.text ?? humanize(event.kind);
 }
@@ -2811,13 +3650,18 @@ function activityDetail(event: AgentThreadEvent): string | null {
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+  return value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : null;
 }
 
 function toolPath(value: unknown): string | null {
   const input = asRecord(value);
-  const candidate = input?.file_path ?? input?.path ?? input?.filepath ?? input?.filename;
-  return typeof candidate === "string" && candidate.trim() ? candidate.trim() : null;
+  const candidate =
+    input?.file_path ?? input?.path ?? input?.filepath ?? input?.filename;
+  return typeof candidate === "string" && candidate.trim()
+    ? candidate.trim()
+    : null;
 }
 
 function toolCommand(value: unknown): string | null {
@@ -2829,7 +3673,9 @@ function toolCommand(value: unknown): string | null {
 }
 
 function truncateDetail(value: string, max: number): string {
-  return value.length <= max ? value : `${value.slice(0, max)}\n\n[details truncated]`;
+  return value.length <= max
+    ? value
+    : `${value.slice(0, max)}\n\n[details truncated]`;
 }
 
 function humanize(value: string): string {

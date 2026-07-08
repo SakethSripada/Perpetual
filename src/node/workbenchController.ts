@@ -52,7 +52,14 @@ type SubmitMessage = {
 };
 
 type WebviewMessage =
-  | { type: "ready" | "refresh" | "newSession" | "connectLocalRepo" | "connectWorkspaceRepos" }
+  | {
+      type:
+        | "ready"
+        | "refresh"
+        | "newSession"
+        | "connectLocalRepo"
+        | "connectWorkspaceRepos";
+    }
   | { type: "selectThread"; threadId: string | null }
   | SubmitMessage
   | { type: "stopThread"; threadId: string }
@@ -113,7 +120,7 @@ export class WorkbenchController implements vscode.Disposable {
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly daemon: DaemonManager,
-    private readonly output: vscode.OutputChannel
+    private readonly output: vscode.OutputChannel,
   ) {
     context.subscriptions.push(
       daemon.onEvent((event) => this.onDaemonEvent(event)),
@@ -124,7 +131,7 @@ export class WorkbenchController implements vscode.Disposable {
           this.detectionCache = null;
           void this.refresh();
         }
-      })
+      }),
     );
   }
 
@@ -134,7 +141,10 @@ export class WorkbenchController implements vscode.Disposable {
     this.snapshots.dispose();
   }
 
-  async handleMessage(message: WebviewMessage, reply?: WebviewReply): Promise<void> {
+  async handleMessage(
+    message: WebviewMessage,
+    reply?: WebviewReply,
+  ): Promise<void> {
     try {
       switch (message.type) {
         case "refresh":
@@ -159,23 +169,32 @@ export class WorkbenchController implements vscode.Disposable {
           await this.refresh();
           return;
         case "stopThread":
-          await this.withClient((client) => client.stopAgentThread(message.threadId));
+          await this.withClient((client) =>
+            client.stopAgentThread(message.threadId),
+          );
           this.notice(reply, "Stopped the active run.");
           await this.refresh();
           return;
         case "deleteThread": {
-          await this.withClient((client) => client.deleteAgentThread(message.threadId, !!message.force));
+          await this.withClient((client) =>
+            client.deleteAgentThread(message.threadId, !!message.force),
+          );
           // Only drop the selection when the open thread is the one being deleted,
           // so deleting an older session from the menu doesn't yank you out of the
           // session you're currently viewing.
-          const current = this.context.workspaceState.get<string | null>(SELECTED_THREAD_KEY, null);
+          const current = this.context.workspaceState.get<string | null>(
+            SELECTED_THREAD_KEY,
+            null,
+          );
           if (current === message.threadId) await this.selectThread(null);
           this.notice(reply, "Deleted the session.");
           await this.refresh();
           return;
         }
         case "assignRepos":
-          await this.withClient((client) => client.assignThreadRepos(message.threadId, message.repoIds));
+          await this.withClient((client) =>
+            client.assignThreadRepos(message.threadId, message.repoIds),
+          );
           this.diffCache.delete(message.threadId);
           await this.refresh();
           return;
@@ -183,13 +202,15 @@ export class WorkbenchController implements vscode.Disposable {
           await this.loadDiff(message.threadId);
           return;
         case "applyThreadChanges": {
-          const result = await this.withClient((client) => client.applyThreadChanges(message.threadId));
+          const result = await this.withClient((client) =>
+            client.applyThreadChanges(message.threadId),
+          );
           this.applyResults.set(message.threadId, result);
           this.notice(
             reply,
             result.applied
               ? "Applied managed changes to the visible repository."
-              : result.blockers[0] ?? "No managed changes to apply."
+              : (result.blockers[0] ?? "No managed changes to apply."),
           );
           await this.refresh();
           return;
@@ -209,21 +230,29 @@ export class WorkbenchController implements vscode.Disposable {
           await this.refresh();
           return;
         case "setLimitPolicy":
-          await this.withClient((client) => client.setLimitPolicy(normalizeLimitPolicy(message.policy)));
-          await this.mirrorLimitPolicyToConfig(normalizeLimitPolicy(message.policy));
+          await this.withClient((client) =>
+            client.setLimitPolicy(normalizeLimitPolicy(message.policy)),
+          );
+          await this.mirrorLimitPolicyToConfig(
+            normalizeLimitPolicy(message.policy),
+          );
           this.lastSyncedSettings = "";
           this.detectionCache = null;
           await this.refresh();
           return;
         case "setSandboxPolicy":
-          await this.withClient((client) => client.setSandboxPolicy(message.policy));
+          await this.withClient((client) =>
+            client.setSandboxPolicy(message.policy),
+          );
           await this.mirrorSandboxPolicyToConfig(message.policy);
           this.lastSyncedSettings = "";
           this.detectionCache = null;
           await this.refresh();
           return;
         case "setCloudPolicy":
-          await this.withClient((client) => client.setCloudPolicy(message.policy));
+          await this.withClient((client) =>
+            client.setCloudPolicy(message.policy),
+          );
           // Mirror into VS Code settings so the next settings sync doesn't undo
           // what the user just applied from the in-webview sheet.
           await this.mirrorCloudPolicyToConfig(message.policy);
@@ -232,8 +261,14 @@ export class WorkbenchController implements vscode.Disposable {
           await this.refresh();
           return;
         case "setLocalModelPolicy":
-          await this.withClient((client) => client.setLocalModelPolicy(normalizeLocalModelPolicy(message.policy)));
-          await this.mirrorLocalModelPolicyToConfig(normalizeLocalModelPolicy(message.policy));
+          await this.withClient((client) =>
+            client.setLocalModelPolicy(
+              normalizeLocalModelPolicy(message.policy),
+            ),
+          );
+          await this.mirrorLocalModelPolicyToConfig(
+            normalizeLocalModelPolicy(message.policy),
+          );
           this.lastSyncedSettings = "";
           this.detectionCache = null;
           await this.refresh();
@@ -245,25 +280,36 @@ export class WorkbenchController implements vscode.Disposable {
           await vscode.env.openExternal(vscode.Uri.file(message.path));
           return;
         case "openSettings":
-          await vscode.commands.executeCommand("workbench.action.openSettings", "@ext:agentmanager.agentmanager-vscode");
+          await vscode.commands.executeCommand(
+            "workbench.action.openSettings",
+            "@ext:agentmanager.agentmanager-vscode",
+          );
           return;
         case "openPanel":
           await vscode.commands.executeCommand("agentmanager.openWorkbench");
           return;
         case "deleteQueuedTurn":
-          await this.withClient((client) => client.deleteQueuedTurn(message.id));
+          await this.withClient((client) =>
+            client.deleteQueuedTurn(message.id),
+          );
           await this.refresh();
           return;
         case "updateQueuedTurn":
-          await this.withClient((client) => client.updateQueuedTurn(message.id, message.message));
+          await this.withClient((client) =>
+            client.updateQueuedTurn(message.id, message.message),
+          );
           await this.refresh();
           return;
         case "reorderQueuedTurns":
-          await this.withClient((client) => client.reorderQueuedTurns(message.threadId, message.orderedIds));
+          await this.withClient((client) =>
+            client.reorderQueuedTurns(message.threadId, message.orderedIds),
+          );
           await this.refresh();
           return;
         case "resolveApproval":
-          await this.withClient((client) => client.resolveApproval(message.id, message.decision));
+          await this.withClient((client) =>
+            client.resolveApproval(message.id, message.decision),
+          );
           await this.refresh();
           return;
       }
@@ -297,7 +343,10 @@ export class WorkbenchController implements vscode.Disposable {
     const root = await gitRoot(folder);
     const client = await this.daemon.getClient();
     const project = await client.ensureWorkbenchProject();
-    const repo = await client.connectLocalRepo({ project_id: project.id, path: root });
+    const repo = await client.connectLocalRepo({
+      project_id: project.id,
+      path: root,
+    });
     reply?.({ type: "repoConnected", repo });
     await this.refresh();
   }
@@ -305,7 +354,8 @@ export class WorkbenchController implements vscode.Disposable {
   async connectGithubRepoInteractive(): Promise<void> {
     this.assertTrusted();
     const { repos } = await this.githubRepos();
-    const items: Array<vscode.QuickPickItem & { repo: GithubRepository }> = repos.map((repo: GithubRepository) => ({
+    const items: Array<vscode.QuickPickItem & { repo: GithubRepository }> =
+      repos.map((repo: GithubRepository) => ({
         label: repo.full_name,
         description: repo.private ? "Private" : "Public",
         detail: repo.html_url,
@@ -327,7 +377,11 @@ export class WorkbenchController implements vscode.Disposable {
   private async snapshot(error: string | null): Promise<WorkbenchSnapshot> {
     const defaults = getDefaults();
     if (!vscode.workspace.isTrusted) {
-      return emptySnapshot(false, defaults, "Trust this workspace to connect repositories and run agent CLIs.");
+      return emptySnapshot(
+        false,
+        defaults,
+        "Trust this workspace to connect repositories and run agent CLIs.",
+      );
     }
 
     try {
@@ -361,15 +415,23 @@ export class WorkbenchController implements vscode.Disposable {
         localModels,
         localModelPolicy,
         state: detectionState,
-      } =
-        detection;
+      } = detection;
 
       const selectedThreadId = pickSelectedThread(
-        this.context.workspaceState.get<string | null>(SELECTED_THREAD_KEY, null),
-        threads
+        this.context.workspaceState.get<string | null>(
+          SELECTED_THREAD_KEY,
+          null,
+        ),
+        threads,
       );
-      if (selectedThreadId !== this.context.workspaceState.get(SELECTED_THREAD_KEY)) {
-        await this.context.workspaceState.update(SELECTED_THREAD_KEY, selectedThreadId);
+      if (
+        selectedThreadId !==
+        this.context.workspaceState.get(SELECTED_THREAD_KEY)
+      ) {
+        await this.context.workspaceState.update(
+          SELECTED_THREAD_KEY,
+          selectedThreadId,
+        );
       }
 
       const details = selectedThreadId
@@ -378,7 +440,7 @@ export class WorkbenchController implements vscode.Disposable {
             selectedThreadId,
             this.output,
             this.diffCache.get(selectedThreadId) ?? null,
-            this.applyResults.get(selectedThreadId) ?? null
+            this.applyResults.get(selectedThreadId) ?? null,
           )
         : null;
 
@@ -425,25 +487,38 @@ export class WorkbenchController implements vscode.Disposable {
     const defaults = getDefaults();
     const agent = message.agent ?? defaults.agent;
     const permission = message.permission ?? defaults.permission;
-    const executionBackend = sanitizeBackend(agent, message.executionBackend ?? defaults.execution_backend);
-    const localProvider = agent === "codex"
-      ? sanitizeLocalProvider(message.localProvider ?? defaults.local_provider)
-      : null;
+    const executionBackend = sanitizeBackend(
+      agent,
+      message.executionBackend ?? defaults.execution_backend,
+    );
+    const localProvider =
+      agent === "codex"
+        ? sanitizeLocalProvider(
+            message.localProvider ?? defaults.local_provider,
+          )
+        : null;
     const localBaseUrl = localProvider
-      ? blankToNull(message.localBaseUrl ?? defaults.local_base_url) ?? defaultLocalBaseUrl(localProvider)
+      ? (blankToNull(message.localBaseUrl ?? defaults.local_base_url) ??
+        defaultLocalBaseUrl(localProvider))
       : null;
     const rawModel = blankToNull(message.model ?? defaults.model);
     const model = sanitizeModelForAgent(agent, rawModel, localProvider);
     const reasoning = blankToNull(message.reasoning ?? defaults.reasoning);
     if (localProvider && !model) {
-      throw new Error("Choose a local model before running with Ollama or LM Studio.");
+      throw new Error(
+        "Choose a local model before running with Ollama or LM Studio.",
+      );
     }
 
     const repos = await client.listRepos(project.id).catch(() => []);
     const repoIds = resolveSubmittedRepoIds(message.repoIds, repos);
     if (message.threadId) {
-      const currentRepos = await client.listThreadRepos(message.threadId).catch(() => []);
-      const hasWorktree = currentRepos.some((repo: { worktree_path: string | null }) => !!repo.worktree_path);
+      const currentRepos = await client
+        .listThreadRepos(message.threadId)
+        .catch(() => []);
+      const hasWorktree = currentRepos.some(
+        (repo: { worktree_path: string | null }) => !!repo.worktree_path,
+      );
       if (!hasWorktree) {
         await client.assignThreadRepos(message.threadId, repoIds);
       }
@@ -456,8 +531,13 @@ export class WorkbenchController implements vscode.Disposable {
         local_provider: localProvider,
         local_base_url: localBaseUrl,
       });
-      await client.sendThreadMessage(message.threadId, agent, permission, text);
       await this.selectThread(message.threadId);
+      void this.sendThreadMessageInBackground(
+        message.threadId,
+        agent,
+        permission,
+        text,
+      );
       return;
     }
 
@@ -475,7 +555,54 @@ export class WorkbenchController implements vscode.Disposable {
       local_base_url: localBaseUrl,
     });
     await this.selectThread(thread.id);
-    await client.runAgentThread(thread.id, agent, permission, text, executionBackend);
+    void this.runThreadInBackground(
+      thread.id,
+      agent,
+      permission,
+      text,
+      executionBackend,
+    );
+  }
+
+  private async sendThreadMessageInBackground(
+    threadId: string,
+    agent: AgentKind,
+    permission: PermissionPolicy,
+    text: string,
+  ): Promise<void> {
+    try {
+      const client = await this.daemon.getClient();
+      await client.sendThreadMessage(threadId, agent, permission, text);
+      await this.refresh();
+    } catch (err) {
+      const message = formatError(err);
+      this.output.appendLine(`[workbench] ${message}`);
+      await this.refresh(message);
+    }
+  }
+
+  private async runThreadInBackground(
+    threadId: string,
+    agent: AgentKind,
+    permission: PermissionPolicy,
+    text: string,
+    executionBackend: ExecutionBackend,
+  ): Promise<void> {
+    try {
+      const client = await this.daemon.getClient();
+      await client.runAgentThread(
+        threadId,
+        agent,
+        permission,
+        text,
+        executionBackend,
+      );
+      await this.refresh();
+    } catch (err) {
+      const message = formatError(err);
+      this.output.appendLine(`[workbench] ${message}`);
+      await this.refresh(message);
+    }
   }
 
   private async connectWorkspaceRepos(): Promise<void> {
@@ -488,7 +615,7 @@ export class WorkbenchController implements vscode.Disposable {
   private async autoConnectWorkspaceRepos(
     client: DaemonApi,
     projectId: string,
-    notifyErrors = false
+    notifyErrors = false,
   ): Promise<void> {
     const folders = vscode.workspace.workspaceFolders ?? [];
     if (!folders.length) return;
@@ -498,7 +625,7 @@ export class WorkbenchController implements vscode.Disposable {
       existing
         .map((repo) => repo.local_path)
         .filter((repoPath): repoPath is string => !!repoPath)
-        .map((repoPath) => path.normalize(repoPath))
+        .map((repoPath) => path.normalize(repoPath)),
     );
 
     for (const folder of folders) {
@@ -510,7 +637,9 @@ export class WorkbenchController implements vscode.Disposable {
         existingPaths.add(normalized);
       } catch (err) {
         if (notifyErrors) {
-          vscode.window.showWarningMessage(`Could not connect ${folder.name}: ${formatError(err)}`);
+          vscode.window.showWarningMessage(
+            `Could not connect ${folder.name}: ${formatError(err)}`,
+          );
         }
       }
     }
@@ -521,7 +650,10 @@ export class WorkbenchController implements vscode.Disposable {
     reply?.({ type: "githubRepos", status, repos });
   }
 
-  private async githubRepos(): Promise<{ status: GithubAuthStatus; repos: GithubRepository[] }> {
+  private async githubRepos(): Promise<{
+    status: GithubAuthStatus;
+    repos: GithubRepository[];
+  }> {
     this.assertTrusted();
     const token = await this.githubToken();
     const client = await this.daemon.getClient();
@@ -532,7 +664,10 @@ export class WorkbenchController implements vscode.Disposable {
     return { status, repos };
   }
 
-  private async connectGithubRepo(repo: GithubRepository, reply?: WebviewReply): Promise<void> {
+  private async connectGithubRepo(
+    repo: GithubRepository,
+    reply?: WebviewReply,
+  ): Promise<void> {
     this.assertTrusted();
     const token = await this.githubToken();
     const client = await this.daemon.getClient();
@@ -556,10 +691,15 @@ export class WorkbenchController implements vscode.Disposable {
     return session.accessToken;
   }
 
-  private async startSandboxLogin(codex: boolean, reply?: WebviewReply): Promise<void> {
+  private async startSandboxLogin(
+    codex: boolean,
+    reply?: WebviewReply,
+  ): Promise<void> {
     this.assertTrusted();
     const client = await this.daemon.getClient();
-    const prompt = codex ? await client.codexSandboxLogin() : await client.sandboxLogin();
+    const prompt = codex
+      ? await client.codexSandboxLogin()
+      : await client.sandboxLogin();
     reply?.({ type: "sandboxLoginPrompt", prompt, codex });
     await vscode.env.openExternal(vscode.Uri.parse(prompt.url));
   }
@@ -568,16 +708,22 @@ export class WorkbenchController implements vscode.Disposable {
     this.diffCache.set(threadId, { state: "loading", diff: null });
     await this.refresh();
     try {
-      const diff = await this.withClient((client) => client.threadDiff(threadId));
+      const diff = await this.withClient((client) =>
+        client.threadDiff(threadId),
+      );
       this.diffCache.set(threadId, { state: "ready", diff });
     } catch (err) {
-      this.output.appendLine(`[workbench] threadDiff failed: ${formatError(err)}`);
+      this.output.appendLine(
+        `[workbench] threadDiff failed: ${formatError(err)}`,
+      );
       this.diffCache.set(threadId, { state: "error", diff: null });
     }
     await this.refresh();
   }
 
-  private async withClient<T>(fn: (client: DaemonApi) => Promise<T>): Promise<T> {
+  private async withClient<T>(
+    fn: (client: DaemonApi) => Promise<T>,
+  ): Promise<T> {
     this.assertTrusted();
     const client = await this.daemon.getClient();
     return fn(client);
@@ -618,22 +764,44 @@ export class WorkbenchController implements vscode.Disposable {
         cloudPolicy,
         cloudAvailability,
         localModelPolicy,
-      ] =
-        await Promise.all([
-          client.detectAgents().then(filterAgentStatuses).catch((err) => {
-            this.output.appendLine(`[workbench] agent detection failed: ${formatError(err)}`);
+      ] = await Promise.all([
+        client
+          .detectAgents()
+          .then(filterAgentStatuses)
+          .catch((err) => {
+            this.output.appendLine(
+              `[workbench] agent detection failed: ${formatError(err)}`,
+            );
             return [];
           }),
-          client.agentRunDefaults().then(filterRunDefaults).catch(() => []),
-          client.agentModelCatalog().then(filterModelCatalog).catch(() => []),
-          client.detectLocalModels().catch(() => []),
-          client.getLimitPolicy().then(normalizeLimitPolicy).catch(() => null),
-          client.getSandboxPolicy().catch(() => null),
-          client.detectSandboxRuntime().catch(() => null),
-          client.getCloudPolicy().then(normalizeCloudPolicy).catch(() => null),
-          client.cloudAvailability().then(filterCloudAvailability).catch(() => []),
-          client.getLocalModelPolicy().then(normalizeLocalModelPolicy).catch(() => null),
-        ]);
+        client
+          .agentRunDefaults()
+          .then(filterRunDefaults)
+          .catch(() => []),
+        client
+          .agentModelCatalog()
+          .then(filterModelCatalog)
+          .catch(() => []),
+        client.detectLocalModels().catch(() => []),
+        client
+          .getLimitPolicy()
+          .then(normalizeLimitPolicy)
+          .catch(() => null),
+        client.getSandboxPolicy().catch(() => null),
+        client.detectSandboxRuntime().catch(() => null),
+        client
+          .getCloudPolicy()
+          .then(normalizeCloudPolicy)
+          .catch(() => null),
+        client
+          .cloudAvailability()
+          .then(filterCloudAvailability)
+          .catch(() => []),
+        client
+          .getLocalModelPolicy()
+          .then(normalizeLocalModelPolicy)
+          .catch(() => null),
+      ]);
       const next: DetectionCache = {
         at: Date.now(),
         agents,
@@ -650,14 +818,18 @@ export class WorkbenchController implements vscode.Disposable {
       };
       this.detectionCache = next;
       return next;
-    })().catch((err) => {
-      this.output.appendLine(`[workbench] detection failed: ${formatError(err)}`);
-      const failed = emptyDetectionCache("error");
-      this.detectionCache = failed;
-      return failed;
-    }).finally(() => {
-      this.detectInflight = null;
-    });
+    })()
+      .catch((err) => {
+        this.output.appendLine(
+          `[workbench] detection failed: ${formatError(err)}`,
+        );
+        const failed = emptyDetectionCache("error");
+        this.detectionCache = failed;
+        return failed;
+      })
+      .finally(() => {
+        this.detectInflight = null;
+      });
     return this.detectInflight;
   }
 
@@ -666,45 +838,57 @@ export class WorkbenchController implements vscode.Disposable {
     const encoded = JSON.stringify(settings);
     if (encoded === this.lastSyncedSettings) return;
 
-    const [limitPolicy, sandboxPolicy, cloudPolicy, localModelPolicy] = await Promise.all([
-      client.getLimitPolicy().catch(() => null),
-      client.getSandboxPolicy().catch(() => null),
-      client.getCloudPolicy().catch(() => null),
-      client.getLocalModelPolicy().catch(() => null),
-    ]);
+    const [limitPolicy, sandboxPolicy, cloudPolicy, localModelPolicy] =
+      await Promise.all([
+        client.getLimitPolicy().catch(() => null),
+        client.getSandboxPolicy().catch(() => null),
+        client.getCloudPolicy().catch(() => null),
+        client.getLocalModelPolicy().catch(() => null),
+      ]);
     if (limitPolicy) {
-      await client.setLimitPolicy(normalizeLimitPolicy({
-        ...limitPolicy,
-        auto_switch: settings.autoSwitchOnLimit,
-        switch_back: settings.switchBackOnRecovery,
-        resume_with_earliest: settings.resumeWithEarliestAgent,
-        unknown_reset_retry_secs: settings.unknownLimitRetrySeconds,
-        agent_priority: settings.fallbackPriority,
-      }));
+      await client.setLimitPolicy(
+        normalizeLimitPolicy({
+          ...limitPolicy,
+          auto_switch: settings.autoSwitchOnLimit,
+          switch_back: settings.switchBackOnRecovery,
+          resume_with_earliest: settings.resumeWithEarliestAgent,
+          unknown_reset_retry_secs: settings.unknownLimitRetrySeconds,
+          agent_priority: settings.fallbackPriority,
+        }),
+      );
     }
     if (cloudPolicy) {
-      await client.setCloudPolicy(normalizeCloudPolicy({
-        ...cloudPolicy,
-        enabled: settings.cloudAutoCarryover,
-        continue_on_sleep: settings.cloudCarryOverOnSleep,
-        continue_on_shutdown: settings.cloudCarryOverOnShutdown,
-        allow_cross_provider: settings.cloudProviderStrategy === "switch_provider",
-        provider_priority: settings.cloudProviderPriority,
-        require_approval: settings.cloudRequireApproval,
-        max_concurrent_cloud_runs: settings.cloudMaxConcurrentRuns,
-        codex_env_id: blankToNull(settings.cloudCodexEnvId),
-      }));
+      await client.setCloudPolicy(
+        normalizeCloudPolicy({
+          ...cloudPolicy,
+          enabled: settings.cloudAutoCarryover,
+          continue_on_sleep: settings.cloudCarryOverOnSleep,
+          continue_on_shutdown: settings.cloudCarryOverOnShutdown,
+          allow_cross_provider:
+            settings.cloudProviderStrategy === "switch_provider",
+          provider_priority: settings.cloudProviderPriority,
+          require_approval: settings.cloudRequireApproval,
+          max_concurrent_cloud_runs: settings.cloudMaxConcurrentRuns,
+          codex_env_id: blankToNull(settings.cloudCodexEnvId),
+        }),
+      );
     }
     if (localModelPolicy) {
-      await client.setLocalModelPolicy(normalizeLocalModelPolicy({
-        ...localModelPolicy,
-        auto_resume_cloud: settings.localAutoResumeCloud,
-        use_local_fallback: settings.localUseFallback,
-        switch_back_to_cloud: settings.localSwitchBackToCloud,
-        probe_interval_secs: settings.localProbeIntervalSeconds,
-        ollama_base_url: blankToNull(settings.localOllamaBaseUrl) ?? localModelPolicy.ollama_base_url,
-        lm_studio_base_url: blankToNull(settings.localLmStudioBaseUrl) ?? localModelPolicy.lm_studio_base_url,
-      }));
+      await client.setLocalModelPolicy(
+        normalizeLocalModelPolicy({
+          ...localModelPolicy,
+          auto_resume_cloud: settings.localAutoResumeCloud,
+          use_local_fallback: settings.localUseFallback,
+          switch_back_to_cloud: settings.localSwitchBackToCloud,
+          probe_interval_secs: settings.localProbeIntervalSeconds,
+          ollama_base_url:
+            blankToNull(settings.localOllamaBaseUrl) ??
+            localModelPolicy.ollama_base_url,
+          lm_studio_base_url:
+            blankToNull(settings.localLmStudioBaseUrl) ??
+            localModelPolicy.lm_studio_base_url,
+        }),
+      );
     }
     if (sandboxPolicy) {
       await client.setSandboxPolicy({
@@ -731,15 +915,27 @@ export class WorkbenchController implements vscode.Disposable {
     await Promise.all([
       config.update("cloud.autoCarryover", policy.enabled, target),
       config.update("cloud.carryOverOnSleep", policy.continue_on_sleep, target),
-      config.update("cloud.carryOverOnShutdown", policy.continue_on_shutdown, target),
+      config.update(
+        "cloud.carryOverOnShutdown",
+        policy.continue_on_shutdown,
+        target,
+      ),
       config.update(
         "cloud.providerStrategy",
         policy.allow_cross_provider ? "switch_provider" : "same_provider",
-        target
+        target,
       ),
-      config.update("cloud.providerPriority", normalizeAgentPriority(policy.provider_priority), target),
+      config.update(
+        "cloud.providerPriority",
+        normalizeAgentPriority(policy.provider_priority),
+        target,
+      ),
       config.update("cloud.requireApproval", policy.require_approval, target),
-      config.update("cloud.maxConcurrentRuns", policy.max_concurrent_cloud_runs, target),
+      config.update(
+        "cloud.maxConcurrentRuns",
+        policy.max_concurrent_cloud_runs,
+        target,
+      ),
       config.update("cloud.codexEnvId", policy.codex_env_id ?? "", target),
     ]);
   }
@@ -750,33 +946,65 @@ export class WorkbenchController implements vscode.Disposable {
     await Promise.all([
       config.update("autoSwitchOnLimit", policy.auto_switch, target),
       config.update("switchBackOnRecovery", policy.switch_back, target),
-      config.update("autoResumeOnLimitReset", policy.resume_with_earliest, target),
-      config.update("resumeWithEarliestAgent", policy.resume_with_earliest, target),
-      config.update("unknownLimitRetrySeconds", policy.unknown_reset_retry_secs, target),
-      config.update("fallbackPriority", normalizeAgentPriority(policy.agent_priority), target),
+      config.update(
+        "autoResumeOnLimitReset",
+        policy.resume_with_earliest,
+        target,
+      ),
+      config.update(
+        "resumeWithEarliestAgent",
+        policy.resume_with_earliest,
+        target,
+      ),
+      config.update(
+        "unknownLimitRetrySeconds",
+        policy.unknown_reset_retry_secs,
+        target,
+      ),
+      config.update(
+        "fallbackPriority",
+        normalizeAgentPriority(policy.agent_priority),
+        target,
+      ),
     ]);
   }
 
-  private async mirrorSandboxPolicyToConfig(policy: SandboxPolicy): Promise<void> {
+  private async mirrorSandboxPolicyToConfig(
+    policy: SandboxPolicy,
+  ): Promise<void> {
     const config = vscode.workspace.getConfiguration("agentmanager");
     const target = vscode.ConfigurationTarget.Global;
     await Promise.all([
       config.update("defaultExecutionBackend", policy.default_backend, target),
-      config.update("sandbox.maxConcurrent", policy.max_concurrent_sandboxes, target),
+      config.update(
+        "sandbox.maxConcurrent",
+        policy.max_concurrent_sandboxes,
+        target,
+      ),
       config.update("sandbox.cpus", policy.cpus, target),
       config.update("sandbox.memory", policy.memory, target),
       config.update("sandbox.networkPreset", policy.network_preset, target),
     ]);
   }
 
-  private async mirrorLocalModelPolicyToConfig(policy: LocalModelPolicy): Promise<void> {
+  private async mirrorLocalModelPolicyToConfig(
+    policy: LocalModelPolicy,
+  ): Promise<void> {
     const config = vscode.workspace.getConfiguration("agentmanager");
     const target = vscode.ConfigurationTarget.Global;
     await Promise.all([
       config.update("local.autoResumeCloud", policy.auto_resume_cloud, target),
       config.update("local.useFallback", policy.use_local_fallback, target),
-      config.update("local.switchBackToCloud", policy.switch_back_to_cloud, target),
-      config.update("local.probeIntervalSeconds", policy.probe_interval_secs, target),
+      config.update(
+        "local.switchBackToCloud",
+        policy.switch_back_to_cloud,
+        target,
+      ),
+      config.update(
+        "local.probeIntervalSeconds",
+        policy.probe_interval_secs,
+        target,
+      ),
       config.update("local.ollamaBaseUrl", policy.ollama_base_url, target),
       config.update("local.lmStudioBaseUrl", policy.lm_studio_base_url, target),
     ]);
@@ -820,7 +1048,9 @@ export class WorkbenchController implements vscode.Disposable {
 
   private assertTrusted(): void {
     if (!vscode.workspace.isTrusted) {
-      throw new Error("Trust this workspace before connecting repositories or running agents.");
+      throw new Error(
+        "Trust this workspace before connecting repositories or running agents.",
+      );
     }
   }
 }
@@ -830,11 +1060,13 @@ async function loadThreadDetails(
   threadId: string,
   output: vscode.OutputChannel,
   diffEntry: DiffCacheEntry | null,
-  applyResult: AgentThreadApplyResult | null
+  applyResult: AgentThreadApplyResult | null,
 ): Promise<ThreadDetails> {
   const [events, repos, turns, queued, approvals] = await Promise.all([
     client.listThreadEvents(threadId).catch((err) => {
-      output.appendLine(`[workbench] listThreadEvents failed: ${formatError(err)}`);
+      output.appendLine(
+        `[workbench] listThreadEvents failed: ${formatError(err)}`,
+      );
       return [];
     }),
     client.listThreadRepos(threadId).catch(() => []),
@@ -871,7 +1103,11 @@ function emptyDetectionCache(state: DetectionCache["state"]): DetectionCache {
   };
 }
 
-function emptySnapshot(trusted: boolean, defaults: WorkbenchDefaults, error: string): WorkbenchSnapshot {
+function emptySnapshot(
+  trusted: boolean,
+  defaults: WorkbenchDefaults,
+  error: string,
+): WorkbenchSnapshot {
   return {
     trusted,
     defaults,
@@ -897,12 +1133,18 @@ function emptySnapshot(trusted: boolean, defaults: WorkbenchDefaults, error: str
   };
 }
 
-function pickSelectedThread(selected: string | null, threads: AgentThread[]): string | null {
-  if (selected && threads.some((thread) => thread.id === selected)) return selected;
+function pickSelectedThread(
+  selected: string | null,
+  threads: AgentThread[],
+): string | null {
+  if (selected && threads.some((thread) => thread.id === selected))
+    return selected;
   return threads[0]?.id ?? null;
 }
 
-function pickDefaultRepoIds(repos: Array<{ id: string; local_path: string | null }>): string[] {
+function pickDefaultRepoIds(
+  repos: Array<{ id: string; local_path: string | null }>,
+): string[] {
   if (repos.length === 1) return [repos[0].id];
   const activePath = vscode.window.activeTextEditor?.document.uri.fsPath;
   if (!activePath) return [];
@@ -910,27 +1152,38 @@ function pickDefaultRepoIds(repos: Array<{ id: string; local_path: string | null
   const matches = repos.filter((repo) => {
     if (!repo.local_path) return false;
     const root = path.normalize(repo.local_path);
-    return normalizedActive === root || normalizedActive.startsWith(`${root}${path.sep}`);
+    return (
+      normalizedActive === root ||
+      normalizedActive.startsWith(`${root}${path.sep}`)
+    );
   });
   return matches.length === 1 ? [matches[0].id] : [];
 }
 
 function resolveSubmittedRepoIds(
   submitted: string[] | undefined,
-  repos: Array<{ id: string; local_path: string | null }>
+  repos: Array<{ id: string; local_path: string | null }>,
 ): string[] {
   const known = new Set(repos.map((repo) => repo.id));
-  const picked = submitted === undefined ? pickDefaultRepoIds(repos) : submitted;
+  const picked =
+    submitted === undefined ? pickDefaultRepoIds(repos) : submitted;
   const repoIds = Array.from(new Set(picked)).filter((id) => known.has(id));
   if (repos.length > 0 && repoIds.length === 0) {
-    throw new Error("Select at least one connected repository before starting the agent.");
+    throw new Error(
+      "Select at least one connected repository before starting the agent.",
+    );
   }
   return repoIds;
 }
 
 async function gitRoot(folder: string): Promise<string> {
   try {
-    const { stdout } = await execFileAsync("git", ["-C", folder, "rev-parse", "--show-toplevel"]);
+    const { stdout } = await execFileAsync("git", [
+      "-C",
+      folder,
+      "rev-parse",
+      "--show-toplevel",
+    ]);
     return stdout.trim() || folder;
   } catch {
     return folder;
@@ -939,54 +1192,100 @@ async function gitRoot(folder: string): Promise<string> {
 
 function titleFromMessage(message: string): string {
   const singleLine = message.replace(/\s+/g, " ").trim();
-  return singleLine.length > 56 ? `${singleLine.slice(0, 53)}...` : singleLine || "New session";
+  return singleLine.length > 56
+    ? `${singleLine.slice(0, 53)}...`
+    : singleLine || "New session";
 }
 
 function getDefaults(): WorkbenchDefaults {
   const config = vscode.workspace.getConfiguration("agentmanager");
   return {
     agent: sanitizeAgent(config.get<string>("defaultAgent", "claude_code")),
-    permission: config.get<PermissionPolicy>("defaultPermission", "workspace_write"),
-    execution_backend: config.get<ExecutionBackend>("defaultExecutionBackend", "host"),
+    permission: config.get<PermissionPolicy>(
+      "defaultPermission",
+      "workspace_write",
+    ),
+    execution_backend: config.get<ExecutionBackend>(
+      "defaultExecutionBackend",
+      "host",
+    ),
     model: blankToNull(config.get<string>("defaultModel", "")),
     reasoning: blankToNull(config.get<string>("defaultReasoning", "medium")),
-    local_provider: sanitizeLocalProvider(config.get<string>("defaultLocalProvider", "")),
+    local_provider: sanitizeLocalProvider(
+      config.get<string>("defaultLocalProvider", ""),
+    ),
     local_base_url: blankToNull(config.get<string>("defaultLocalBaseUrl", "")),
   };
 }
 
 function getSettingsSnapshot() {
   const config = vscode.workspace.getConfiguration("agentmanager");
-  const autoResumeOnLimitReset = config.get<boolean | undefined>("autoResumeOnLimitReset", undefined);
+  const autoResumeOnLimitReset = config.get<boolean | undefined>(
+    "autoResumeOnLimitReset",
+    undefined,
+  );
   return {
-    defaultExecutionBackend: config.get<ExecutionBackend>("defaultExecutionBackend", "host"),
+    defaultExecutionBackend: config.get<ExecutionBackend>(
+      "defaultExecutionBackend",
+      "host",
+    ),
     autoSwitchOnLimit: config.get<boolean>("autoSwitchOnLimit", true),
     switchBackOnRecovery: config.get<boolean>("switchBackOnRecovery", true),
-    resumeWithEarliestAgent: autoResumeOnLimitReset ?? config.get<boolean>("resumeWithEarliestAgent", true),
-    unknownLimitRetrySeconds: config.get<number>("unknownLimitRetrySeconds", 600),
-    fallbackPriority: normalizeAgentPriority(config.get<AgentKind[]>("fallbackPriority", ["claude_code", "codex"])),
+    resumeWithEarliestAgent:
+      autoResumeOnLimitReset ??
+      config.get<boolean>("resumeWithEarliestAgent", true),
+    unknownLimitRetrySeconds: config.get<number>(
+      "unknownLimitRetrySeconds",
+      600,
+    ),
+    fallbackPriority: normalizeAgentPriority(
+      config.get<AgentKind[]>("fallbackPriority", ["claude_code", "codex"]),
+    ),
     cloudAutoCarryover: config.get<boolean>("cloud.autoCarryover", false),
     cloudCarryOverOnSleep: config.get<boolean>("cloud.carryOverOnSleep", true),
-    cloudCarryOverOnShutdown: config.get<boolean>("cloud.carryOverOnShutdown", true),
-    cloudProviderStrategy: config.get<string>("cloud.providerStrategy", "same_provider"),
-    cloudProviderPriority: normalizeAgentPriority(config.get<AgentKind[]>("cloud.providerPriority", ["claude_code", "codex"])),
+    cloudCarryOverOnShutdown: config.get<boolean>(
+      "cloud.carryOverOnShutdown",
+      true,
+    ),
+    cloudProviderStrategy: config.get<string>(
+      "cloud.providerStrategy",
+      "same_provider",
+    ),
+    cloudProviderPriority: normalizeAgentPriority(
+      config.get<AgentKind[]>("cloud.providerPriority", [
+        "claude_code",
+        "codex",
+      ]),
+    ),
     cloudRequireApproval: config.get<boolean>("cloud.requireApproval", false),
     cloudMaxConcurrentRuns: config.get<number>("cloud.maxConcurrentRuns", 2),
     cloudCodexEnvId: config.get<string>("cloud.codexEnvId", ""),
     localAutoResumeCloud: config.get<boolean>("local.autoResumeCloud", true),
     localUseFallback: config.get<boolean>("local.useFallback", true),
-    localSwitchBackToCloud: config.get<boolean>("local.switchBackToCloud", true),
-    localProbeIntervalSeconds: config.get<number>("local.probeIntervalSeconds", 30),
+    localSwitchBackToCloud: config.get<boolean>(
+      "local.switchBackToCloud",
+      true,
+    ),
+    localProbeIntervalSeconds: config.get<number>(
+      "local.probeIntervalSeconds",
+      30,
+    ),
     localOllamaBaseUrl: config.get<string>("local.ollamaBaseUrl", ""),
     localLmStudioBaseUrl: config.get<string>("local.lmStudioBaseUrl", ""),
     sandboxMaxConcurrent: config.get<number>("sandbox.maxConcurrent", 2),
     sandboxCpus: config.get<number>("sandbox.cpus", 2),
     sandboxMemory: config.get<string>("sandbox.memory", "4g"),
-    sandboxNetworkPreset: config.get<string>("sandbox.networkPreset", "balanced"),
+    sandboxNetworkPreset: config.get<string>(
+      "sandbox.networkPreset",
+      "balanced",
+    ),
   };
 }
 
-function sanitizeBackend(agent: AgentKind, backend: ExecutionBackend): ExecutionBackend {
+function sanitizeBackend(
+  agent: AgentKind,
+  backend: ExecutionBackend,
+): ExecutionBackend {
   if (backend === "docker_sandbox" && agent !== "codex") {
     return "host";
   }
@@ -997,11 +1296,15 @@ function sanitizeAgent(value: string | null | undefined): AgentKind {
   return value === "codex" ? "codex" : "claude_code";
 }
 
-function isSupportedAgent(value: string | null | undefined): value is AgentKind {
+function isSupportedAgent(
+  value: string | null | undefined,
+): value is AgentKind {
   return value === "claude_code" || value === "codex";
 }
 
-function normalizeAgentPriority(value: readonly AgentKind[] | null | undefined): AgentKind[] {
+function normalizeAgentPriority(
+  value: readonly AgentKind[] | null | undefined,
+): AgentKind[] {
   const out: AgentKind[] = [];
   for (const agent of value ?? []) {
     if (isSupportedAgent(agent) && !out.includes(agent)) out.push(agent);
@@ -1024,7 +1327,9 @@ function filterModelCatalog(items: AgentModelCatalog[]): AgentModelCatalog[] {
   return items.filter((item) => isSupportedAgent(item.agent));
 }
 
-function filterCloudAvailability(items: CloudAvailability[]): CloudAvailability[] {
+function filterCloudAvailability(
+  items: CloudAvailability[],
+): CloudAvailability[] {
   return items.filter((item) => isSupportedAgent(item.agent));
 }
 
@@ -1069,14 +1374,16 @@ function blankToNull(value: string | null | undefined): string | null {
   return trimmed ? trimmed : null;
 }
 
-function sanitizeLocalProvider(value: string | null | undefined): LocalModelProvider | null {
+function sanitizeLocalProvider(
+  value: string | null | undefined,
+): LocalModelProvider | null {
   return value === "ollama" || value === "lm_studio" ? value : null;
 }
 
 function sanitizeModelForAgent(
   agent: AgentKind,
   model: string | null,
-  localProvider: LocalModelProvider | null
+  localProvider: LocalModelProvider | null,
 ): string | null {
   if (!model) return null;
   if (localProvider) return model;
@@ -1092,11 +1399,17 @@ function modelCompatibleWithAgent(agent: AgentKind, model: string): boolean {
 }
 
 function baseModelId(value: string): string {
-  return value.trim().replace(/\[[^\]]*\]$/, "").trim();
+  return value
+    .trim()
+    .replace(/\[[^\]]*\]$/, "")
+    .trim();
 }
 
 function isClaudeModel(model: string): boolean {
-  return ["opus", "sonnet", "haiku", "fable"].includes(model) || model.startsWith("claude-");
+  return (
+    ["opus", "sonnet", "haiku", "fable"].includes(model) ||
+    model.startsWith("claude-")
+  );
 }
 
 function isCodexModel(model: string): boolean {
@@ -1104,7 +1417,9 @@ function isCodexModel(model: string): boolean {
 }
 
 function defaultLocalBaseUrl(provider: LocalModelProvider): string {
-  return provider === "lm_studio" ? "http://127.0.0.1:1234" : "http://127.0.0.1:11434";
+  return provider === "lm_studio"
+    ? "http://127.0.0.1:1234"
+    : "http://127.0.0.1:11434";
 }
 
 function formatError(err: unknown): string {
