@@ -438,19 +438,6 @@ export default function App() {
                 <MessageView event={event} />
               </Fragment>
             ))}
-          {selectedThread && details && (
-            <ChangesView
-              threadId={selectedThread.id}
-              diff={details.diff}
-              diffState={details.diffState ?? "idle"}
-              repos={details.repos}
-              applyResult={details.applyResult ?? null}
-              openSignal={reviewOpen?.threadId === selectedThread.id ? reviewOpen.nonce : 0}
-              onLoadDiff={(threadId) => vscode.postMessage({ type: "loadDiff", threadId })}
-              onApply={(threadId) => vscode.postMessage({ type: "applyThreadChanges", threadId })}
-              onOpenPath={(target) => vscode.postMessage({ type: "openPath", path: target })}
-            />
-          )}
           {pending.map((item) => (
             <article key={item.id} className="msg user pending">
               <div className="msg-body">{item.text}</div>
@@ -513,6 +500,20 @@ export default function App() {
         onOpenSettings={() => setSettingsOpen(true)}
         onNotice={setNotice}
       />
+
+      {selectedThread && details && (
+        <ChangesView
+          threadId={selectedThread.id}
+          diff={details.diff}
+          diffState={details.diffState ?? "idle"}
+          repos={details.repos}
+          applyResult={details.applyResult ?? null}
+          openSignal={reviewOpen?.threadId === selectedThread.id ? reviewOpen.nonce : 0}
+          onLoadDiff={(threadId) => vscode.postMessage({ type: "loadDiff", threadId })}
+          onApply={(threadId) => vscode.postMessage({ type: "applyThreadChanges", threadId })}
+          onOpenPath={(target) => vscode.postMessage({ type: "openPath", path: target })}
+        />
+      )}
 
       {settingsOpen && snapshot && (
         <SettingsSheet
@@ -1982,7 +1983,7 @@ function ChangesView(props: {
   useEffect(() => {
     if (props.openSignal > 0) setOpen(true);
   }, [props.openSignal]);
-  if (!hasWorktree || (props.diffState === "idle" && !props.applyResult && props.openSignal <= 0)) return null;
+  if (!hasWorktree || !open) return null;
   const loading = props.diffState === "loading";
   const loaded = props.diffState === "ready";
   const blockers = props.applyResult?.blockers ?? [];
@@ -1995,30 +1996,32 @@ function ChangesView(props: {
       : "Changes";
 
   return (
-    <section className="changes-card">
-      <button type="button" className="changes-toggle" onClick={() => setOpen(!open)}>
-        <Icon name="caret" className={open ? "caret open" : "caret"} />
-        <span className="changes-title">{summary}</span>
-        {loaded && diffFiles.length > 0 && (
-          <span className="changes-stats">
-            <span className="diff-add">+{additions}</span>
-            <span className="diff-del">-{deletions}</span>
-          </span>
-        )}
-        <span className="changes-summary">
-          {open ? "Hide" : loaded ? "Review" : "Load diff"}
-        </span>
-      </button>
+    <div className="sheet-backdrop changes-backdrop" role="presentation" onMouseDown={() => setOpen(false)}>
+      <section
+        className="sheet changes-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Review changes"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header>
+          <div className="changes-heading">
+            <strong>{summary}</strong>
+            {loaded && diffFiles.length > 0 && (
+              <span className="changes-stats">
+                <span className="diff-add">+{additions}</span>
+                <span className="diff-del">-{deletions}</span>
+              </span>
+            )}
+          </div>
+          <IconButton title="Close" onClick={() => setOpen(false)}>
+            <Icon name="close" />
+          </IconButton>
+        </header>
 
-      {open && (
-        <div className="changes-body">
+        <div className="sheet-body changes-body">
           <div className="changes-actions">
-            <button
-              type="button"
-              className="secondary-btn"
-              disabled={loading}
-              onClick={() => props.onLoadDiff(props.threadId)}
-            >
+            <button type="button" className="secondary-btn" disabled={loading} onClick={() => props.onLoadDiff(props.threadId)}>
               <Icon name="refresh" />
               <span>{loaded ? "Reload Diff" : "Load Diff"}</span>
             </button>
@@ -2032,7 +2035,6 @@ function ChangesView(props: {
               <span>Apply to Repo</span>
             </button>
           </div>
-
           {props.repos.map((repo) => (
             <div key={repo.repo_id} className="detail-row">
               <Icon name="repo" />
@@ -2073,8 +2075,8 @@ function ChangesView(props: {
             </div>
           )}
         </div>
-      )}
-    </section>
+      </section>
+    </div>
   );
 }
 

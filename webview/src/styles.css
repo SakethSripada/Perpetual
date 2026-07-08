@@ -533,6 +533,30 @@ textarea {
   max-height: 260px;
   overflow: auto;
 }
+.changes-backdrop {
+  z-index: 200;
+}
+.changes-sheet {
+  width: min(900px, calc(100vw - 24px));
+  max-height: min(780px, calc(100vh - 24px));
+}
+.changes-sheet .changes-body {
+  padding: 14px;
+  min-height: 0;
+  max-height: none;
+  align-content: start;
+}
+.changes-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.changes-heading strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .changes-actions {
   display: flex;
   align-items: center;
