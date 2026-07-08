@@ -73,6 +73,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [githubOpen, setGithubOpen] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState<{ threadId: string; nonce: number } | null>(null);
   const [githubRepos, setGithubRepos] = useState<GithubRepository[]>([]);
   const [githubLoading, setGithubLoading] = useState(false);
   // Optimistically-rendered user messages: shown the instant the user sends, then
@@ -255,7 +256,7 @@ export default function App() {
       top: transcriptRef.current.scrollHeight,
       behavior: "auto",
     });
-  }, [snapshot?.details?.events.length, selectedThread?.id, pending.length]);
+  }, [snapshot?.details?.events.length, selectedThread?.id, pending.length, reviewOpen?.nonce]);
 
   // Surface agent availability changes as a notice instead of an always-on badge.
   const availabilityRef = useRef<Record<string, AvailabilityState>>({});
@@ -366,6 +367,11 @@ export default function App() {
     }
     vscode.postMessage({ type: "deleteThread", threadId: id, force });
   };
+  const reviewChanges = () => {
+    if (!selectedThread) return;
+    setReviewOpen((prev) => ({ threadId: selectedThread.id, nonce: (prev?.nonce ?? 0) + 1 }));
+    vscode.postMessage({ type: "loadDiff", threadId: selectedThread.id });
+  };
 
   return (
     <main className="app-shell">
@@ -391,7 +397,7 @@ export default function App() {
           {canReviewChanges && (
             <IconButton
               title="Review changes"
-              onClick={() => vscode.postMessage({ type: "loadDiff", threadId: selectedThread.id })}
+              onClick={reviewChanges}
             >
               <Icon name="repo" />
             </IconButton>
@@ -439,6 +445,7 @@ export default function App() {
               diffState={details.diffState ?? "idle"}
               repos={details.repos}
               applyResult={details.applyResult ?? null}
+              openSignal={reviewOpen?.threadId === selectedThread.id ? reviewOpen.nonce : 0}
               onLoadDiff={(threadId) => vscode.postMessage({ type: "loadDiff", threadId })}
               onApply={(threadId) => vscode.postMessage({ type: "applyThreadChanges", threadId })}
               onOpenPath={(target) => vscode.postMessage({ type: "openPath", path: target })}
@@ -502,7 +509,7 @@ export default function App() {
         onSandboxLogin={(codex) => vscode.postMessage({ type: "sandboxLogin", codex })}
         onNewSession={newSession}
         onRefresh={() => vscode.postMessage({ type: "refresh" })}
-        onReviewChanges={() => selectedThread && vscode.postMessage({ type: "loadDiff", threadId: selectedThread.id })}
+        onReviewChanges={reviewChanges}
         onOpenSettings={() => setSettingsOpen(true)}
         onNotice={setNotice}
       />
@@ -1964,6 +1971,7 @@ function ChangesView(props: {
   diffState: NonNullable<WorkbenchSnapshot["details"]>["diffState"];
   repos: NonNullable<WorkbenchSnapshot["details"]>["repos"];
   applyResult: NonNullable<WorkbenchSnapshot["details"]>["applyResult"] | null;
+  openSignal: number;
   onLoadDiff(threadId: string): void;
   onApply(threadId: string): void;
   onOpenPath(path: string): void;
@@ -1971,7 +1979,10 @@ function ChangesView(props: {
   const [open, setOpen] = useState(false);
   const diffFiles = props.diff?.repos.flatMap((repo) => repo.files.map((file) => ({ ...file, repo: repo.repo_name }))) ?? [];
   const hasWorktree = props.repos.some((repo) => !!repo.worktree_path);
-  if (!hasWorktree || (props.diffState === "idle" && !props.applyResult)) return null;
+  useEffect(() => {
+    if (props.openSignal > 0) setOpen(true);
+  }, [props.openSignal]);
+  if (!hasWorktree || (props.diffState === "idle" && !props.applyResult && props.openSignal <= 0)) return null;
   const loading = props.diffState === "loading";
   const loaded = props.diffState === "ready";
   const blockers = props.applyResult?.blockers ?? [];
