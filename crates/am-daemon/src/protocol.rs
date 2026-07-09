@@ -11,16 +11,13 @@ use am_agents::PermissionPolicy;
 use am_proto::{
     ActivityEvent, AgentKind, AgentModelCatalog, AgentRunDefaults, AgentStatus, AgentThread,
     AgentThreadApplyResult, AgentThreadDiff, AgentThreadEvent, AgentThreadRepo, AgentThreadUpdate,
-    AgentTurn, AppEvent, ApprovalDecision, ApprovalRequest, BudgetStatus, CloudAvailability,
-    CloudPolicy, CloudRun, ContextPacket, EventReplay, ExecutionBackend, GithubAuthStatus,
-    GithubRepository, KnowledgeDoc, KnowledgeDocUpdate, LimitPolicy, LocalModelPolicy,
-    LocalModelStatus, MemoryNote, MemoryNoteUpdate, NewAgentThread, NewGithubRepo, NewKnowledgeDoc,
-    NewLocalRepo, NewMemoryNote, NewProject, NewTask, NewWorkEdge, NewWorkNode,
-    PolicyApprovalGrant, PolicyAuditExport, PolicyDecision, PolicyDocument,
-    PolicyEvaluationRequest, Project, QueuedTurn, Repo, SandboxLoginPrompt, SandboxPolicy,
-    SandboxRuntimeStatus, SearchHit, SequencedEvent, SessionPolicyEnvelope, Task, TaskDiff,
-    TaskUpdate, UsageLedgerEntry, WorkEdge, WorkGraph, WorkNode, WorkNodeDiff, WorkNodeRepoBinding,
-    WorkNodeUpdate,
+    AgentTurn, AppEvent, ApprovalDecision, ApprovalRequest, CloudAvailability, CloudPolicy,
+    CloudRun, ContextPacket, EventReplay, ExecutionBackend, GithubAuthStatus, GithubRepository,
+    KnowledgeDoc, KnowledgeDocUpdate, LimitPolicy, LocalModelPolicy, LocalModelStatus, MemoryNote,
+    MemoryNoteUpdate, NewAgentThread, NewGithubRepo, NewKnowledgeDoc, NewLocalRepo, NewMemoryNote,
+    NewProject, NewTask, NewWorkEdge, NewWorkNode, Project, QueuedTurn, Repo, SandboxLoginPrompt,
+    SandboxPolicy, SandboxRuntimeStatus, SearchHit, SequencedEvent, Task, TaskDiff, TaskUpdate,
+    WorkEdge, WorkGraph, WorkNode, WorkNodeDiff, WorkNodeRepoBinding, WorkNodeUpdate,
 };
 use serde::{Deserialize, Serialize};
 
@@ -244,36 +241,6 @@ pub enum DaemonRequest {
     },
     ListPendingApprovals,
 
-    // Enterprise policy
-    ListPolicyDocuments,
-    UpsertPolicyDocument(PolicyDocument),
-    DeletePolicyDocument {
-        id: String,
-    },
-    PreviewPolicyEnvelope(PolicyEvaluationRequest),
-    EvaluatePolicy(PolicyEvaluationRequest),
-    ListPolicyEvaluations {
-        project_id: Option<String>,
-        limit: Option<i64>,
-    },
-    ListUsageLedger {
-        project_id: Option<String>,
-        limit: Option<i64>,
-    },
-    ListBudgetStatus {
-        project_id: Option<String>,
-    },
-    ListPolicyApprovalGrants {
-        status: Option<String>,
-    },
-    ResolvePolicyApproval {
-        id: String,
-        approved: bool,
-    },
-    ExportPolicyAudit {
-        project_id: Option<String>,
-    },
-
     // Agent threads / Workbench
     EnsureWorkbenchProject,
     ListAgentThreads {
@@ -393,16 +360,6 @@ pub enum DaemonResponse {
     SessionId(String),
     Diff(TaskDiff),
     PendingApprovals(Vec<ApprovalRequest>),
-    PolicyDocument(PolicyDocument),
-    PolicyDocuments(Vec<PolicyDocument>),
-    PolicyDecision(PolicyDecision),
-    PolicyDecisions(Vec<PolicyDecision>),
-    SessionPolicyEnvelope(SessionPolicyEnvelope),
-    UsageLedgerEntries(Vec<UsageLedgerEntry>),
-    BudgetStatuses(Vec<BudgetStatus>),
-    PolicyApprovalGrant(PolicyApprovalGrant),
-    PolicyApprovalGrants(Vec<PolicyApprovalGrant>),
-    PolicyAuditExport(PolicyAuditExport),
     AgentThread(AgentThread),
     AgentThreadOpt(Option<AgentThread>),
     AgentThreads(Vec<AgentThread>),

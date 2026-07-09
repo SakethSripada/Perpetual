@@ -437,53 +437,6 @@ async fn dispatch(core: &AppCore, req: DaemonRequest) -> Result<DaemonResponse, 
         }
         Q::ListPendingApprovals => A::PendingApprovals(core.list_pending_approvals().await),
 
-        Q::ListPolicyDocuments => {
-            A::PolicyDocuments(core.list_policy_documents().await.map_err(s)?)
-        }
-        Q::UpsertPolicyDocument(document) => {
-            A::PolicyDocument(core.upsert_policy_document(document).await.map_err(s)?)
-        }
-        Q::DeletePolicyDocument { id } => {
-            core.delete_policy_document(&id).await.map_err(s)?;
-            A::Unit
-        }
-        Q::PreviewPolicyEnvelope(request) => {
-            A::SessionPolicyEnvelope(core.preview_policy_envelope(request).await.map_err(s)?)
-        }
-        Q::EvaluatePolicy(request) => {
-            A::PolicyDecision(core.evaluate_policy(request).await.map_err(s)?)
-        }
-        Q::ListPolicyEvaluations { project_id, limit } => A::PolicyDecisions(
-            core.list_policy_evaluations(project_id.as_deref(), limit.unwrap_or(100))
-                .await
-                .map_err(s)?,
-        ),
-        Q::ListUsageLedger { project_id, limit } => A::UsageLedgerEntries(
-            core.list_usage_ledger(project_id.as_deref(), limit.unwrap_or(250))
-                .await
-                .map_err(s)?,
-        ),
-        Q::ListBudgetStatus { project_id } => A::BudgetStatuses(
-            core.list_budget_status(project_id.as_deref())
-                .await
-                .map_err(s)?,
-        ),
-        Q::ListPolicyApprovalGrants { status } => A::PolicyApprovalGrants(
-            core.list_policy_approval_grants(status.as_deref())
-                .await
-                .map_err(s)?,
-        ),
-        Q::ResolvePolicyApproval { id, approved } => A::PolicyApprovalGrant(
-            core.resolve_policy_approval(&id, approved)
-                .await
-                .map_err(s)?,
-        ),
-        Q::ExportPolicyAudit { project_id } => A::PolicyAuditExport(
-            core.export_policy_audit(project_id.as_deref())
-                .await
-                .map_err(s)?,
-        ),
-
         Q::ListAgentThreads { project_id } => A::AgentThreads(
             core.list_agent_threads(project_id.as_deref())
                 .await

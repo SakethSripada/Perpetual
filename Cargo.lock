@@ -34,33 +34,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "am-compute"
-version = "0.1.0"
-dependencies = [
- "am-proto",
- "async-trait",
- "chrono",
- "hex",
- "hmac",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "thiserror",
- "tokio",
-]
-
-[[package]]
 name = "am-core"
 version = "0.1.0"
 dependencies = [
  "am-agents",
- "am-compute",
  "am-db",
- "am-policy",
  "am-proto",
  "am-vcs",
- "axum",
  "base64",
  "chrono",
  "keyring",
@@ -120,17 +100,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
-]
-
-[[package]]
-name = "am-policy"
-version = "0.1.0"
-dependencies = [
- "am-proto",
- "chrono",
- "serde",
- "serde_json",
- "thiserror",
 ]
 
 [[package]]

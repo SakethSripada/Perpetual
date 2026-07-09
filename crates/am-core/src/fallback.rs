@@ -16,7 +16,7 @@ impl Default for FallbackPolicy {
         Self {
             auto_switch: true,
             switch_back: true,
-            preferred_order: vec![AgentKind::ClaudeCode, AgentKind::Codex, AgentKind::Cursor],
+            preferred_order: vec![AgentKind::ClaudeCode, AgentKind::Codex],
         }
     }
 }

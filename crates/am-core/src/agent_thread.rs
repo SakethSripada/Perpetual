@@ -16,9 +16,10 @@ use am_proto::{
 use serde_json::json;
 use tokio::sync::mpsc::Receiver;
 
-use crate::local_models::{legacy_run_target_hash, run_target_hash, target_hash_matches};
-use crate::policy::{agent_provider, PolicyPreflightInput};
-use crate::rented_compute::normalize_model_target;
+use crate::local_models::{
+    legacy_run_target_hash, normalize_model_target, run_target_hash, target_hash_matches,
+};
+use crate::policy::PolicyPreflightInput;
 use crate::sandbox::SandboxLease;
 use crate::{AppCore, ApprovalScope, CoreError};
 
@@ -342,50 +343,11 @@ impl AppCore {
             .thread_execution_backend(&thread, execution_backend)
             .await?;
         let model_target = normalize_model_target(thread.model_target, thread.local_provider);
-        let links =
-            am_db::repos::agent_thread_repo::list_for_thread(&self.db.pool, thread_id).await?;
-        let repo_ids = links
-            .iter()
-            .map(|link| link.repo_id.clone())
-            .collect::<Vec<_>>();
-        let branch = links
-            .iter()
-            .find_map(|link| link.branch.clone().or_else(|| link.base_ref.clone()));
-        let prompt_bytes = message
-            .as_ref()
-            .map(|msg| msg.text.len() as u64)
-            .unwrap_or_else(|| thread.objective.len() as u64);
         let policy = self
             .policy_preflight(PolicyPreflightInput {
-                project_id: thread.project_id.clone(),
-                group_id: thread.group_id.clone(),
-                repo_ids,
-                branch,
-                task_type: Some("workbench".to_string()),
                 agent,
                 model: thread.model.clone(),
                 runtime: requested_backend,
-                permission,
-                session_id: Some(thread_id.to_string()),
-                run_id: None,
-                provider: thread
-                    .compute_provider
-                    .map(|provider| provider.as_str().to_string())
-                    .filter(|_| model_target == ModelTargetKind::RentedCompute)
-                    .or_else(|| Some(agent_provider(agent).into())),
-                traffic_kind: Some(
-                    if model_target == ModelTargetKind::RentedCompute {
-                        "rented_compute"
-                    } else {
-                        "managed_session"
-                    }
-                    .into(),
-                ),
-                api_source: None,
-                requested_paths: Vec::new(),
-                requested_tools: Vec::new(),
-                requested_mcp_server_ids: Vec::new(),
-                prompt_bytes,
             })
             .await?;
         let agent = policy.agent;
@@ -397,12 +359,9 @@ impl AppCore {
             CoreError::Other(format!("no adapter available for {}", agent.label()))
         })?;
         let local_model = if model_target == ModelTargetKind::RentedCompute {
-            self.rented_model_runtime(
-                thread.compute_lease_id.as_deref(),
-                thread.compute_provider,
-                thread.model.clone(),
-                thread.local_base_url.clone(),
-            )?
+            return Err(CoreError::Other(
+                "rented compute targets are not supported by the VS Code extension".into(),
+            ));
         } else {
             self.local_model_runtime(
                 thread.local_provider,
@@ -424,7 +383,7 @@ impl AppCore {
                         permission,
                         message,
                         reset_at,
-                        Some(policy.envelope.id.clone()),
+                        policy.envelope_id.clone(),
                     )
                     .await;
             }
@@ -501,7 +460,7 @@ impl AppCore {
                             agent,
                             &permission_string,
                             msg,
-                            Some(&policy.envelope.id),
+                            policy.envelope_id.as_deref(),
                             echo_user_message,
                         )
                         .await?;
@@ -561,7 +520,7 @@ impl AppCore {
             thread.estimated_compute_cost_usd,
             thread.fallback_model_target,
             Some(&target_hash),
-            Some(&policy.envelope.id),
+            policy.envelope_id.as_deref(),
         )
         .await?;
         // MCP config (and its per-run approval header) needs the turn id.

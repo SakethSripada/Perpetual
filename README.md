@@ -82,7 +82,7 @@ webview code, and vendored daemon Rust workspace live here and are edited here
 directly.
 
 The daemon workspace includes `am-daemon`, `am-core`, `am-agents`, `am-mcp`,
-`am-db`, `am-proto`, `am-compute`, `am-policy`, and `am-vcs`. The bundled
+`am-db`, `am-proto`, and `am-vcs`. The bundled
 `am-daemon` binaries under `bin/<target>/` are build artifacts from that local
 workspace. They are committed so the published extension is self-contained and
 installs without a Rust toolchain.

@@ -35,11 +35,9 @@ pub mod claude;
 pub mod cloud;
 pub mod codex;
 mod codex_app_server;
-pub mod cursor;
 
 pub use claude::ClaudeAdapter;
 pub use codex::CodexAdapter;
-pub use cursor::CursorAdapter;
 pub use detect::{binary_version, find_binary};
 pub use network::detect_network_error;
 pub use process::ManagedChild;

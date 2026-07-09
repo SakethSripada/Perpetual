@@ -6,7 +6,6 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -38,12 +37,10 @@ struct McpRuntimeEndpoint {
 }
 
 type McpEndpointState = Arc<Mutex<Option<McpRuntimeEndpoint>>>;
-type ApiGatewayEndpointState = Arc<Mutex<Option<String>>>;
 
 mod admission;
 mod agent_thread;
 mod agents;
-mod api_gateway;
 mod approvals;
 mod availability;
 mod bus;
@@ -60,7 +57,6 @@ mod local_models;
 mod network;
 mod orchestrate;
 mod policy;
-mod rented_compute;
 mod sandbox;
 mod scheduler;
 mod session_manager;
@@ -68,7 +64,6 @@ mod task_context;
 mod work_graph;
 
 pub use agents::AgentRegistry;
-pub use api_gateway::{serve_api_gateway, ApiGatewayHandle};
 pub(crate) use approvals::ApprovalScope;
 use approvals::{new_registry, ApprovalRegistry};
 pub use bus::EventBus;
@@ -102,14 +97,9 @@ pub struct AppCore {
     scheduler: Arc<Scheduler>,
     messages: MessageQueues,
     mcp_endpoint: McpEndpointState,
-    api_gateway_endpoint: ApiGatewayEndpointState,
     approvals: ApprovalRegistry,
     /// Short-TTL cache of CPU/memory readings (session-start hot path).
     capacity_cache: Arc<std::sync::Mutex<Option<(Instant, capacity::LocalSystemCapacity)>>>,
-    /// Bumped whenever policy documents, budget policies, approval grants, or
-    /// gateway configs change; consumers (API gateway) use it to invalidate
-    /// cached policy decisions.
-    policy_generation: Arc<AtomicU64>,
     /// Wakes the scheduler loop early (session ended, work queued, limit
     /// marked) so continuations start immediately instead of on the next tick.
     scheduler_wake: Arc<tokio::sync::Notify>,
@@ -159,10 +149,8 @@ impl AppCore {
             scheduler: Arc::new(Scheduler::new()),
             messages: Arc::new(Mutex::new(HashMap::new())),
             mcp_endpoint: Arc::new(Mutex::new(None)),
-            api_gateway_endpoint: Arc::new(Mutex::new(None)),
             approvals: new_registry(),
             capacity_cache: Arc::new(std::sync::Mutex::new(None)),
-            policy_generation: Arc::new(AtomicU64::new(0)),
             scheduler_wake: Arc::new(tokio::sync::Notify::new()),
             next_reset_deadline: Arc::new(std::sync::Mutex::new(None)),
             plan_wakers: Arc::new(std::sync::Mutex::new(HashMap::new())),
@@ -194,10 +182,8 @@ impl AppCore {
             scheduler: Arc::new(Scheduler::new()),
             messages: self.messages.clone(),
             mcp_endpoint: self.mcp_endpoint.clone(),
-            api_gateway_endpoint: self.api_gateway_endpoint.clone(),
             approvals: self.approvals.clone(),
             capacity_cache: self.capacity_cache.clone(),
-            policy_generation: self.policy_generation.clone(),
             scheduler_wake: self.scheduler_wake.clone(),
             next_reset_deadline: self.next_reset_deadline.clone(),
             plan_wakers: self.plan_wakers.clone(),
@@ -259,17 +245,6 @@ impl AppCore {
     /// Clear the active MCP endpoint, usually during process shutdown.
     pub async fn clear_mcp_endpoint(&self) {
         let mut endpoint = self.mcp_endpoint.lock().await;
-        *endpoint = None;
-    }
-
-    /// Register the local provider API gateway endpoint owned by this process.
-    pub async fn set_api_gateway_endpoint(&self, url: String) {
-        let mut endpoint = self.api_gateway_endpoint.lock().await;
-        *endpoint = Some(url);
-    }
-
-    pub async fn clear_api_gateway_endpoint(&self) {
-        let mut endpoint = self.api_gateway_endpoint.lock().await;
         *endpoint = None;
     }
 
@@ -660,16 +635,14 @@ pub(crate) async fn test_core() -> AppCore {
         data_dir: std::env::temp_dir().join("agentmanager-test"),
         agents: Arc::new(AgentRegistry::new()),
         sessions: Arc::new(SessionManager::new(MAX_RUNTIME_SESSION_PERMITS)),
-        sandboxes: Arc::new(SandboxManager::new(8)),
-        scheduler: Arc::new(Scheduler::new()),
-        messages: Arc::new(Mutex::new(HashMap::new())),
-        mcp_endpoint: Arc::new(Mutex::new(None)),
-        api_gateway_endpoint: Arc::new(Mutex::new(None)),
-        approvals: new_registry(),
-        capacity_cache: Arc::new(std::sync::Mutex::new(None)),
-        policy_generation: Arc::new(AtomicU64::new(0)),
-        scheduler_wake: Arc::new(tokio::sync::Notify::new()),
-        next_reset_deadline: Arc::new(std::sync::Mutex::new(None)),
+            sandboxes: Arc::new(SandboxManager::new(8)),
+            scheduler: Arc::new(Scheduler::new()),
+            messages: Arc::new(Mutex::new(HashMap::new())),
+            mcp_endpoint: Arc::new(Mutex::new(None)),
+            approvals: new_registry(),
+            capacity_cache: Arc::new(std::sync::Mutex::new(None)),
+            scheduler_wake: Arc::new(tokio::sync::Notify::new()),
+            next_reset_deadline: Arc::new(std::sync::Mutex::new(None)),
         plan_wakers: Arc::new(std::sync::Mutex::new(HashMap::new())),
         layout_debounce: Arc::new(std::sync::Mutex::new(HashMap::new())),
         cloud_checkpoint_marks: Arc::new(std::sync::Mutex::new(HashMap::new())),

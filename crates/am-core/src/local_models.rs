@@ -204,6 +204,17 @@ pub(crate) fn target_hash_matches(
         .unwrap_or(legacy_current == current)
 }
 
+pub(crate) fn normalize_model_target(
+    target: ModelTargetKind,
+    local_provider: Option<LocalModelProviderKind>,
+) -> ModelTargetKind {
+    if target == ModelTargetKind::FrontierDefault && local_provider.is_some() {
+        ModelTargetKind::LocalProvider
+    } else {
+        target
+    }
+}
+
 async fn detect_ollama(http: reqwest::Client, base_url: String) -> LocalModelStatus {
     let provider = LocalModelProviderKind::Ollama;
     let binary = tokio::task::spawn_blocking(|| find_binary("ollama"))

@@ -6,14 +6,11 @@ license.workspace = true
 
 [dependencies]
 am-proto = { workspace = true }
-am-compute = { workspace = true }
-am-policy = { workspace = true }
 am-db = { workspace = true }
 am-agents = { workspace = true }
 am-vcs = { workspace = true }
 tokio = { workspace = true }
 reqwest = { workspace = true }
-axum = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 base64 = { workspace = true }

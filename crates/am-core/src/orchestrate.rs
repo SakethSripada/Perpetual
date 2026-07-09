@@ -20,9 +20,10 @@ use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::mpsc::Receiver;
 
-use crate::local_models::{legacy_run_target_hash, run_target_hash, target_hash_matches};
-use crate::policy::{agent_provider, PolicyPreflightInput};
-use crate::rented_compute::normalize_model_target;
+use crate::local_models::{
+    legacy_run_target_hash, normalize_model_target, run_target_hash, target_hash_matches,
+};
+use crate::policy::PolicyPreflightInput;
 use crate::sandbox::SandboxLease;
 use crate::{AppCore, ApprovalScope, CoreError};
 
@@ -188,48 +189,11 @@ impl AppCore {
             .task_execution_backend(&task, execution_backend)
             .await?;
         let model_target = normalize_model_target(task.model_target, None);
-        let prompt_bytes = message
-            .as_ref()
-            .map(|msg| msg.len() as u64)
-            .unwrap_or_else(|| {
-                task.title.len() as u64
-                    + task
-                        .description
-                        .as_deref()
-                        .map(str::len)
-                        .unwrap_or_default() as u64
-            });
         let policy = self
             .policy_preflight(PolicyPreflightInput {
-                project_id: Some(task.project_id.clone()),
-                group_id: None,
-                repo_ids: vec![repo.id.clone()],
-                branch: Some(repo.default_branch.clone()),
-                task_type: Some("task".to_string()),
                 agent,
                 model: task.model.clone(),
                 runtime: requested_backend,
-                permission,
-                session_id: None,
-                run_id: None,
-                provider: task
-                    .compute_provider
-                    .map(|provider| provider.as_str().to_string())
-                    .filter(|_| model_target == ModelTargetKind::RentedCompute)
-                    .or_else(|| Some(agent_provider(agent).into())),
-                traffic_kind: Some(
-                    if model_target == ModelTargetKind::RentedCompute {
-                        "rented_compute"
-                    } else {
-                        "managed_session"
-                    }
-                    .into(),
-                ),
-                api_source: None,
-                requested_paths: Vec::new(),
-                requested_tools: Vec::new(),
-                requested_mcp_server_ids: Vec::new(),
-                prompt_bytes,
             })
             .await?;
         let agent = policy.agent;
@@ -240,17 +204,9 @@ impl AppCore {
             CoreError::Other(format!("no adapter available for {}", agent.label()))
         })?;
         let local_model = if model_target == ModelTargetKind::RentedCompute {
-            if agent != AgentKind::Codex {
-                return Err(CoreError::Other(
-                    "rented open-model runs use Codex OSS in this version".into(),
-                ));
-            }
-            self.rented_model_runtime(
-                task.compute_lease_id.as_deref(),
-                task.compute_provider,
-                model.clone(),
-                None,
-            )?
+            return Err(CoreError::Other(
+                "rented compute targets are not supported by the VS Code extension".into(),
+            ));
         } else {
             None
         };
@@ -321,7 +277,7 @@ impl AppCore {
             task.estimated_compute_cost_usd,
             task.fallback_model_target,
             Some(&target_hash),
-            Some(&policy.envelope.id),
+            policy.envelope_id.as_deref(),
         )
         .await?;
         // MCP config (and its per-run approval header) needs the session id.

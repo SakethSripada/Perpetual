@@ -224,27 +224,10 @@ impl AppCore {
         let (worktree, branch) = primary_worktree(&links).ok_or_else(|| {
             CoreError::Other("thread has no local worktree to hand off from".into())
         })?;
-        let repo_ids = links.iter().map(|l| l.repo_id.clone()).collect::<Vec<_>>();
-        let permission = crate::agent_thread::parse_permission(&thread.permission);
         self.policy_preflight(crate::policy::PolicyPreflightInput {
-            project_id: thread.project_id.clone(),
-            group_id: thread.group_id.clone(),
-            repo_ids,
-            branch: Some(branch.clone()),
-            task_type: Some("workbench".to_string()),
             agent,
             model: thread.model.clone(),
             runtime: am_proto::ExecutionBackend::Cloud,
-            permission,
-            session_id: Some(thread_id.to_string()),
-            run_id: None,
-            provider: Some(crate::policy::agent_provider(agent).into()),
-            traffic_kind: Some("cloud_handoff".into()),
-            api_source: None,
-            requested_paths: Vec::new(),
-            requested_tools: Vec::new(),
-            requested_mcp_server_ids: Vec::new(),
-            prompt_bytes: thread.objective.len() as u64,
         })
         .await?;
 
@@ -370,35 +353,6 @@ impl AppCore {
             },
         )
         .await?;
-
-        // Ledger entry so cloud launches show up in budgets/usage. Token
-        // counts aren't observable from the launch; the entry records the
-        // request itself (budgets can cap cloud launches by request count).
-        let ledger = am_proto::UsageLedgerEntry {
-            id: am_proto::new_id(),
-            ts: am_proto::now(),
-            org_id: Some("local".into()),
-            team_id: None,
-            user_id: Some("local-user".into()),
-            project_id: thread.project_id.clone(),
-            group_id: thread.group_id.clone(),
-            repo_id: None,
-            session_id: Some(thread_id.to_string()),
-            run_id: Some(run.id.clone()),
-            agent: Some(agent),
-            provider: Some(crate::policy::agent_provider(agent).to_string()),
-            model: thread.model.clone(),
-            traffic_kind: Some("cloud_handoff".into()),
-            api_source: None,
-            source_label: Some(format!("{} cloud", agent.label())),
-            input_tokens: 0,
-            output_tokens: 0,
-            estimated_cost_usd: None,
-            policy_envelope_id: None,
-            request_count: 1,
-            status_code: None,
-        };
-        let _ = am_db::repos::policy::insert_usage(&self.db.pool, &ledger).await;
 
         thread.status = TaskStatus::RunningInCloud;
         thread.active_agent = Some(agent);

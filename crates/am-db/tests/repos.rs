@@ -5,7 +5,7 @@
 
 use am_db::repos::{
     agent, agent_thread, agent_thread_message, agent_thread_repo, agent_turn, event, knowledge,
-    memory, message, policy as policy_repo, project, queued_turn, repo, session, task, task_repo,
+    memory, message, project, queued_turn, repo, session, task, task_repo,
 };
 use am_db::Db;
 use am_proto::*;
@@ -404,66 +404,6 @@ async fn agent_thread_repos_turns_messages_and_queue_roundtrip() {
     assert!(listed
         .iter()
         .any(|turn| turn.message == "silent" && !turn.echo_user_message));
-}
-
-#[tokio::test]
-async fn budget_policy_roundtrip_and_status() {
-    let db = db().await;
-    let p = a_project(&db).await;
-    let policy = BudgetPolicyRecord::new(
-        "Project monthly cap",
-        PolicyScope {
-            kind: PolicyScopeKind::Project,
-            id: Some(p.id.clone()),
-        },
-        BudgetPolicy {
-            soft_token_cap: Some(80),
-            hard_token_cap: Some(100),
-            warning_threshold: Some(0.8),
-            ..Default::default()
-        },
-    );
-    let saved = policy_repo::upsert_budget_policy(&db.pool, policy)
-        .await
-        .unwrap();
-    assert_eq!(saved.name, "Project monthly cap");
-
-    policy_repo::insert_usage(
-        &db.pool,
-        &UsageLedgerEntry {
-            id: new_id(),
-            ts: now(),
-            org_id: Some("local".into()),
-            team_id: None,
-            user_id: Some("local-user".into()),
-            project_id: Some(p.id.clone()),
-            group_id: None,
-            repo_id: None,
-            session_id: None,
-            run_id: None,
-            agent: Some(AgentKind::Codex),
-            provider: Some("openai".into()),
-            model: Some("gpt-test".into()),
-            traffic_kind: Some("managed_session".into()),
-            api_source: None,
-            source_label: Some("test".into()),
-            input_tokens: 50,
-            output_tokens: 35,
-            estimated_cost_usd: None,
-            policy_envelope_id: None,
-            request_count: 1,
-            status_code: None,
-        },
-    )
-    .await
-    .unwrap();
-    let statuses = policy_repo::budget_status(&db.pool, Some(&p.id))
-        .await
-        .unwrap();
-    assert_eq!(statuses.len(), 1);
-    assert_eq!(statuses[0].total_tokens, 85);
-    assert_eq!(statuses[0].hard_token_cap, Some(100));
-    assert!(statuses[0].warning.is_some());
 }
 
 #[tokio::test]

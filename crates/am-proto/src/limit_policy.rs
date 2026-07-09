@@ -38,7 +38,7 @@ fn default_true() -> bool {
 }
 
 fn default_priority() -> Vec<AgentKind> {
-    vec![AgentKind::ClaudeCode, AgentKind::Codex, AgentKind::Cursor]
+    vec![AgentKind::ClaudeCode, AgentKind::Codex]
 }
 
 fn default_unknown_retry() -> u64 {

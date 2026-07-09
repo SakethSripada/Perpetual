@@ -4,7 +4,7 @@ use am_agents::PermissionPolicy;
 use am_proto::{
     new_id, now, AgentKind, AppEvent, ContextInclusion, ContextPacket, EvaluationVerdict,
     ExecutionBackend, GateMode, LayoutMode, ModelTargetKind, NewAgentThread, NewTask, NewWorkEdge,
-    NewWorkNode, PolicyEffect, QueuedWorkMessage, TaskStatus, TaskUpdate, WorkEdge, WorkEdgeKind,
+    NewWorkNode, QueuedWorkMessage, TaskStatus, TaskUpdate, WorkEdge, WorkEdgeKind,
     WorkEdgeUpdate, WorkGraph, WorkNode, WorkNodeDiff, WorkNodeKind, WorkNodeRepoBinding,
     WorkNodeUpdate, WorkPlanRun, WorkPlanRunState, WorkRun,
 };
@@ -795,16 +795,9 @@ impl AppCore {
         }
         if let Some(model_target) = options.model_target {
             if model_target == ModelTargetKind::RentedCompute {
-                let model = options.model.as_deref().or(node.description.as_deref());
-                if let Some(model) = model {
-                    self.enforce_rented_spend_policy(
-                        model,
-                        None,
-                        options.max_compute_usd,
-                        options.allow_auto_purchase,
-                    )
-                    .await?;
-                }
+                return Err(CoreError::Other(
+                    "rented compute targets are not supported by the VS Code extension".into(),
+                ));
             }
         }
         if let Some(task_id) = &node.task_id {
@@ -1935,50 +1928,8 @@ impl AppCore {
         node: &WorkNode,
         repo_ids: &[String],
     ) -> Result<ContextDenials, CoreError> {
-        let mut denials = ContextDenials::default();
-        for doc in self
-            .list_policy_documents()
-            .await?
-            .into_iter()
-            .filter(|doc| doc.enabled)
-        {
-            for rule in doc.rules.into_iter().filter(|rule| rule.enabled) {
-                let scopes = &rule.selector.scopes;
-                // A rule applies globally when unscoped, or when it targets
-                // this node's project or session/thread.
-                let applies_globally = scopes.is_empty()
-                    || scopes.iter().any(|scope| {
-                        (scope.kind == am_proto::PolicyScopeKind::Project
-                            && scope.id.as_deref() == Some(node.project_id.as_str()))
-                            || (scope.kind == am_proto::PolicyScopeKind::Session
-                                && scope.id.as_deref() == node.thread_id.as_deref())
-                    });
-                // Repository-scoped rules apply only to that repo's files.
-                let scoped_repos: Vec<&str> = scopes
-                    .iter()
-                    .filter(|scope| scope.kind == am_proto::PolicyScopeKind::Repository)
-                    .filter_map(|scope| scope.id.as_deref())
-                    .filter(|id| repo_ids.iter().any(|repo_id| repo_id == id))
-                    .collect();
-                if !applies_globally && scoped_repos.is_empty() {
-                    continue;
-                }
-                if let PolicyEffect::RestrictContext { denied_globs, .. } = rule.effect {
-                    if applies_globally {
-                        denials.global.extend(denied_globs);
-                    } else {
-                        for repo_id in scoped_repos {
-                            denials
-                                .per_repo
-                                .entry(repo_id.to_string())
-                                .or_default()
-                                .extend(denied_globs.iter().cloned());
-                        }
-                    }
-                }
-            }
-        }
-        Ok(denials)
+        let _ = (node, repo_ids);
+        Ok(ContextDenials::default())
     }
 
     async fn validate_gating_edge_candidate(

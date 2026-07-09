@@ -45,6 +45,7 @@
   "main": "./dist/extension.js",
   "activationEvents": [
     "onView:agentmanager.workbench",
+    "onView:agentmanager.workbench.panel",
     "onCommand:agentmanager.openWorkbench",
     "onCommand:agentmanager.newSession",
     "onCommand:agentmanager.refresh",
@@ -404,6 +405,7 @@
     "build:daemon": "node scripts/build-daemon.mjs",
     "copy-daemon": "node scripts/copy-daemon.mjs",
     "check-daemon": "node scripts/check-daemon.mjs",
+    "install:local": "node scripts/install-local.mjs",
     "dev:reload": "node scripts/dev-reload.mjs",
     "dev:sync": "node scripts/dev-reload.mjs --no-reload",
     "vscode:prepublish": "npm run build",

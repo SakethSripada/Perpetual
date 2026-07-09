@@ -1,9 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/am-policy",
     "crates/am-proto",
-    "crates/am-compute",
     "crates/am-db",
     "crates/am-core",
     "crates/am-agents",
@@ -21,8 +19,6 @@ authors = ["AgentManager"]
 [workspace.dependencies]
 # Internal crates
 am-proto = { path = "crates/am-proto" }
-am-compute = { path = "crates/am-compute" }
-am-policy = { path = "crates/am-policy" }
 am-db = { path = "crates/am-db" }
 am-core = { path = "crates/am-core" }
 am-agents = { path = "crates/am-agents" }
