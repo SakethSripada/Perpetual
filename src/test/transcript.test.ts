@@ -7,8 +7,13 @@ import test from "node:test";
 import { build } from "esbuild";
 
 type BuildTranscriptItems = (input: any) => Array<any>;
+type ReconcilePendingMessages = (input: any) => Array<any>;
+type TranscriptModule = {
+  buildTranscriptItems: BuildTranscriptItems;
+  reconcilePendingMessages: ReconcilePendingMessages;
+};
 
-async function loadTranscriptBuilder(): Promise<BuildTranscriptItems> {
+async function loadTranscriptModule(): Promise<TranscriptModule> {
   const dir = mkdtempSync(path.join(tmpdir(), "perpetual-transcript-"));
   const outfile = path.join(dir, "transcript.cjs");
   await build({
@@ -21,11 +26,15 @@ async function loadTranscriptBuilder(): Promise<BuildTranscriptItems> {
   });
   const mod = await import(pathToFileURL(outfile).href);
   rmSync(dir, { recursive: true, force: true });
-  return mod.buildTranscriptItems as BuildTranscriptItems;
+  return {
+    buildTranscriptItems: mod.buildTranscriptItems as BuildTranscriptItems,
+    reconcilePendingMessages:
+      mod.reconcilePendingMessages as ReconcilePendingMessages,
+  };
 }
 
 test("transcript builder collapses noisy rate-limit lifecycle rows", async () => {
-  const buildTranscriptItems = await loadTranscriptBuilder();
+  const { buildTranscriptItems } = await loadTranscriptModule();
   const items = buildTranscriptItems({
     thread: {
       id: "t1",
@@ -96,7 +105,7 @@ test("transcript builder collapses noisy rate-limit lifecycle rows", async () =>
 });
 
 test("transcript builder shows queued public turns and hides silent carryover", async () => {
-  const buildTranscriptItems = await loadTranscriptBuilder();
+  const { buildTranscriptItems } = await loadTranscriptModule();
   const items = buildTranscriptItems({
     thread: null,
     events: [],
@@ -111,5 +120,111 @@ test("transcript builder shows queued public turns and hides silent carryover", 
   assert.deepEqual(
     items.filter((item) => item.type === "queued").map((item) => item.message),
     ["visible follow-up"],
+  );
+});
+
+test("pending messages reconcile by stable client id without duplicate text matching", async () => {
+  const { reconcilePendingMessages } = await loadTranscriptModule();
+  const pending = [
+    { id: "cm-hi-1", text: "hi" },
+    { id: "cm-hi-2", text: "hi" },
+  ];
+
+  const remaining = reconcilePendingMessages({
+    pending,
+    selectedStatus: "running",
+    queued: [],
+    events: [
+      {
+        id: "u1",
+        role: "user",
+        kind: "user_message",
+        text: "hi",
+        client_message_id: "cm-hi-1",
+        data: {},
+        ts: "2026-07-09T00:00:00Z",
+      },
+    ],
+  });
+
+  assert.deepEqual(remaining, [{ id: "cm-hi-2", text: "hi" }]);
+});
+
+test("pending messages reconcile queued turns and legacy data ids", async () => {
+  const { reconcilePendingMessages } = await loadTranscriptModule();
+  const pending = [
+    { id: "cm-queued", text: "queued follow-up" },
+    { id: "cm-data", text: "persisted event" },
+    { id: "cm-next", text: "keep me" },
+  ];
+
+  const remaining = reconcilePendingMessages({
+    pending,
+    selectedStatus: "running",
+    queued: [
+      {
+        id: "q1",
+        message: "queued follow-up",
+        echo_user_message: true,
+        client_message_id: "cm-queued",
+      },
+    ],
+    events: [
+      {
+        id: "u1",
+        role: "user",
+        kind: "user_message",
+        text: "persisted event",
+        data: { client_message_id: "cm-data" },
+        ts: "2026-07-09T00:00:00Z",
+      },
+    ],
+  });
+
+  assert.deepEqual(remaining, [{ id: "cm-next", text: "keep me" }]);
+});
+
+test("first-turn optimistic bubble stays stable until assistant output begins", async () => {
+  const { reconcilePendingMessages } = await loadTranscriptModule();
+  const pending = [
+    { id: "cm-first", text: "Start this", firstTurn: true },
+  ];
+  const userEvent = {
+    id: "u1",
+    role: "user",
+    kind: "user_message",
+    text: "Start this",
+    client_message_id: "cm-first",
+    data: {},
+    ts: "2026-07-09T00:00:00Z",
+  };
+
+  assert.deepEqual(
+    reconcilePendingMessages({
+      pending,
+      selectedStatus: "running",
+      queued: [],
+      events: [userEvent],
+    }),
+    pending,
+  );
+  assert.deepEqual(
+    reconcilePendingMessages({
+      pending,
+      selectedStatus: "running",
+      queued: [],
+      events: [
+        userEvent,
+        {
+          id: "a1",
+          role: "assistant",
+          kind: "assistant_text",
+          text: "On it",
+          data: { streaming: true },
+          ts: "2026-07-09T00:00:01Z",
+        },
+      ],
+    }),
+    [],
   );
 });

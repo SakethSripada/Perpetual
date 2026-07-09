@@ -17,6 +17,7 @@ import type {
   ApprovalRequest,
   AvailabilityState,
   CloudPolicy,
+  CloudRun,
   ExecutionBackend,
   ExtensionMessage,
   GithubRepository,
@@ -25,13 +26,19 @@ import type {
   LocalModelProvider,
   PermissionPolicy,
   SandboxPolicy,
+  ThreadDetails,
   WorkbenchSnapshot,
 } from "./types";
 import { BrandMark, Icon } from "./icons";
 import { Markdown } from "./markdown";
-import { buildTranscriptItems, type TranscriptItem } from "./transcript";
+import {
+  buildTranscriptItems,
+  reconcilePendingMessages,
+  type PendingTranscriptMessage,
+  type TranscriptItem,
+} from "./transcript";
 
-type PendingMessage = { id: string; text: string };
+type PendingMessage = PendingTranscriptMessage;
 type PersistedState = {
   repoIds?: string[];
   repoTouched?: boolean;
@@ -82,6 +89,7 @@ export default function App() {
   const [repoIds, setRepoIds] = useState<string[]>(persisted.repoIds ?? []);
   const [notice, setNotice] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [monitorOpen, setMonitorOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [githubOpen, setGithubOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState<{
@@ -90,6 +98,7 @@ export default function App() {
   } | null>(null);
   const [githubRepos, setGithubRepos] = useState<GithubRepository[]>([]);
   const [githubLoading, setGithubLoading] = useState(false);
+  const [welcomeLeaving, setWelcomeLeaving] = useState(false);
   // Optimistically-rendered user messages: shown the instant the user sends, then
   // dropped once the real event for them arrives in a snapshot.
   const [pending, setPending] = useState<PendingMessage[]>([]);
@@ -99,6 +108,15 @@ export default function App() {
     undefined,
   );
   const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const snapshotRef = useRef<WorkbenchSnapshot | null>(null);
+  const animatedMessageIdsRef = useRef(new Set<string>());
+  const firstTurnMessageIdsRef = useRef(new Set<string>());
+  const welcomeTimerRef = useRef<number | null>(null);
+  const stickToBottomRef = useRef(true);
+  const transcriptScrollStateRef = useRef<{
+    threadId: string | null;
+    pendingCount: number;
+  }>({ threadId: null, pendingCount: 0 });
   const runControlsKeyRef = useRef<string>("");
   const handoffRef = useRef<Record<string, string>>({});
   const repoTouchedRef = useRef(!!persisted.repoTouched);
@@ -107,7 +125,62 @@ export default function App() {
   useEffect(() => {
     const onMessage = (event: MessageEvent<ExtensionMessage>) => {
       const incoming = event.data;
+      if (incoming.type === "threadEvent") {
+        const current = snapshotRef.current;
+        const details = current?.details;
+        if (
+          !current ||
+          !details ||
+          current.selectedThreadId !== incoming.event.thread_id
+        ) {
+          return;
+        }
+        const events = [...details.events];
+        const index = events.findIndex((item) => item.id === incoming.event.id);
+        if (index >= 0) events[index] = incoming.event;
+        else events.push(incoming.event);
+        const next = {
+          ...current,
+          details: { ...details, events },
+        };
+        if (incoming.event.role === "assistant" && incoming.event.text) {
+          animatedMessageIdsRef.current.add(incoming.event.id);
+        }
+        snapshotRef.current = next;
+        setSnapshot(next);
+        const selected = current.threads.find(
+          (thread) => thread.id === current.selectedThreadId,
+        );
+        setPending((prev) =>
+          reconcilePendingMessages({
+            pending: prev,
+            selectedStatus: selected?.status,
+            events,
+            queued: details.queued,
+          }),
+        );
+        return;
+      }
       if (incoming.type === "snapshot") {
+        const previous = snapshotRef.current;
+        const sameThread =
+          !!previous &&
+          previous.selectedThreadId === incoming.snapshot.selectedThreadId;
+        if (!sameThread) {
+          animatedMessageIdsRef.current.clear();
+        } else {
+          const previousEvents = new Map(
+            (previous.details?.events ?? []).map((item) => [item.id, item]),
+          );
+          for (const item of incoming.snapshot.details?.events ?? []) {
+            if (item.role !== "assistant" || !item.text) continue;
+            const before = previousEvents.get(item.id);
+            if (!before || before.text !== item.text) {
+              animatedMessageIdsRef.current.add(item.id);
+            }
+          }
+        }
+        snapshotRef.current = incoming.snapshot;
         setSnapshot(incoming.snapshot);
         if (incoming.snapshot.error) setNotice(incoming.snapshot.error);
         // Clear the optimistic navigation once the daemon agrees on the selection.
@@ -124,20 +197,12 @@ export default function App() {
           (thread) => thread.id === incoming.snapshot.selectedThreadId,
         );
         setPending((prev) =>
-          prev.filter(
-            (item) =>
-              !selected ||
-              selected.status === "draft" ||
-              (!events.some(
-                (e) => e.role === "user" && (e.text ?? "").trim() === item.text,
-              ) &&
-                !queued.some((q) => q.message.trim() === item.text) &&
-                !events.some(
-                  (e) =>
-                    e.kind === "user_message" &&
-                    (e.text ?? "").trim() === item.text,
-                )),
-          ),
+          reconcilePendingMessages({
+            pending: prev,
+            selectedStatus: selected?.status,
+            events,
+            queued,
+          }),
         );
         return;
       }
@@ -168,6 +233,15 @@ export default function App() {
     vscode.postMessage({ type: "ready" });
     return () => window.removeEventListener("message", onMessage);
   }, []);
+
+  useEffect(
+    () => () => {
+      if (welcomeTimerRef.current !== null) {
+        window.clearTimeout(welcomeTimerRef.current);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!notice) return;
@@ -308,13 +382,41 @@ export default function App() {
     selectedThread?.original_model,
   ]);
 
+  const onTranscriptScroll = () => {
+    const el = transcriptRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickToBottomRef.current = distanceFromBottom < 96;
+  };
+
   useEffect(() => {
-    transcriptRef.current?.scrollTo({
-      top: transcriptRef.current.scrollHeight,
-      behavior: "auto",
+    const threadId = selectedThread?.id ?? null;
+    const previous = transcriptScrollStateRef.current;
+    const threadChanged = previous.threadId !== threadId;
+    const pendingAdded = pending.length > previous.pendingCount;
+    transcriptScrollStateRef.current = {
+      threadId,
+      pendingCount: pending.length,
+    };
+    if (threadChanged) stickToBottomRef.current = true;
+    if (!stickToBottomRef.current && !pendingAdded) return;
+    window.requestAnimationFrame(() => {
+      const el = transcriptRef.current;
+      if (!el) return;
+      el.scrollTo({
+        top: el.scrollHeight,
+        behavior:
+          pendingAdded && !prefersReducedMotion() && !threadChanged
+            ? "smooth"
+            : "auto",
+      });
     });
   }, [
     snapshot?.details?.events.length,
+    snapshot?.details?.events.reduce(
+      (length, event) => length + (event.text?.length ?? 0),
+      0,
+    ),
     snapshot?.details?.activities.length,
     snapshot?.details?.queued.length,
     snapshot?.details?.cloudRuns.length,
@@ -378,6 +480,16 @@ export default function App() {
       details?.cloudRuns,
     ],
   );
+  const visibleTranscriptItems = useMemo(() => {
+    if (pending.length === 0) return transcriptItems;
+    const pendingIds = new Set(pending.map((item) => item.id));
+    return transcriptItems.filter(
+      (item) =>
+        item.type !== "event" ||
+        item.event.role !== "user" ||
+        !pendingIds.has(clientMessageIdForEvent(item.event) ?? ""),
+    );
+  }, [pending, transcriptItems]);
 
   // The composer owns its own draft text so typing never re-renders the
   // transcript; it hands us the final text here on submit.
@@ -409,14 +521,28 @@ export default function App() {
         `${prettyModel(model)} is not available for ${labelAgent(agent)}. Using the agent default model.`,
       );
     }
+    const clientMessageId = newClientMessageId();
+    const firstTurn = !selectedThread;
+    if (firstTurn) {
+      firstTurnMessageIdsRef.current.add(clientMessageId);
+      setWelcomeLeaving(true);
+      if (welcomeTimerRef.current !== null) {
+        window.clearTimeout(welcomeTimerRef.current);
+      }
+      welcomeTimerRef.current = window.setTimeout(() => {
+        welcomeTimerRef.current = null;
+        setWelcomeLeaving(false);
+      }, 520);
+      setNavThreadId(undefined);
+    }
     setPending((prev) => [
       ...prev,
-      { id: `pending-${Date.now()}-${prev.length}`, text },
+      { id: clientMessageId, text, firstTurn },
     ]);
-    if (!selectedThread) setNavThreadId(undefined);
     vscode.postMessage({
       type: "submit",
       message: text,
+      clientMessageId,
       threadId: selectedThread?.id ?? null,
       repoIds: validRepoIds,
       agent,
@@ -465,6 +591,13 @@ export default function App() {
   const newSession = () => {
     setHistoryOpen(false);
     setPending([]);
+    setWelcomeLeaving(false);
+    animatedMessageIdsRef.current.clear();
+    firstTurnMessageIdsRef.current.clear();
+    if (welcomeTimerRef.current !== null) {
+      window.clearTimeout(welcomeTimerRef.current);
+      welcomeTimerRef.current = null;
+    }
     // Reflect the empty composer instantly instead of waiting for the round-trip.
     setNavThreadId(null);
     vscode.postMessage({ type: "newSession" });
@@ -473,6 +606,9 @@ export default function App() {
   const selectThread = (id: string) => {
     setHistoryOpen(false);
     setPending([]);
+    setWelcomeLeaving(false);
+    animatedMessageIdsRef.current.clear();
+    firstTurnMessageIdsRef.current.clear();
     setNavThreadId(id);
     vscode.postMessage({ type: "selectThread", threadId: id });
   };
@@ -515,6 +651,9 @@ export default function App() {
           />
           <IconButton title="Settings" onClick={() => setSettingsOpen(true)}>
             <Icon name="settings" />
+          </IconButton>
+          <IconButton title="Status monitor" onClick={() => setMonitorOpen(true)}>
+            <Icon name="clock" />
           </IconButton>
           {canReviewChanges && (
             <IconButton title="Review changes" onClick={reviewChanges}>
@@ -570,17 +709,41 @@ export default function App() {
       />
 
       <section className="conversation">
-        <div className="transcript" ref={transcriptRef}>
+        <div
+          className={`transcript${welcomeLeaving ? " is-starting" : ""}`}
+          ref={transcriptRef}
+          onScroll={onTranscriptScroll}
+        >
           {navigating && <div className="thinking">Loading…</div>}
-          {!navigating && !selectedThread && pending.length === 0 && (
-            <EmptyState trusted={snapshot?.trusted ?? true} />
+          {!navigating &&
+            ((!selectedThread && pending.length === 0) || welcomeLeaving) && (
+            <EmptyState
+              trusted={snapshot?.trusted ?? true}
+              exiting={welcomeLeaving}
+            />
           )}
           {selectedThread &&
-            transcriptItems.map((item) => (
-              <TranscriptItemView key={transcriptItemKey(item)} item={item} />
+            visibleTranscriptItems.map((item) => (
+              <TranscriptItemView
+                key={transcriptItemKey(item)}
+                item={item}
+                animateMessage={
+                  item.type === "event" &&
+                  animatedMessageIdsRef.current.has(item.event.id)
+                }
+                firstTurn={
+                  item.type === "event" &&
+                  firstTurnMessageIdsRef.current.has(
+                    clientMessageIdForEvent(item.event) ?? "",
+                  )
+                }
+              />
             ))}
           {pending.map((item) => (
-            <article key={item.id} className="msg user pending">
+            <article
+              key={item.id}
+              className={`msg user pending${item.firstTurn ? " first-turn" : ""}`}
+            >
               <div className="msg-body">{item.text}</div>
             </article>
           ))}
@@ -598,10 +761,10 @@ export default function App() {
             />
           ))}
           {!navigating &&
-            selectedThread &&
+            (selectedThread || pending.length > 0) &&
             (isRunning || pending.length > 0) &&
             !details?.approvals.length && (
-              <div className="thinking">Working…</div>
+              <WorkingIndicator />
             )}
           {!navigating &&
             selectedThread &&
@@ -703,6 +866,44 @@ export default function App() {
             setSettingsOpen(false);
           }}
           onOpenSettings={() => vscode.postMessage({ type: "openSettings" })}
+          onSignInAgent={(agent) =>
+            vscode.postMessage({ type: "signInAgent", agent })
+          }
+          onSandboxLogin={(codex) =>
+            vscode.postMessage({ type: "sandboxLogin", codex })
+          }
+          onGithubSignIn={() => vscode.postMessage({ type: "githubSignIn" })}
+          onRefreshReadiness={() =>
+            vscode.postMessage({ type: "refreshReadiness" })
+          }
+        />
+      )}
+
+      {monitorOpen && snapshot && (
+        <MonitorSheet
+          snapshot={snapshot}
+          selectedThread={selectedThread}
+          details={details ?? null}
+          onClose={() => setMonitorOpen(false)}
+          onOpenSettings={() => {
+            setMonitorOpen(false);
+            setSettingsOpen(true);
+          }}
+          onLaunchCloud={() =>
+            selectedThread &&
+            vscode.postMessage({
+              type: "launchCloudHandoff",
+              threadId: selectedThread.id,
+              agent: selectedThread.active_agent ?? selectedThread.preferred_agent,
+            })
+          }
+          onReclaimCloud={() =>
+            selectedThread &&
+            vscode.postMessage({
+              type: "reclaimCloudRun",
+              threadId: selectedThread.id,
+            })
+          }
         />
       )}
 
@@ -721,8 +922,24 @@ export default function App() {
   );
 }
 
-function TranscriptItemView({ item }: { item: TranscriptItem }) {
-  if (item.type === "event") return <MessageView event={item.event} />;
+function TranscriptItemView({
+  item,
+  animateMessage = false,
+  firstTurn = false,
+}: {
+  item: TranscriptItem;
+  animateMessage?: boolean;
+  firstTurn?: boolean;
+}) {
+  if (item.type === "event") {
+    return (
+      <MessageView
+        event={item.event}
+        animate={animateMessage}
+        firstTurn={firstTurn}
+      />
+    );
+  }
   if (item.type === "queued") {
     return (
       <article className="activity-row queued-row">
@@ -757,12 +974,35 @@ function transcriptItemKey(item: TranscriptItem): string {
   return item.id;
 }
 
+function newClientMessageId(): string {
+  const random =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `cm-${random}`;
+}
+
+function clientMessageIdForEvent(event: AgentThreadEvent): string | null {
+  if (event.client_message_id?.trim()) return event.client_message_id.trim();
+  const data = asRecord(event.data) ?? {};
+  const value = data.client_message_id;
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function prefersReducedMotion(): boolean {
+  return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+}
+
 // One transcript row. Memoized so a snapshot tick only re-renders the messages
 // that actually changed — an unchanged message keeps its parsed Markdown.
 const MessageView = memo(function MessageView({
   event,
+  animate = false,
+  firstTurn = false,
 }: {
   event: AgentThreadEvent;
+  animate?: boolean;
+  firstTurn?: boolean;
 }) {
   if (isActivityEvent(event)) {
     const detail = activityDetail(event);
@@ -785,14 +1025,104 @@ const MessageView = memo(function MessageView({
       </article>
     );
   }
+  const streaming =
+    event.role === "assistant" && (asRecord(event.data) ?? {}).streaming === true;
   return (
-    <article className={`msg ${messageClass(event.role)}`}>
+    <article
+      className={`msg ${messageClass(event.role)}${firstTurn ? " first-turn-settled" : ""}`}
+    >
       <div className="msg-body">
-        {event.text ? <Markdown text={event.text} /> : humanize(event.kind)}
+        {event.text ? (
+          event.role === "assistant" ? (
+            <StreamingMarkdown
+              text={event.text}
+              animate={animate}
+              active={streaming}
+            />
+          ) : (
+            <Markdown text={event.text} />
+          )
+        ) : (
+          humanize(event.kind)
+        )}
       </div>
     </article>
   );
 });
+
+function StreamingMarkdown({
+  text,
+  animate,
+  active,
+}: {
+  text: string;
+  animate: boolean;
+  active: boolean;
+}) {
+  const [visible, setVisible] = useState(() => (animate ? "" : text));
+  const visibleRef = useRef(visible);
+
+  useEffect(() => {
+    if (!animate || !text.startsWith(visibleRef.current)) {
+      visibleRef.current = text;
+      setVisible(text);
+      return;
+    }
+    let frame = 0;
+    let lastPaint = 0;
+    const reveal = (now: number) => {
+      if (now - lastPaint < 24) {
+        frame = window.requestAnimationFrame(reveal);
+        return;
+      }
+      lastPaint = now;
+      const current = visibleRef.current.length;
+      const backlog = text.length - current;
+      if (backlog <= 0) return;
+      const chunk = Math.min(28, Math.max(1, Math.ceil(backlog * 0.16)));
+      const end = nextRevealBoundary(text, current, current + chunk);
+      const next = text.slice(0, end);
+      visibleRef.current = next;
+      setVisible(next);
+      if (end < text.length) frame = window.requestAnimationFrame(reveal);
+    };
+    frame = window.requestAnimationFrame(reveal);
+    return () => window.cancelAnimationFrame(frame);
+  }, [animate, text]);
+
+  const revealing = visible.length < text.length;
+  return (
+    <div className={`stream-content${active || revealing ? " is-streaming" : ""}`}>
+      <Markdown text={visible} />
+    </div>
+  );
+}
+
+function nextRevealBoundary(text: string, start: number, proposed: number): number {
+  let end = Math.min(text.length, Math.max(start + 1, proposed));
+  const lookAhead = Math.min(text.length, end + 12);
+  while (end < lookAhead && !/\s/.test(text[end])) end += 1;
+  if (end < text.length) end += 1;
+  const previous = text.charCodeAt(end - 1);
+  if (previous >= 0xd800 && previous <= 0xdbff && end < text.length) end += 1;
+  return end;
+}
+
+function WorkingIndicator() {
+  return (
+    <div className="thinking" role="status" aria-live="polite">
+      <span className="thinking-orb" aria-hidden="true">
+        <span />
+      </span>
+      <span className="thinking-label">Working</span>
+      <span className="thinking-dots" aria-hidden="true">
+        <i />
+        <i />
+        <i />
+      </span>
+    </div>
+  );
+}
 
 function IconButton(props: {
   title: string;
@@ -879,6 +1209,12 @@ function Popover(props: {
         margin,
         Math.min(preferredTop, vh - menuHeight - margin),
       );
+      const originX =
+        rect.left + rect.width / 2 < left + menuWidth / 3
+          ? "left"
+          : rect.left + rect.width / 2 > left + (menuWidth * 2) / 3
+            ? "right"
+            : "center";
       const next: CSSProperties = {
         position: "fixed",
         maxHeight,
@@ -886,6 +1222,7 @@ function Popover(props: {
         minWidth: Math.min(rect.width, maxWidth),
         left,
         top,
+        transformOrigin: `${originX} ${openUp ? "bottom" : "top"}`,
       };
       setMenuStyle(next);
     };
@@ -910,7 +1247,28 @@ function Popover(props: {
       }
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") props.setOpen(false);
+      if (event.key === "Escape") {
+        props.setOpen(false);
+        return;
+      }
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      const focusable = Array.from(
+        menuRef.current?.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      ).filter((el) => el.offsetParent !== null);
+      if (focusable.length === 0) return;
+      event.preventDefault();
+      const active = document.activeElement as HTMLElement | null;
+      const current = active ? focusable.indexOf(active) : -1;
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      const next =
+        current < 0
+          ? event.key === "ArrowDown"
+            ? 0
+            : focusable.length - 1
+          : (current + direction + focusable.length) % focusable.length;
+      focusable[next]?.focus();
     };
     window.addEventListener("mousedown", onPointerDown);
     window.addEventListener("keydown", onKeyDown);
@@ -2800,6 +3158,180 @@ function isManagedThreadWorkspace(
   return Boolean(repo.worktree_path && repo.branch?.startsWith("am/thread-"));
 }
 
+function MonitorSheet(props: {
+  snapshot: WorkbenchSnapshot;
+  selectedThread: AgentThread | null;
+  details: ThreadDetails | null;
+  onClose(): void;
+  onOpenSettings(): void;
+  onLaunchCloud(): void;
+  onReclaimCloud(): void;
+}) {
+  const thread = props.selectedThread;
+  const activeCloud = props.details?.cloudRuns.find((run) =>
+    isActiveCloudRun(run.status),
+  );
+  const agent = thread?.active_agent ?? thread?.preferred_agent ?? null;
+  const activeTurn = props.details?.turns.find((turn) => !turn.ended_at);
+  const recentActivities = (props.details?.activities ?? []).slice(-8).reverse();
+  const cloudReady =
+    !!agent &&
+    props.snapshot.cloudAvailability.some(
+      (item) => item.agent === agent && item.ready,
+    );
+  const canLaunchCloud =
+    !!thread &&
+    !!props.snapshot.cloudPolicy?.enabled &&
+    !activeCloud &&
+    cloudReady &&
+    thread.status !== "draft";
+
+  return (
+    <div className="sheet-backdrop" onMouseDown={props.onClose}>
+      <section
+        className="sheet monitor-sheet"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header>
+          <strong>Status Monitor</strong>
+          <IconButton title="Close" onClick={props.onClose}>
+            <Icon name="close" />
+          </IconButton>
+        </header>
+        <div className="sheet-body">
+          <div className="monitor-grid">
+            <MonitorMetric label="Session" value={thread?.title ?? "New session"} />
+            <MonitorMetric label="State" value={thread ? humanize(thread.status) : "Draft"} />
+            <MonitorMetric label="Route" value={routeLabel(thread, activeCloud)} />
+            <MonitorMetric
+              label="Model"
+              value={
+                thread?.local_provider
+                  ? `${prettyModel(thread.model ?? "Local")} via ${labelLocalProvider(thread.local_provider)}`
+                  : thread?.model
+                    ? prettyModel(thread.model)
+                    : "Provider default"
+              }
+            />
+            <MonitorMetric
+              label="Backend"
+              value={
+                thread?.execution_backend === "docker_sandbox"
+                  ? `Docker Sandbox${activeTurn?.sandbox_name ? ` · ${activeTurn.sandbox_name}` : ""}`
+                  : "Host"
+              }
+            />
+            <MonitorMetric
+              label="Limit Reset"
+              value={
+                thread?.limit_reset_at
+                  ? formatResetTime(thread.limit_reset_at)
+                  : resetSummary(props.snapshot.agents)
+              }
+            />
+            <MonitorMetric
+              label="Queued"
+              value={`${props.details?.queued.length ?? 0} follow-up${props.details?.queued.length === 1 ? "" : "s"}`}
+            />
+            <MonitorMetric
+              label="Cloud"
+              value={
+                activeCloud
+                  ? `${labelAgent(activeCloud.agent_kind)} ${humanize(activeCloud.status)}`
+                  : props.snapshot.cloudPolicy?.enabled
+                    ? "Armed"
+                    : "Off"
+              }
+            />
+          </div>
+
+          <div className="settings-group">
+            <div className="group-title">Continuity</div>
+            <div className="monitor-actions">
+              <button
+                type="button"
+                className="secondary-btn"
+                disabled={!canLaunchCloud}
+                onClick={props.onLaunchCloud}
+              >
+                <Icon name="cloud" />
+                <span>Launch cloud</span>
+              </button>
+              <button
+                type="button"
+                className="secondary-btn"
+                disabled={!activeCloud}
+                onClick={props.onReclaimCloud}
+              >
+                <Icon name="download" />
+                <span>Reclaim</span>
+              </button>
+              <button type="button" className="secondary-btn" onClick={props.onOpenSettings}>
+                <Icon name="settings" />
+                <span>Settings</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="settings-group">
+            <div className="group-title">Recent Signals</div>
+            <div className="monitor-events">
+              {recentActivities.length === 0 && (
+                <div className="menu-empty">No handoff or scheduler activity yet</div>
+              )}
+              {recentActivities.map((activity) => (
+                <div key={activity.id} className="monitor-event">
+                  <span>{humanize(activity.kind)}</span>
+                  <small>{activityDetailText(activity.payload)}</small>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function MonitorMetric(props: { label: string; value: string }) {
+  return (
+    <div className="monitor-metric">
+      <small>{props.label}</small>
+      <span>{props.value}</span>
+    </div>
+  );
+}
+
+function routeLabel(thread: AgentThread | null, cloud: CloudRun | undefined): string {
+  if (cloud) return `${labelAgent(cloud.agent_kind)} Cloud`;
+  if (!thread) return "Local";
+  if (thread.local_provider) return `Local ${labelLocalProvider(thread.local_provider)}`;
+  if (thread.fallback_agent && thread.active_agent === thread.fallback_agent) {
+    return `${labelAgent(thread.fallback_agent)} fallback`;
+  }
+  return `${labelAgent(thread.active_agent ?? thread.preferred_agent)} local`;
+}
+
+function resetSummary(agents: AgentStatus[]): string {
+  const limited = agents.filter((agent) => agent.availability === "limited");
+  if (limited.length === 0) return "No active limits";
+  return limited
+    .map((agent) =>
+      `${labelAgent(agent.kind)} ${agent.reset_at ? formatResetTime(agent.reset_at) : "unknown"}`,
+    )
+    .join(", ");
+}
+
+function activityDetailText(payload: unknown): string {
+  const data = asRecord(payload);
+  if (!data) return "";
+  for (const key of ["reason", "detail", "error", "agent", "url", "queue_id"]) {
+    const value = data[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
 function SettingsSheet(props: {
   snapshot: WorkbenchSnapshot;
   onClose(): void;
@@ -2810,6 +3342,10 @@ function SettingsSheet(props: {
     localModelPolicy: LocalModelPolicy,
   ): void;
   onOpenSettings(): void;
+  onSignInAgent(agent: AgentKind): void;
+  onSandboxLogin(codex: boolean): void;
+  onGithubSignIn(): void;
+  onRefreshReadiness(): void;
 }) {
   const [limit, setLimit] = useState<LimitPolicy>(
     () => props.snapshot.limitPolicy ?? defaultLimitPolicy(),
@@ -2850,6 +3386,15 @@ function SettingsSheet(props: {
                 <div key={agent.kind} className="readiness-row">
                   <span>{labelAgent(agent.kind)}</span>
                   <small>{agentReadinessLabel(agent, limit)}</small>
+                  {agent.installed && !agent.authenticated && (
+                    <button
+                      type="button"
+                      className="readiness-action"
+                      onClick={() => props.onSignInAgent(agent.kind)}
+                    >
+                      Sign in
+                    </button>
+                  )}
                 </div>
               ))}
               {props.snapshot.localModels?.map((provider) => (
@@ -2866,12 +3411,35 @@ function SettingsSheet(props: {
                 <div className="readiness-row">
                   <span>Docker Sandbox</span>
                   <small>
-                    {props.snapshot.sandboxRuntime.installed
-                      ? props.snapshot.sandboxRuntime.authenticated
-                        ? "Ready"
-                        : "Sign in needed"
-                      : "Not installed"}
+	                    {props.snapshot.sandboxRuntime.installed
+	                      ? props.snapshot.sandboxRuntime.authenticated
+	                        ? props.snapshot.sandboxRuntime.codex_authenticated
+	                          ? "Ready"
+	                          : "Codex auth required"
+	                        : "Not authenticated"
+	                      : "Not installed"}
                   </small>
+                  {props.snapshot.sandboxRuntime.installed &&
+                    !props.snapshot.sandboxRuntime.authenticated && (
+                      <button
+                        type="button"
+                        className="readiness-action"
+                        onClick={() => props.onSandboxLogin(false)}
+                      >
+                        Sign in
+                      </button>
+                    )}
+                  {props.snapshot.sandboxRuntime.installed &&
+                    props.snapshot.sandboxRuntime.authenticated &&
+                    !props.snapshot.sandboxRuntime.codex_authenticated && (
+                      <button
+                        type="button"
+                        className="readiness-action"
+                        onClick={() => props.onSandboxLogin(true)}
+                      >
+                        Sign in
+                      </button>
+                    )}
                 </div>
               )}
               {props.snapshot.cloudAvailability.map((item) => (
@@ -2882,7 +3450,32 @@ function SettingsSheet(props: {
                   </small>
                 </div>
               ))}
+	              <div className="readiness-row">
+	                <span>GitHub</span>
+	                <small>
+	                  {props.snapshot.github?.authenticated
+	                    ? "Ready"
+	                    : "Use VS Code sign-in"}
+	                </small>
+	                {!props.snapshot.github?.authenticated && (
+	                  <button
+	                    type="button"
+	                    className="readiness-action"
+	                    onClick={props.onGithubSignIn}
+	                  >
+	                    Sign in
+	                  </button>
+	                )}
+	              </div>
             </div>
+            <button
+              type="button"
+              className="secondary-btn settings-refresh"
+              onClick={props.onRefreshReadiness}
+            >
+              <Icon name="refresh" />
+              <span>Refresh readiness</span>
+            </button>
           </div>
 
           <div className="settings-group">
@@ -2937,6 +3530,63 @@ function SettingsSheet(props: {
                 }
               />
             </label>
+            <div className="field">
+              <span>Cloud agent order</span>
+              <div className="fallback-order" aria-label="Cloud fallback order">
+                {normalizeAgentOrder(limit.agent_priority).map((agent, index) => (
+                  <div
+                    key={agent}
+                    className="fallback-order-row agent-order"
+                  >
+                    <span>
+                      {labelAgent(agent)}
+                      <small>Cloud agent</small>
+                    </span>
+                    <button
+                      type="button"
+                      title="Move up"
+                      disabled={index === 0}
+                      onClick={() =>
+                        setLimit({
+                          ...limit,
+                          agent_priority: normalizeAgentOrder(
+                            moveItem(
+                              normalizeAgentOrder(limit.agent_priority),
+                              index,
+                              index - 1,
+                            ),
+                          ),
+                        })
+                      }
+                    >
+                      <Icon name="up" />
+                    </button>
+                    <button
+                      type="button"
+                      title="Move down"
+                      disabled={
+                        index ===
+                        normalizeAgentOrder(limit.agent_priority).length - 1
+                      }
+                      onClick={() =>
+                        setLimit({
+                          ...limit,
+                          agent_priority: normalizeAgentOrder(
+                            moveItem(
+                              normalizeAgentOrder(limit.agent_priority),
+                              index,
+                              index + 1,
+                            ),
+                          ),
+                        })
+                      }
+                    >
+                      <Icon name="down" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
 
           <div className="settings-group">
@@ -3176,6 +3826,61 @@ function SettingsSheet(props: {
                 </div>
                 <div className="field">
                   <span>Fallback models</span>
+                  {localPolicy.targets.length > 0 && (
+                    <div className="fallback-order" aria-label="Fallback order">
+                      {localPolicy.targets.map((target, index) => (
+                        <div
+                          key={`${target.provider}:${target.model}:${index}`}
+                          className="fallback-order-row"
+                        >
+                          <span>
+                            {prettyModel(target.model)}
+                            <small>{labelLocalProvider(target.provider)}</small>
+                          </span>
+                          <button
+                            type="button"
+                            title="Move up"
+                            disabled={index === 0}
+                            onClick={() =>
+                              setLocalPolicy({
+                                ...localPolicy,
+                                targets: moveItem(localPolicy.targets, index, index - 1),
+                              })
+                            }
+                          >
+                            <Icon name="up" />
+                          </button>
+                          <button
+                            type="button"
+                            title="Move down"
+                            disabled={index === localPolicy.targets.length - 1}
+                            onClick={() =>
+                              setLocalPolicy({
+                                ...localPolicy,
+                                targets: moveItem(localPolicy.targets, index, index + 1),
+                              })
+                            }
+                          >
+                            <Icon name="down" />
+                          </button>
+                          <button
+                            type="button"
+                            title="Remove"
+                            onClick={() =>
+                              setLocalPolicy({
+                                ...localPolicy,
+                                targets: localPolicy.targets.filter(
+                                  (_, itemIndex) => itemIndex !== index,
+                                ),
+                              })
+                            }
+                          >
+                            <Icon name="trash" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <div className="model-targets">
                     {props.snapshot.localModels?.flatMap((provider) =>
                       provider.models.map((modelInfo) => {
@@ -3387,12 +4092,21 @@ function GithubSheet(props: {
 function EmptyState({
   trusted,
   compact = false,
+  exiting = false,
 }: {
   trusted: boolean;
   compact?: boolean;
+  exiting?: boolean;
 }) {
   return (
-    <div className={compact ? "empty compact" : "empty"}>
+    <div
+      className={
+        compact
+          ? "empty compact"
+          : `empty welcome${exiting ? " is-leaving" : ""}`
+      }
+      aria-hidden={exiting || undefined}
+    >
       <span className="empty-mark">
         <BrandMark size={34} />
       </span>
@@ -3494,6 +4208,27 @@ function pushPickerOption(
     return;
   }
   out.push(option);
+}
+
+function moveItem<T>(items: T[], from: number, to: number): T[] {
+  if (to < 0 || to >= items.length || from === to) return items;
+  const next = [...items];
+  const [item] = next.splice(from, 1);
+  next.splice(to, 0, item);
+  return next;
+}
+
+function normalizeAgentOrder(value: readonly AgentKind[] | null | undefined): AgentKind[] {
+  const out: AgentKind[] = [];
+  for (const agent of value ?? []) {
+    if ((agent === "claude_code" || agent === "codex") && !out.includes(agent)) {
+      out.push(agent);
+    }
+  }
+  for (const agent of ["claude_code", "codex"] as const) {
+    if (!out.includes(agent)) out.push(agent);
+  }
+  return out;
 }
 
 function reasoningOptions(
@@ -3660,7 +4395,7 @@ function agentReadinessLabel(
   policy: LimitPolicy | null,
 ): string {
   if (!agent.installed) return "Not installed";
-  if (!agent.authenticated) return "Sign in needed";
+  if (!agent.authenticated) return "Not authenticated";
   if (agent.availability === "limited") {
     return agent.reset_at
       ? `Limited until ${formatResetTime(agent.reset_at)}`

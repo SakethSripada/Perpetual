@@ -226,6 +226,12 @@ pub enum NormalizedEvent {
     AssistantText {
         text: String,
     },
+    /// An incremental assistant-text fragment. Consumers that persist a
+    /// transcript should coalesce consecutive deltas into one message and use
+    /// the following `AssistantText` event as the authoritative final value.
+    AssistantTextDelta {
+        delta: String,
+    },
     ToolUse {
         name: String,
         input: serde_json::Value,

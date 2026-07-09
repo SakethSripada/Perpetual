@@ -160,6 +160,7 @@ impl AppCore {
         };
         core.reconcile_stale_sandboxes();
         core.scheduler.start(core.clone_for_scheduler()).await;
+        core.wake_scheduler();
         Ok(core)
     }
 
@@ -635,14 +636,14 @@ pub(crate) async fn test_core() -> AppCore {
         data_dir: std::env::temp_dir().join("agentmanager-test"),
         agents: Arc::new(AgentRegistry::new()),
         sessions: Arc::new(SessionManager::new(MAX_RUNTIME_SESSION_PERMITS)),
-            sandboxes: Arc::new(SandboxManager::new(8)),
-            scheduler: Arc::new(Scheduler::new()),
-            messages: Arc::new(Mutex::new(HashMap::new())),
-            mcp_endpoint: Arc::new(Mutex::new(None)),
-            approvals: new_registry(),
-            capacity_cache: Arc::new(std::sync::Mutex::new(None)),
-            scheduler_wake: Arc::new(tokio::sync::Notify::new()),
-            next_reset_deadline: Arc::new(std::sync::Mutex::new(None)),
+        sandboxes: Arc::new(SandboxManager::new(8)),
+        scheduler: Arc::new(Scheduler::new()),
+        messages: Arc::new(Mutex::new(HashMap::new())),
+        mcp_endpoint: Arc::new(Mutex::new(None)),
+        approvals: new_registry(),
+        capacity_cache: Arc::new(std::sync::Mutex::new(None)),
+        scheduler_wake: Arc::new(tokio::sync::Notify::new()),
+        next_reset_deadline: Arc::new(std::sync::Mutex::new(None)),
         plan_wakers: Arc::new(std::sync::Mutex::new(HashMap::new())),
         layout_debounce: Arc::new(std::sync::Mutex::new(HashMap::new())),
         cloud_checkpoint_marks: Arc::new(std::sync::Mutex::new(HashMap::new())),

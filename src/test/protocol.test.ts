@@ -102,13 +102,70 @@ test("serializes launch-quality workbench requests", () => {
   assert.equal(variant("prepare_shutdown"), "prepare_shutdown");
 });
 
+test("serializes stable client message ids for thread turns", () => {
+  assert.deepEqual(
+    variant("run_agent_thread", {
+      thread_id: "t1",
+      agent: "codex",
+      permission: "workspace_write",
+      message: "hi",
+      execution_backend: "host",
+      client_message_id: "cm-1",
+    }),
+    {
+      run_agent_thread: {
+        thread_id: "t1",
+        agent: "codex",
+        permission: "workspace_write",
+        message: "hi",
+        execution_backend: "host",
+        client_message_id: "cm-1",
+      },
+    },
+  );
+  assert.deepEqual(
+    variant("send_thread_message", {
+      thread_id: "t1",
+      agent: "claude_code",
+      permission: "workspace_write",
+      message: "follow up",
+      client_message_id: "cm-2",
+    }),
+    {
+      send_thread_message: {
+        thread_id: "t1",
+        agent: "claude_code",
+        permission: "workspace_write",
+        message: "follow up",
+        client_message_id: "cm-2",
+      },
+    },
+  );
+});
+
 test("extracts launch-quality workbench responses", () => {
   assert.deepEqual(
     responsePayload(
-      { queued_turns: [{ id: "q1", message: "again", echo_user_message: false }] },
+      {
+        queued_turns: [
+          {
+            id: "q1",
+            message: "again",
+            echo_user_message: false,
+            client_message_id: "cm-q1",
+          },
+        ],
+      },
       "queued_turns",
     ),
-    [{ id: "q1", message: "again", echo_user_message: false }],
+    [
+      {
+        id: "q1",
+        message: "again",
+        echo_user_message: false,
+        client_message_id: "cm-q1",
+      },
+    ],
   );
   assert.deepEqual(
     responsePayload({ activity: [{ kind: "thread.fallback_started" }] }, "activity"),

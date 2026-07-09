@@ -526,6 +526,18 @@ async fn handle_notification(
             }
             None
         }
+        "item/agentMessage/delta" => {
+            if let Some(delta) = params.get("delta").and_then(Value::as_str) {
+                if !delta.is_empty() {
+                    let _ = events_tx
+                        .send(NormalizedEvent::AssistantTextDelta {
+                            delta: delta.to_string(),
+                        })
+                        .await;
+                }
+            }
+            None
+        }
         _ => None,
     }
 }
@@ -748,6 +760,29 @@ mod tests {
         let item = json!({ "type": "agentMessage", "id": "i1", "text": "Done." });
         let events = map_item(&item, true);
         assert!(matches!(&events[0], NormalizedEvent::AssistantText { text } if text == "Done."));
+    }
+
+    #[tokio::test]
+    async fn maps_agent_message_delta_notification() {
+        let (tx, mut rx) = mpsc::channel(2);
+        let status = handle_notification(
+            "item/agentMessage/delta",
+            &json!({
+                "params": {
+                    "threadId": "t1",
+                    "turnId": "turn1",
+                    "itemId": "i1",
+                    "delta": "Smooth"
+                }
+            }),
+            &tx,
+        )
+        .await;
+        assert!(status.is_none());
+        assert!(matches!(
+            rx.recv().await,
+            Some(NormalizedEvent::AssistantTextDelta { delta }) if delta == "Smooth"
+        ));
     }
 
     #[test]

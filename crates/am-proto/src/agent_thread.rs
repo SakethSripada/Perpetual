@@ -221,6 +221,8 @@ pub struct AgentThreadEvent {
     pub role: String,
     pub kind: String,
     pub text: Option<String>,
+    #[serde(default)]
+    pub client_message_id: Option<String>,
     pub data: serde_json::Value,
     pub ts: DateTime<Utc>,
 }
@@ -234,6 +236,8 @@ pub struct QueuedTurn {
     pub message: String,
     #[serde(default = "default_echo_user_message")]
     pub echo_user_message: bool,
+    #[serde(default)]
+    pub client_message_id: Option<String>,
     pub policy_envelope_id: Option<String>,
     pub created_at: DateTime<Utc>,
 }

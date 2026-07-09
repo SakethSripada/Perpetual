@@ -50,6 +50,7 @@ fn task_status_contract() {
         TaskStatus::Draft => "draft",
         TaskStatus::Queued => "queued",
         TaskStatus::Running => "running",
+        TaskStatus::RunningInCloud => "running_in_cloud",
         TaskStatus::AwaitingApproval => "awaiting_approval",
         TaskStatus::WaitingForLimit => "waiting_for_limit",
         TaskStatus::WaitingForNetwork => "waiting_for_network",

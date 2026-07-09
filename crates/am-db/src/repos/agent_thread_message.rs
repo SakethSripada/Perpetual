@@ -17,11 +17,41 @@ struct MessageRow {
 }
 
 pub async fn insert(pool: &SqlitePool, ev: &AgentThreadEvent) -> Result<(), DbError> {
-    let content = serde_json::json!({ "text": ev.text, "data": ev.data });
+    let content = serde_json::json!({
+        "text": ev.text,
+        "data": ev.data,
+        "client_message_id": ev.client_message_id,
+    });
     let content_json = serde_json::to_string(&content).unwrap_or_else(|_| "{}".into());
     sqlx::query(
         "INSERT INTO agent_thread_messages (id, thread_id, turn_id, role, type, content_json, ts) \
          VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&ev.id)
+    .bind(&ev.thread_id)
+    .bind(&ev.turn_id)
+    .bind(&ev.role)
+    .bind(&ev.kind)
+    .bind(&content_json)
+    .bind(ev.ts)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Insert a transcript event or replace its mutable content. Streaming uses a
+/// stable event id so many provider deltas remain one persisted chat message.
+pub async fn upsert(pool: &SqlitePool, ev: &AgentThreadEvent) -> Result<(), DbError> {
+    let content = serde_json::json!({
+        "text": ev.text,
+        "data": ev.data,
+        "client_message_id": ev.client_message_id,
+    });
+    let content_json = serde_json::to_string(&content).unwrap_or_else(|_| "{}".into());
+    sqlx::query(
+        "INSERT INTO agent_thread_messages (id, thread_id, turn_id, role, type, content_json, ts) \
+         VALUES (?, ?, ?, ?, ?, ?, ?) \
+         ON CONFLICT(id) DO UPDATE SET content_json = excluded.content_json",
     )
     .bind(&ev.id)
     .bind(&ev.thread_id)
@@ -76,6 +106,15 @@ fn row_to_event(r: MessageRow) -> AgentThreadEvent {
         .get("data")
         .cloned()
         .unwrap_or(serde_json::Value::Null);
+    let client_message_id = content
+        .get("client_message_id")
+        .and_then(|id| id.as_str())
+        .map(str::to_string)
+        .or_else(|| {
+            data.get("client_message_id")
+                .and_then(|id| id.as_str())
+                .map(str::to_string)
+        });
     AgentThreadEvent {
         id: r.id,
         thread_id: r.thread_id,
@@ -83,6 +122,7 @@ fn row_to_event(r: MessageRow) -> AgentThreadEvent {
         role: r.role,
         kind: r.kind,
         text,
+        client_message_id,
         data,
         ts: r.ts,
     }

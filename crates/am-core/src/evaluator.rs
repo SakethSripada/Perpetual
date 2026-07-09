@@ -184,6 +184,9 @@ impl AppCore {
                         output.push_str(&text);
                         output.push('\n');
                     }
+                    // The completed message below is authoritative. Ignoring
+                    // deltas here avoids duplicating evaluator output.
+                    NormalizedEvent::AssistantTextDelta { .. } => {}
                     NormalizedEvent::Error { message, .. } => {
                         output.push_str("\nEvaluator error: ");
                         output.push_str(&message);

@@ -12,6 +12,53 @@ export type TranscriptItem =
   | { type: "transition"; id: string; tone: "info" | "warning" | "danger"; text: string; detail?: string | null }
   | { type: "queued"; id: string; message: string };
 
+export type PendingTranscriptMessage = {
+  id: string;
+  text: string;
+  firstTurn?: boolean;
+};
+
+export function reconcilePendingMessages(input: {
+  pending: PendingTranscriptMessage[];
+  selectedStatus: AgentThread["status"] | null | undefined;
+  events: AgentThreadEvent[];
+  queued: QueuedTurn[];
+}): PendingTranscriptMessage[] {
+  if (!input.selectedStatus || input.selectedStatus === "draft") {
+    return input.pending;
+  }
+  return input.pending.filter((item) => {
+    // Keep the optimistic first bubble mounted while the welcome screen exits.
+    // The persisted duplicate is hidden by the view until assistant output
+    // starts, which gives the layout one stable element to animate.
+    if (
+      item.firstTurn &&
+      input.selectedStatus === "running" &&
+      !input.events.some((event) => event.role === "assistant")
+    ) {
+      return true;
+    }
+    if (
+      input.events.some((event) => eventClientMessageId(event) === item.id) ||
+      input.queued.some((turn) => turn.client_message_id === item.id)
+    ) {
+      return false;
+    }
+    // Legacy snapshots did not include client ids; only use text matching when
+    // no stable id exists on either side.
+    const legacyEventMatch = input.events.some(
+      (event) =>
+        !eventClientMessageId(event) &&
+        event.role === "user" &&
+        (event.text ?? "").trim() === item.text,
+    );
+    if (legacyEventMatch) return false;
+    return !input.queued.some(
+      (turn) => !turn.client_message_id && turn.message.trim() === item.text,
+    );
+  });
+}
+
 export function buildTranscriptItems(input: {
   thread: AgentThread | null;
   events: AgentThreadEvent[];
@@ -179,6 +226,13 @@ function itemTs(item: TranscriptItem, input: {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function eventClientMessageId(event: AgentThreadEvent): string | null {
+  if (event.client_message_id) return event.client_message_id;
+  const data = asRecord(event.data);
+  const id = data.client_message_id;
+  return typeof id === "string" && id.trim() ? id.trim() : null;
 }
 
 function parseAgent(value: unknown): AgentKind | null {

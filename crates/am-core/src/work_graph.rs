@@ -4,9 +4,9 @@ use am_agents::PermissionPolicy;
 use am_proto::{
     new_id, now, AgentKind, AppEvent, ContextInclusion, ContextPacket, EvaluationVerdict,
     ExecutionBackend, GateMode, LayoutMode, ModelTargetKind, NewAgentThread, NewTask, NewWorkEdge,
-    NewWorkNode, QueuedWorkMessage, TaskStatus, TaskUpdate, WorkEdge, WorkEdgeKind,
-    WorkEdgeUpdate, WorkGraph, WorkNode, WorkNodeDiff, WorkNodeKind, WorkNodeRepoBinding,
-    WorkNodeUpdate, WorkPlanRun, WorkPlanRunState, WorkRun,
+    NewWorkNode, QueuedWorkMessage, TaskStatus, TaskUpdate, WorkEdge, WorkEdgeKind, WorkEdgeUpdate,
+    WorkGraph, WorkNode, WorkNodeDiff, WorkNodeKind, WorkNodeRepoBinding, WorkNodeUpdate,
+    WorkPlanRun, WorkPlanRunState, WorkRun,
 };
 use serde_json::json;
 
@@ -1046,7 +1046,7 @@ impl AppCore {
         if let Some(task_id) = &node.task_id {
             self.send_message(task_id, agent, permission, message).await
         } else if let Some(thread_id) = &node.thread_id {
-            self.send_thread_message(thread_id, agent, permission, message)
+            self.send_thread_message(thread_id, agent, permission, message, None)
                 .await
         } else {
             Err(CoreError::Other(

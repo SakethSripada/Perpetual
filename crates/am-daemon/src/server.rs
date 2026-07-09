@@ -476,13 +476,15 @@ async fn dispatch(core: &AppCore, req: DaemonRequest) -> Result<DaemonResponse, 
             permission,
             message,
             execution_backend,
+            client_message_id,
         } => A::TurnId(
-            core.run_agent_thread_with_backend(
+            core.run_agent_thread_with_client_message(
                 &thread_id,
                 agent,
                 permission,
                 message,
                 execution_backend,
+                client_message_id,
             )
             .await
             .map_err(s)?,
@@ -492,8 +494,9 @@ async fn dispatch(core: &AppCore, req: DaemonRequest) -> Result<DaemonResponse, 
             agent,
             permission,
             message,
+            client_message_id,
         } => A::TurnIdOpt(
-            core.send_thread_message(&thread_id, agent, permission, message)
+            core.send_thread_message(&thread_id, agent, permission, message, client_message_id)
                 .await
                 .map_err(s)?,
         ),

@@ -145,11 +145,12 @@ pub async fn get(pool: &SqlitePool, id: &str) -> Result<Option<Task>, DbError> {
 }
 
 /// Reconcile tasks left `running` by a previous process: there is no live
-/// session backing them after a restart, so move them to `paused` (resumable).
+/// session backing them after a restart, so put them back on the scheduler
+/// queue instead of stranding work behind a manual resume.
 /// Returns the number reconciled.
 pub async fn pause_orphaned_running(pool: &SqlitePool) -> Result<u64, DbError> {
     let res = sqlx::query("UPDATE tasks SET status = ?, updated_at = ? WHERE status = 'running'")
-        .bind(TaskStatus::Paused.as_str())
+        .bind(TaskStatus::Queued.as_str())
         .bind(now())
         .execute(pool)
         .await?;

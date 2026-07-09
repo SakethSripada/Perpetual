@@ -126,6 +126,7 @@ fn build_args(spec: &SessionSpec, resume: Option<&SessionRef>) -> Vec<String> {
         spec.prompt.clone(),
         "--output-format".to_string(),
         "stream-json".to_string(),
+        "--include-partial-messages".to_string(),
         "--verbose".to_string(),
     ];
 
@@ -511,6 +512,20 @@ pub(crate) fn parse_line(v: &Value) -> Vec<NormalizedEvent> {
                 }
             }
         }
+        Some("stream_event") => {
+            let event = v.get("event").unwrap_or(v);
+            if event.get("type").and_then(|t| t.as_str()) == Some("content_block_delta")
+                && event.pointer("/delta/type").and_then(|t| t.as_str()) == Some("text_delta")
+            {
+                if let Some(delta) = event.pointer("/delta/text").and_then(|t| t.as_str()) {
+                    if !delta.is_empty() {
+                        out.push(NormalizedEvent::AssistantTextDelta {
+                            delta: delta.to_string(),
+                        });
+                    }
+                }
+            }
+        }
         Some("user") => {
             if let Some(content) = v.pointer("/message/content").and_then(|c| c.as_array()) {
                 for block in content {
@@ -643,6 +658,7 @@ mod tests {
                 "Implement it",
                 "--output-format",
                 "stream-json",
+                "--include-partial-messages",
                 "--verbose",
                 "--permission-mode",
                 "acceptEdits",
@@ -961,6 +977,38 @@ mod tests {
             matches!(&events[0], NormalizedEvent::AssistantText { text } if text == "Editing the file")
         );
         assert!(matches!(&events[1], NormalizedEvent::ToolUse { name, .. } if name == "Edit"));
+    }
+
+    #[test]
+    fn enables_and_parses_partial_assistant_text() {
+        let spec = SessionSpec {
+            worktree: "/tmp/worktree".into(),
+            prompt: "hello".into(),
+            model: None,
+            reasoning: None,
+            local_model: None,
+            mcp: None,
+            permission: PermissionPolicy::ReadOnly,
+            runtime: crate::SessionRuntime::default(),
+            policy: None,
+            approver: None,
+        };
+        assert!(build_args(&spec, None)
+            .iter()
+            .any(|arg| arg == "--include-partial-messages"));
+
+        let events = parse_line(&json!({
+            "type": "stream_event",
+            "event": {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": { "type": "text_delta", "text": "Smooth" }
+            }
+        }));
+        assert!(matches!(
+            &events[0],
+            NormalizedEvent::AssistantTextDelta { delta } if delta == "Smooth"
+        ));
     }
 
     #[test]

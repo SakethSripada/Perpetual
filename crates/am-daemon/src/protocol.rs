@@ -277,12 +277,16 @@ pub enum DaemonRequest {
         permission: PermissionPolicy,
         message: Option<String>,
         execution_backend: Option<ExecutionBackend>,
+        #[serde(default)]
+        client_message_id: Option<String>,
     },
     SendThreadMessage {
         thread_id: String,
         agent: AgentKind,
         permission: PermissionPolicy,
         message: String,
+        #[serde(default)]
+        client_message_id: Option<String>,
     },
     StopAgentThread {
         thread_id: String,

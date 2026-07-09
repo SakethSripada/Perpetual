@@ -14,7 +14,8 @@ export class WorkbenchWebviewProvider implements vscode.WebviewViewProvider, vsc
     private readonly controller: WorkbenchController
   ) {
     this.disposables.push(
-      controller.onSnapshot((snapshot) => this.postAll({ type: "snapshot", snapshot }))
+      controller.onSnapshot((snapshot) => this.postAll({ type: "snapshot", snapshot })),
+      controller.onThreadEvent((event) => this.postAll({ type: "threadEvent", event }))
     );
   }
 

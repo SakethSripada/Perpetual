@@ -3,6 +3,7 @@ export type TaskStatus =
   | "draft"
   | "queued"
   | "running"
+  | "running_in_cloud"
   | "awaiting_approval"
   | "waiting_for_limit"
   | "waiting_for_network"
@@ -336,6 +337,7 @@ export interface AgentThreadEvent {
   role: string;
   kind: string;
   text: string | null;
+  client_message_id?: string | null;
   data: unknown;
   ts: string;
 }
@@ -364,6 +366,7 @@ export interface QueuedTurn {
   permission: PermissionPolicy;
   message: string;
   echo_user_message?: boolean;
+  client_message_id?: string | null;
   created_at: string;
 }
 

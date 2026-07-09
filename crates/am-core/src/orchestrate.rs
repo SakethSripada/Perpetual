@@ -1874,6 +1874,12 @@ fn map_event(session_id: &str, task_id: &str, ev: &NormalizedEvent) -> SessionEv
         NormalizedEvent::AssistantText { text } => {
             ("assistant", "assistant_text", Some(text.clone()), json!({}))
         }
+        NormalizedEvent::AssistantTextDelta { delta } => (
+            "assistant",
+            "assistant_text",
+            Some(delta.clone()),
+            json!({ "streaming": true }),
+        ),
         NormalizedEvent::ToolUse { name, input } => (
             "tool",
             "tool_use",

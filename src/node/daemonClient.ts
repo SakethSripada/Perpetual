@@ -360,7 +360,8 @@ export class DaemonClient extends EventEmitter implements DaemonApi {
     agent: Parameters<DaemonApi["runAgentThread"]>[1],
     permission: Parameters<DaemonApi["runAgentThread"]>[2],
     message: string | null,
-    executionBackend: Parameters<DaemonApi["runAgentThread"]>[4]
+    executionBackend: Parameters<DaemonApi["runAgentThread"]>[4],
+    clientMessageId?: string | null
   ) {
     return responsePayload(
       await this.requestRaw(
@@ -370,6 +371,7 @@ export class DaemonClient extends EventEmitter implements DaemonApi {
           permission,
           message,
           execution_backend: executionBackend,
+          client_message_id: clientMessageId ?? null,
         })
       ),
       "turn_id"
@@ -380,11 +382,18 @@ export class DaemonClient extends EventEmitter implements DaemonApi {
     threadId: string,
     agent: Parameters<DaemonApi["sendThreadMessage"]>[1],
     permission: Parameters<DaemonApi["sendThreadMessage"]>[2],
-    message: string
+    message: string,
+    clientMessageId?: string | null
   ) {
     return responsePayload(
       await this.requestRaw(
-        variant("send_thread_message", { thread_id: threadId, agent, permission, message })
+        variant("send_thread_message", {
+          thread_id: threadId,
+          agent,
+          permission,
+          message,
+          client_message_id: clientMessageId ?? null,
+        })
       ),
       "turn_id_opt"
     );

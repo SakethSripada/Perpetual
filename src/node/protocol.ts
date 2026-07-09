@@ -138,13 +138,15 @@ export interface DaemonApi {
     agent: AgentKind,
     permission: PermissionPolicy,
     message: string | null,
-    executionBackend: ExecutionBackend | null
+    executionBackend: ExecutionBackend | null,
+    clientMessageId?: string | null
   ): Promise<string>;
   sendThreadMessage(
     threadId: string,
     agent: AgentKind,
     permission: PermissionPolicy,
-    message: string
+    message: string,
+    clientMessageId?: string | null
   ): Promise<string | null>;
   stopAgentThread(threadId: string): Promise<void>;
   listPendingApprovals(): Promise<ApprovalRequest[]>;

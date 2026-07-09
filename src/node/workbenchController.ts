@@ -9,6 +9,7 @@ import type {
   AgentModelCatalog,
   AgentRunDefaults,
   AgentStatus,
+  AgentThreadEvent,
   AgentThreadApplyResult,
   AgentThreadDiff,
   AgentThread,
@@ -40,6 +41,7 @@ export type WebviewReply = (message: unknown) => void;
 type SubmitMessage = {
   type: "submit";
   message: string;
+  clientMessageId?: string | null;
   threadId?: string | null;
   repoIds?: string[];
   agent?: AgentKind;
@@ -74,6 +76,8 @@ type WebviewMessage =
   | { type: "setCloudPolicy"; policy: CloudPolicy }
   | { type: "setLocalModelPolicy"; policy: LocalModelPolicy }
   | { type: "sandboxLogin"; codex?: boolean }
+  | { type: "signInAgent"; agent: AgentKind }
+  | { type: "githubSignIn" | "refreshReadiness" }
   | { type: "launchCloudHandoff"; threadId: string; agent?: AgentKind | null }
   | { type: "reclaimCloudRun"; threadId: string }
   | { type: "openPath"; path: string }
@@ -109,6 +113,7 @@ type DiffCacheEntry = {
 
 export class WorkbenchController implements vscode.Disposable {
   private readonly snapshots = new vscode.EventEmitter<WorkbenchSnapshot>();
+  private readonly threadEvents = new vscode.EventEmitter<AgentThreadEvent>();
   private refreshTimer: NodeJS.Timeout | null = null;
   private lastSyncedSettings = "";
   private disposed = false;
@@ -120,6 +125,7 @@ export class WorkbenchController implements vscode.Disposable {
   private reposConnected = false;
 
   readonly onSnapshot = this.snapshots.event;
+  readonly onThreadEvent = this.threadEvents.event;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -143,6 +149,7 @@ export class WorkbenchController implements vscode.Disposable {
     this.disposed = true;
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
     this.snapshots.dispose();
+    this.threadEvents.dispose();
   }
 
   async handleMessage(
@@ -279,6 +286,19 @@ export class WorkbenchController implements vscode.Disposable {
           return;
         case "sandboxLogin":
           await this.startSandboxLogin(!!message.codex, reply);
+          return;
+        case "signInAgent":
+          await this.startAgentSignIn(message.agent, reply);
+          return;
+        case "githubSignIn":
+          await this.githubToken();
+          this.notice(reply, "GitHub sign-in is ready.");
+          this.detectionCache = null;
+          await this.refresh();
+          return;
+        case "refreshReadiness":
+          this.detectionCache = null;
+          await this.refresh();
           return;
         case "launchCloudHandoff": {
           const run = await this.withClient((client) =>
@@ -562,6 +582,7 @@ export class WorkbenchController implements vscode.Disposable {
         agent,
         permission,
         text,
+        blankToNull(message.clientMessageId ?? null),
       );
       return;
     }
@@ -587,6 +608,7 @@ export class WorkbenchController implements vscode.Disposable {
       permission,
       text,
       executionBackend,
+      blankToNull(message.clientMessageId ?? null),
     );
   }
 
@@ -595,10 +617,11 @@ export class WorkbenchController implements vscode.Disposable {
     agent: AgentKind,
     permission: PermissionPolicy,
     text: string,
+    clientMessageId: string | null,
   ): Promise<void> {
     try {
       const client = await this.daemon.getClient();
-      await client.sendThreadMessage(threadId, agent, permission, text);
+      await client.sendThreadMessage(threadId, agent, permission, text, clientMessageId);
       await this.refresh();
     } catch (err) {
       const message = formatError(err);
@@ -613,6 +636,7 @@ export class WorkbenchController implements vscode.Disposable {
     permission: PermissionPolicy,
     text: string,
     executionBackend: ExecutionBackend,
+    clientMessageId: string | null,
   ): Promise<void> {
     try {
       const client = await this.daemon.getClient();
@@ -622,6 +646,7 @@ export class WorkbenchController implements vscode.Disposable {
         permission,
         text,
         executionBackend,
+        clientMessageId,
       );
       await this.refresh();
     } catch (err) {
@@ -728,6 +753,35 @@ export class WorkbenchController implements vscode.Disposable {
       : await client.sandboxLogin();
     reply?.({ type: "sandboxLoginPrompt", prompt, codex });
     await vscode.env.openExternal(vscode.Uri.parse(prompt.url));
+  }
+
+  private async startAgentSignIn(
+    agent: AgentKind,
+    reply?: WebviewReply,
+  ): Promise<void> {
+    this.assertTrusted();
+    const client = await this.daemon.getClient();
+    const statuses: AgentStatus[] = await client
+      .detectAgents()
+      .catch(() => []);
+    const status = statuses.find((item) => item.kind === agent);
+    const binary = status?.binary_path;
+    if (!status?.installed || !binary) {
+      this.notice(
+        reply,
+        `${labelAgent(agent)} CLI is not installed or could not be found.`,
+      );
+      return;
+    }
+    const terminal = vscode.window.createTerminal(`${labelAgent(agent)} Sign In`);
+    const quoted = shellQuote(binary);
+    const command =
+      agent === "codex"
+        ? `${quoted} login`
+        : `${quoted} auth login || ${quoted} login`;
+    terminal.show(true);
+    terminal.sendText(command, true);
+    this.notice(reply, `Opened ${labelAgent(agent)} sign-in in a terminal.`);
   }
 
   private async loadDiff(threadId: string): Promise<void> {
@@ -1047,7 +1101,8 @@ export class WorkbenchController implements vscode.Disposable {
       return;
     }
     if (event.type === "agent_thread_event") {
-      const data = event.data as { thread_id?: string };
+      const data = event.data as AgentThreadEvent;
+      this.threadEvents.fire(data);
       if (data.thread_id) this.diffCache.delete(data.thread_id);
     }
     if (event.type === "agent_thread_updated") {
@@ -1063,17 +1118,24 @@ export class WorkbenchController implements vscode.Disposable {
       const data = event.data as { thread_id?: string };
       if (data.thread_id) this.diffCache.delete(data.thread_id);
     }
-    // Approvals are interactive — surface them immediately. Streaming thread
-    // events are coalesced just enough to avoid thrashing the webview.
-    const delay =
-      event.type === "approval_requested" || event.type === "approval_resolved"
-        ? 0
-        : event.type === "activity" || event.type === "cloud_run_updated"
-          ? 80
-        : event.type === "agent_thread_event"
-          ? 150
-          : 80;
-    if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    // Approvals are interactive — surface them immediately. Everything else is
+    // throttled (not debounced): a continuous token stream must keep painting
+    // instead of postponing the refresh until the provider pauses.
+    const immediate =
+      event.type === "approval_requested" || event.type === "approval_resolved";
+    if (immediate && this.refreshTimer) {
+      clearTimeout(this.refreshTimer);
+      this.refreshTimer = null;
+    }
+    if (immediate) {
+      void this.refresh();
+      return;
+    }
+    if (this.refreshTimer) return;
+    // Transcript events already travel directly to the webview; this slower
+    // snapshot cadence reconciles durable state without turning each token into
+    // a bundle of database RPCs.
+    const delay = event.type === "agent_thread_event" ? 120 : 80;
     this.refreshTimer = setTimeout(() => {
       this.refreshTimer = null;
       void this.refresh();
@@ -1542,4 +1604,11 @@ function defaultLocalBaseUrl(provider: LocalModelProvider): string {
 
 function formatError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function shellQuote(value: string): string {
+  if (process.platform === "win32") {
+    return `"${value.replace(/"/g, '\\"')}"`;
+  }
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }

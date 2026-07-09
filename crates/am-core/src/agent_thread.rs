@@ -34,13 +34,15 @@ const MAX_EVENT_TEXT_CHARS: usize = 2_000;
 struct PendingThreadMessage {
     text: String,
     echo_user_message: bool,
+    client_message_id: Option<String>,
 }
 
 impl PendingThreadMessage {
-    fn public(text: String) -> Self {
+    fn public(text: String, client_message_id: Option<String>) -> Self {
         Self {
             text,
             echo_user_message: true,
+            client_message_id,
         }
     }
 
@@ -48,6 +50,7 @@ impl PendingThreadMessage {
         Self {
             text: queued.message,
             echo_user_message: queued.echo_user_message,
+            client_message_id: queued.client_message_id,
         }
     }
 }
@@ -293,8 +296,27 @@ impl AppCore {
             thread_id,
             agent,
             permission,
-            message.map(PendingThreadMessage::public),
+            message.map(|message| PendingThreadMessage::public(message, None)),
             None,
+        )
+        .await
+    }
+
+    pub async fn run_agent_thread_with_client_message(
+        &self,
+        thread_id: &str,
+        agent: AgentKind,
+        permission: PermissionPolicy,
+        message: Option<String>,
+        execution_backend: Option<ExecutionBackend>,
+        client_message_id: Option<String>,
+    ) -> Result<String, CoreError> {
+        self.run_agent_thread_inner(
+            thread_id,
+            agent,
+            permission,
+            message.map(|message| PendingThreadMessage::public(message, client_message_id)),
+            execution_backend,
         )
         .await
     }
@@ -311,7 +333,7 @@ impl AppCore {
             thread_id,
             agent,
             permission,
-            message.map(PendingThreadMessage::public),
+            message.map(|message| PendingThreadMessage::public(message, None)),
             execution_backend,
         )
         .await
@@ -372,6 +394,16 @@ impl AppCore {
         if local_model.is_some() && agent != AgentKind::Codex {
             return Err(CoreError::Other(
                 "open-model runs use Codex OSS in this version".into(),
+            ));
+        }
+        if backend == ExecutionBackend::DockerSandbox
+            && local_model
+                .as_ref()
+                .is_some_and(local_model_uses_container_localhost)
+        {
+            return Err(CoreError::Other(
+                "local model endpoints on localhost are not reachable from Docker Sandbox. Use Host execution, or set the local endpoint to a host-reachable address such as http://host.docker.internal:<port>."
+                    .into(),
             ));
         }
         if local_model.is_none() {
@@ -462,6 +494,9 @@ impl AppCore {
                             msg,
                             policy.envelope_id.as_deref(),
                             echo_user_message,
+                            message
+                                .as_ref()
+                                .and_then(|msg| msg.client_message_id.as_deref()),
                         )
                         .await?;
                         message = None;
@@ -542,9 +577,13 @@ impl AppCore {
             (None, true) => None,
         }
         .filter(|msg| !msg.is_empty());
+        let user_client_message_id = match &message {
+            Some(msg) if msg.echo_user_message => msg.client_message_id.as_deref(),
+            _ => None,
+        };
 
         if let Some(message) = user_message {
-            let ev = user_thread_event(thread_id, &turn.id, message);
+            let ev = user_thread_event(thread_id, &turn.id, message, user_client_message_id);
             am_db::repos::agent_thread_message::insert(&self.db.pool, &ev).await?;
             self.events.publish(AppEvent::AgentThreadEvent(ev));
         }
@@ -631,7 +670,7 @@ impl AppCore {
                 events,
                 permit,
                 sandbox_lease,
-                message.map(|msg| msg.text),
+                message,
             )
             .await;
         });
@@ -652,6 +691,7 @@ impl AppCore {
         agent: AgentKind,
         permission: PermissionPolicy,
         message: String,
+        client_message_id: Option<String>,
     ) -> Result<Option<String>, CoreError> {
         let message = message.trim().to_string();
         if message.is_empty() {
@@ -665,13 +705,15 @@ impl AppCore {
             .await?
             .is_some();
         if self.sessions.is_active(thread_id).await || cloud_active {
-            let queued = am_db::repos::queued_turn::enqueue(
+            let queued = am_db::repos::queued_turn::enqueue_with_echo(
                 &self.db.pool,
                 thread_id,
                 agent,
                 &permission_string,
                 &message,
                 None,
+                true,
+                client_message_id.as_deref(),
             )
             .await?;
             let thread = am_db::repos::agent_thread::get(&self.db.pool, thread_id).await?;
@@ -688,7 +730,7 @@ impl AppCore {
                 thread_id,
                 agent,
                 permission,
-                Some(PendingThreadMessage::public(message)),
+                Some(PendingThreadMessage::public(message, client_message_id)),
                 None,
             )
             .await
@@ -1038,13 +1080,14 @@ impl AppCore {
         mut events: Receiver<NormalizedEvent>,
         permit: crate::SessionPermit,
         sandbox_lease: Option<SandboxLease>,
-        pending_message: Option<String>,
+        pending_message: Option<PendingThreadMessage>,
     ) {
         let mut saw_usage_limit = false;
         let mut saw_network_loss = false;
         let mut saw_approval_needed = false;
         let mut completed_ok = false;
         let mut limit_reset_at = None;
+        let mut streaming_assistant: Option<AgentThreadEvent> = None;
         let usage_turn = am_db::repos::agent_turn::get(&self.db.pool, &turn_id)
             .await
             .ok()
@@ -1060,6 +1103,49 @@ impl AppCore {
             .and_then(|turn| turn.policy_envelope_id.clone());
 
         while let Some(event) = events.recv().await {
+            if let NormalizedEvent::AssistantTextDelta { delta } = &event {
+                if delta.is_empty() {
+                    continue;
+                }
+                let mut streamed = if let Some(mut streamed) = streaming_assistant.take() {
+                    streamed
+                        .text
+                        .get_or_insert_with(String::new)
+                        .push_str(delta);
+                    streamed
+                } else {
+                    map_thread_event(&thread_id, &turn_id, &event)
+                };
+                streamed.data = json!({ "streaming": true });
+                let _ = am_db::repos::agent_thread_message::upsert(&self.db.pool, &streamed).await;
+                self.events
+                    .publish(AppEvent::AgentThreadEvent(streamed.clone()));
+                streaming_assistant = Some(streamed);
+                continue;
+            }
+
+            if let NormalizedEvent::AssistantText { text } = &event {
+                if let Some(mut streamed) = streaming_assistant.take() {
+                    streamed.text = Some(text.clone());
+                    streamed.data = json!({ "streaming": false });
+                    let _ =
+                        am_db::repos::agent_thread_message::upsert(&self.db.pool, &streamed).await;
+                    self.events.publish(AppEvent::AgentThreadEvent(streamed));
+                    continue;
+                }
+            }
+
+            // Some provider failures can end a stream without a completed text
+            // item. Preserve the accumulated text and remove its live caret.
+            if matches!(event, NormalizedEvent::SessionEnded { .. }) {
+                if let Some(mut streamed) = streaming_assistant.take() {
+                    streamed.data = json!({ "streaming": false });
+                    let _ =
+                        am_db::repos::agent_thread_message::upsert(&self.db.pool, &streamed).await;
+                    self.events.publish(AppEvent::AgentThreadEvent(streamed));
+                }
+            }
+
             let ended_status = match &event {
                 NormalizedEvent::SessionEnded { status } => Some(*status),
                 _ => None,
@@ -1231,7 +1317,7 @@ impl AppCore {
         // the scheduler's resume delivers it, instead of dropping it and resuming
         // with a generic "continue" prompt.
         if (saw_usage_limit || saw_network_loss) && pending_message.is_some() {
-            if let Some(msg) = pending_message.as_deref() {
+            if let Some(msg) = pending_message.as_ref() {
                 let permission = am_db::repos::agent_thread::get(&self.db.pool, &thread_id)
                     .await
                     .ok()
@@ -1243,9 +1329,10 @@ impl AppCore {
                     &thread_id,
                     agent,
                     &permission,
-                    msg,
+                    &msg.text,
                     None,
                     false,
+                    msg.client_message_id.as_deref(),
                 )
                 .await;
             }
@@ -1381,6 +1468,21 @@ impl AppCore {
                     .await
             }
             crate::fallback::FallbackDecision::Wait { reset_at } => {
+                let local_policy = self.get_local_model_policy().await.unwrap_or_default();
+                if let Ok(Some(target)) = self.best_ready_local_target(&local_policy).await {
+                    let queued_id = self
+                        .queue_known_limited_message(
+                            &thread_id,
+                            current,
+                            &permission_string,
+                            message,
+                            policy_envelope_id.as_deref(),
+                        )
+                        .await?;
+                    self.start_thread_local_fallback(&thread_id, current, target, &local_policy)
+                        .await;
+                    return Ok(queued_id.unwrap_or(thread_id));
+                }
                 let queued_id = self
                     .queue_known_limited_message(
                         &thread_id,
@@ -1468,6 +1570,7 @@ impl AppCore {
             text,
             policy_envelope_id,
             message.echo_user_message,
+            message.client_message_id.as_deref(),
         )
         .await?;
         Ok(Some(queued.id))
@@ -1541,6 +1644,12 @@ impl AppCore {
                 });
             }
             crate::fallback::FallbackDecision::Wait { reset_at } => {
+                let local_policy = self.get_local_model_policy().await.unwrap_or_default();
+                if let Ok(Some(target)) = self.best_ready_local_target(&local_policy).await {
+                    self.start_thread_local_fallback(thread_id, current, target, &local_policy)
+                        .await;
+                    return;
+                }
                 if let Ok(Some(mut thread)) =
                     am_db::repos::agent_thread::get(&self.db.pool, thread_id).await
                 {
@@ -1670,14 +1779,28 @@ impl AppCore {
             thread.original_local_provider = thread.local_provider;
             thread.original_local_base_url = thread.local_base_url.clone();
         }
+        let target_provider = target.provider;
+        let target_model = target.model.clone();
+        let target_base_url = target.base_url.clone();
+        let runtime_probe = am_agents::LocalModelRuntime {
+            provider: target_provider,
+            model: target_model.clone(),
+            base_url: target_base_url.clone(),
+            api_token: None,
+        };
+        let backend_adjusted = thread.execution_backend == ExecutionBackend::DockerSandbox
+            && local_model_uses_container_localhost(&runtime_probe);
+        if backend_adjusted {
+            thread.execution_backend = ExecutionBackend::Host;
+        }
         thread.fallback_agent = Some(AgentKind::Codex);
-        thread.fallback_model = Some(target.model.clone());
-        thread.fallback_local_provider = Some(target.provider);
-        thread.fallback_local_base_url = target.base_url.clone();
+        thread.fallback_model = Some(target_model.clone());
+        thread.fallback_local_provider = Some(target_provider);
+        thread.fallback_local_base_url = target_base_url.clone();
         thread.active_agent = Some(AgentKind::Codex);
-        thread.model = Some(target.model);
-        thread.local_provider = Some(target.provider);
-        thread.local_base_url = target.base_url;
+        thread.model = Some(target_model);
+        thread.local_provider = Some(target_provider);
+        thread.local_base_url = target_base_url;
         thread.status = TaskStatus::Queued;
         thread.switch_back = policy.switch_back_to_cloud;
         thread.switch_back_pending = false;
@@ -1698,6 +1821,7 @@ impl AppCore {
                         "to": AgentKind::Codex.as_str(),
                         "provider": saved.local_provider.map(|provider| provider.as_str()),
                         "model": saved.model,
+                        "backend_adjusted": backend_adjusted,
                     }),
                 )
                 .await;
@@ -2182,6 +2306,20 @@ fn fallback_backend_for_agent(agent: AgentKind, backend: ExecutionBackend) -> Ex
     }
 }
 
+fn local_model_uses_container_localhost(local: &am_agents::LocalModelRuntime) -> bool {
+    let base = local
+        .base_url
+        .as_deref()
+        .unwrap_or_else(|| local.provider.default_base_url())
+        .trim()
+        .to_ascii_lowercase();
+    base.contains("://127.")
+        || base.contains("://localhost")
+        || base.contains("://0.0.0.0")
+        || base.starts_with("127.")
+        || base.starts_with("localhost")
+}
+
 fn is_claude_model(model: &str) -> bool {
     matches!(model, "opus" | "sonnet" | "haiku" | "fable") || model.starts_with("claude-")
 }
@@ -2547,6 +2685,12 @@ fn map_thread_event(thread_id: &str, turn_id: &str, ev: &NormalizedEvent) -> Age
         NormalizedEvent::AssistantText { text } => {
             ("assistant", "assistant_text", Some(text.clone()), json!({}))
         }
+        NormalizedEvent::AssistantTextDelta { delta } => (
+            "assistant",
+            "assistant_text",
+            Some(delta.clone()),
+            json!({ "streaming": true }),
+        ),
         NormalizedEvent::ToolUse { name, input } => (
             "tool",
             "tool_use",
@@ -2614,6 +2758,7 @@ fn map_thread_event(thread_id: &str, turn_id: &str, ev: &NormalizedEvent) -> Age
         role: role.to_string(),
         kind: kind.to_string(),
         text,
+        client_message_id: None,
         data,
         ts: now(),
     }
@@ -2653,7 +2798,12 @@ fn thread_change_label(change: am_agents::ChangeKind) -> &'static str {
     }
 }
 
-fn user_thread_event(thread_id: &str, turn_id: &str, message: &str) -> AgentThreadEvent {
+fn user_thread_event(
+    thread_id: &str,
+    turn_id: &str,
+    message: &str,
+    client_message_id: Option<&str>,
+) -> AgentThreadEvent {
     AgentThreadEvent {
         id: new_id(),
         thread_id: thread_id.to_string(),
@@ -2661,7 +2811,8 @@ fn user_thread_event(thread_id: &str, turn_id: &str, message: &str) -> AgentThre
         role: "user".to_string(),
         kind: "user_message".to_string(),
         text: Some(message.to_string()),
-        data: json!({}),
+        client_message_id: client_message_id.map(str::to_string),
+        data: json!({ "client_message_id": client_message_id }),
         ts: now(),
     }
 }
@@ -2908,5 +3059,22 @@ mod tests {
         // Blank means "use the CLI default" — always compatible.
         assert!(model_compatible_with_agent(AgentKind::ClaudeCode, ""));
         assert!(model_compatible_with_agent(AgentKind::Codex, "  "));
+    }
+
+    #[test]
+    fn sandbox_preflight_detects_container_localhost_model_endpoints() {
+        let local = am_agents::LocalModelRuntime {
+            provider: am_proto::LocalModelProviderKind::Ollama,
+            model: "qwen2.5-coder".into(),
+            base_url: Some("http://localhost:11434".into()),
+            api_token: None,
+        };
+        assert!(local_model_uses_container_localhost(&local));
+
+        let local = am_agents::LocalModelRuntime {
+            base_url: Some("http://host.docker.internal:11434".into()),
+            ..local
+        };
+        assert!(!local_model_uses_container_localhost(&local));
     }
 }

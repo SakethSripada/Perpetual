@@ -3,6 +3,7 @@ export type TaskStatus =
   | "draft"
   | "queued"
   | "running"
+  | "running_in_cloud"
   | "awaiting_approval"
   | "waiting_for_limit"
   | "waiting_for_network"
@@ -36,6 +37,14 @@ export interface Repo {
   default_branch: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface GithubAuthStatus {
+  configured: boolean;
+  authenticated: boolean;
+  login: string | null;
+  avatar_url: string | null;
+  error: string | null;
 }
 
 export interface ActivityEvent {
@@ -266,6 +275,7 @@ export interface AgentThreadEvent {
   role: string;
   kind: string;
   text: string | null;
+  client_message_id?: string | null;
   data: unknown;
   ts: string;
 }
@@ -294,6 +304,7 @@ export interface QueuedTurn {
   permission: PermissionPolicy;
   message: string;
   echo_user_message?: boolean;
+  client_message_id?: string | null;
   created_at: string;
 }
 
@@ -390,7 +401,7 @@ export interface WorkbenchSnapshot {
   cloudPolicy: CloudPolicy | null;
   cloudAvailability: CloudAvailability[];
   details: ThreadDetails | null;
-  github: unknown | null;
+  github: GithubAuthStatus | null;
   error: string | null;
 }
 
@@ -408,7 +419,8 @@ export interface GithubRepository {
 
 export type ExtensionMessage =
   | { type: "snapshot"; snapshot: WorkbenchSnapshot }
-  | { type: "githubRepos"; repos: GithubRepository[]; status: unknown }
+  | { type: "threadEvent"; event: AgentThreadEvent }
+  | { type: "githubRepos"; repos: GithubRepository[]; status: GithubAuthStatus | null }
   | { type: "repoConnected"; repo: Repo }
   | { type: "sandboxLoginPrompt"; prompt: { code: string; url: string }; codex: boolean }
   | { type: "notice"; message: string }

@@ -12,6 +12,7 @@ struct QueuedTurnRow {
     permission: String,
     message: String,
     echo_user_message: i64,
+    client_message_id: Option<String>,
     policy_envelope_id: Option<String>,
     created_at: DateTime<Utc>,
 }
@@ -27,6 +28,7 @@ impl TryFrom<QueuedTurnRow> for QueuedTurn {
             permission: r.permission,
             message: r.message,
             echo_user_message: r.echo_user_message != 0,
+            client_message_id: r.client_message_id,
             policy_envelope_id: r.policy_envelope_id,
             created_at: r.created_at,
         })
@@ -34,7 +36,7 @@ impl TryFrom<QueuedTurnRow> for QueuedTurn {
 }
 
 const SELECT: &str =
-    "SELECT id, thread_id, agent_kind, permission, message, echo_user_message, policy_envelope_id, created_at FROM queued_turns";
+    "SELECT id, thread_id, agent_kind, permission, message, echo_user_message, client_message_id, policy_envelope_id, created_at FROM queued_turns";
 
 pub async fn enqueue(
     pool: &SqlitePool,
@@ -52,6 +54,7 @@ pub async fn enqueue(
         message,
         policy_envelope_id,
         true,
+        None,
     )
     .await
 }
@@ -64,6 +67,7 @@ pub async fn enqueue_with_echo(
     message: &str,
     policy_envelope_id: Option<&str>,
     echo_user_message: bool,
+    client_message_id: Option<&str>,
 ) -> Result<QueuedTurn, DbError> {
     let turn = QueuedTurn {
         id: new_id(),
@@ -72,12 +76,16 @@ pub async fn enqueue_with_echo(
         permission: permission.to_string(),
         message: message.to_string(),
         echo_user_message,
+        client_message_id: client_message_id
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(str::to_string),
         policy_envelope_id: policy_envelope_id.map(str::to_string),
         created_at: now(),
     };
     sqlx::query(
-        "INSERT INTO queued_turns (id, thread_id, agent_kind, permission, message, echo_user_message, policy_envelope_id, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO queued_turns (id, thread_id, agent_kind, permission, message, echo_user_message, client_message_id, policy_envelope_id, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&turn.id)
     .bind(&turn.thread_id)
@@ -85,6 +93,7 @@ pub async fn enqueue_with_echo(
     .bind(&turn.permission)
     .bind(&turn.message)
     .bind(turn.echo_user_message)
+    .bind(&turn.client_message_id)
     .bind(&turn.policy_envelope_id)
     .bind(turn.created_at)
     .execute(pool)

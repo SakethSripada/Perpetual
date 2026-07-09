@@ -340,6 +340,7 @@ async fn agent_thread_repos_turns_messages_and_queue_roundtrip() {
             role: "assistant".into(),
             kind: "assistant_text".into(),
             text: Some("Done".into()),
+            client_message_id: None,
             data: serde_json::json!({ "ok": true }),
             ts: now(),
         },
@@ -351,6 +352,28 @@ async fn agent_thread_repos_turns_messages_and_queue_roundtrip() {
         .unwrap();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].text.as_deref(), Some("Done"));
+
+    agent_thread_message::upsert(
+        &db.pool,
+        &AgentThreadEvent {
+            id: "ev1".into(),
+            thread_id: thread.id.clone(),
+            turn_id: turn.id.clone(),
+            role: "assistant".into(),
+            kind: "assistant_text".into(),
+            text: Some("Done streaming".into()),
+            client_message_id: None,
+            data: serde_json::json!({ "streaming": false }),
+            ts: now(),
+        },
+    )
+    .await
+    .unwrap();
+    let events = agent_thread_message::list_for_thread(&db.pool, &thread.id)
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 1, "streaming updates keep one row");
+    assert_eq!(events[0].text.as_deref(), Some("Done streaming"));
 
     let first = queued_turn::enqueue(
         &db.pool,
@@ -394,10 +417,12 @@ async fn agent_thread_repos_turns_messages_and_queue_roundtrip() {
         "silent",
         None,
         false,
+        Some("client-silent"),
     )
     .await
     .unwrap();
     assert!(!silent.echo_user_message);
+    assert_eq!(silent.client_message_id.as_deref(), Some("client-silent"));
     let listed = queued_turn::list_for_thread(&db.pool, &thread.id)
         .await
         .unwrap();
@@ -588,7 +613,7 @@ async fn delete_session_and_reconcile_orphans() {
     .await
     .unwrap();
 
-    // Orphan reconciliation: a leftover `running` session/task is reset.
+    // Orphan reconciliation: leftover running work is queued to resume.
     assert_eq!(
         session::mark_orphans_interrupted(&db.pool).await.unwrap(),
         1
@@ -600,7 +625,7 @@ async fn delete_session_and_reconcile_orphans() {
     );
     assert_eq!(
         task::get(&db.pool, &t.id).await.unwrap().unwrap().status,
-        TaskStatus::Paused
+        TaskStatus::Queued
     );
 
     // Delete removes the session and its transcript (messages cascade).
