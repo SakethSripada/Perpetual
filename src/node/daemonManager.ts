@@ -103,6 +103,9 @@ export class DaemonManager implements vscode.Disposable {
     });
     const client = await DaemonClient.connect(endpoint.port, endpoint.token);
     client.on("event", (event: AppEvent) => this.events.fire(event));
+    client.on("event_gap", (gap: unknown) =>
+      this.events.fire({ type: "event_gap", data: gap } as AppEvent),
+    );
     client.on("disconnect", (err: Error) => {
       if (!this.disposed) this.output.appendLine(`[daemon] disconnected: ${err.message}`);
       if (this.client === client) this.client = null;

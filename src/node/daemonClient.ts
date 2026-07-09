@@ -179,6 +179,35 @@ export class DaemonClient extends EventEmitter implements DaemonApi {
     return responsePayload(await this.requestRaw(variant("cloud_availability")), "cloud_availabilities");
   }
 
+  async listCloudRuns(threadId: string) {
+    return responsePayload(
+      await this.requestRaw(variant("list_cloud_runs", { thread_id: threadId })),
+      "cloud_runs"
+    );
+  }
+
+  async launchCloudHandoff(threadId: string, agent?: Parameters<DaemonApi["launchCloudHandoff"]>[1]) {
+    return responsePayload(
+      await this.requestRaw(
+        variant("launch_cloud_handoff", { thread_id: threadId, agent: agent ?? null })
+      ),
+      "cloud_run"
+    );
+  }
+
+  async reclaimCloudRun(threadId: string) {
+    expectUnit(await this.requestRaw(variant("reclaim_cloud_run", { thread_id: threadId })));
+  }
+
+  async listActivity(projectId?: string | null, limit?: number | null) {
+    return responsePayload(
+      await this.requestRaw(
+        variant("list_activity", { project_id: projectId ?? null, limit: limit ?? null })
+      ),
+      "activity"
+    );
+  }
+
   async getWorkGraph(projectId: string) {
     return responsePayload(
       await this.requestRaw(variant("get_work_graph", { project_id: projectId })),

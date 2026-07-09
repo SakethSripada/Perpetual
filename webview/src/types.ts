@@ -38,6 +38,15 @@ export interface Repo {
   updated_at: string;
 }
 
+export interface ActivityEvent {
+  id: string;
+  project_id: string | null;
+  task_id: string | null;
+  kind: string;
+  payload: unknown;
+  ts: string;
+}
+
 export interface AgentStatus {
   kind: AgentKind;
   installed: boolean;
@@ -155,6 +164,36 @@ export interface CloudAvailability {
   checked_at: string;
 }
 
+export type CloudRunStatus =
+  | "provisioning"
+  | "running"
+  | "stalled"
+  | "completed"
+  | "failed"
+  | "expired"
+  | "reclaimed";
+
+export type CloudHandoffTrigger = "manual" | "sleep" | "shutdown";
+
+export interface CloudRun {
+  id: string;
+  thread_id: string;
+  agent_kind: AgentKind;
+  provider_task_id: string | null;
+  url: string | null;
+  env_id: string | null;
+  branch: string | null;
+  base_commit: string | null;
+  launch_commit: string | null;
+  status: CloudRunStatus;
+  trigger: CloudHandoffTrigger;
+  launched_at: string;
+  last_activity_at: string | null;
+  last_seen_commit: string | null;
+  reclaimed_at: string | null;
+  failure_reason: string | null;
+}
+
 export interface SandboxPolicy {
   default_backend: ExecutionBackend;
   max_concurrent_sandboxes: number;
@@ -254,6 +293,7 @@ export interface QueuedTurn {
   agent_kind: AgentKind;
   permission: PermissionPolicy;
   message: string;
+  echo_user_message?: boolean;
   created_at: string;
 }
 
@@ -319,9 +359,11 @@ export interface ApprovalRequest {
 
 export interface ThreadDetails {
   events: AgentThreadEvent[];
+  activities: ActivityEvent[];
   repos: AgentThreadRepo[];
   turns: AgentTurn[];
   queued: QueuedTurn[];
+  cloudRuns: CloudRun[];
   diff: AgentThreadDiff | null;
   diffState?: "idle" | "loading" | "ready" | "error";
   applyResult?: AgentThreadApplyResult | null;

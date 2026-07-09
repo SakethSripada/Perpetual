@@ -74,6 +74,8 @@ type WebviewMessage =
   | { type: "setCloudPolicy"; policy: CloudPolicy }
   | { type: "setLocalModelPolicy"; policy: LocalModelPolicy }
   | { type: "sandboxLogin"; codex?: boolean }
+  | { type: "launchCloudHandoff"; threadId: string; agent?: AgentKind | null }
+  | { type: "reclaimCloudRun"; threadId: string }
   | { type: "openPath"; path: string }
   | { type: "openSettings" | "openPanel" }
   | { type: "deleteQueuedTurn"; id: string }
@@ -113,6 +115,8 @@ export class WorkbenchController implements vscode.Disposable {
   private detectionCache: DetectionCache | null = null;
   private diffCache = new Map<string, DiffCacheEntry>();
   private applyResults = new Map<string, AgentThreadApplyResult>();
+  private autoApplyInFlight = new Set<string>();
+  private autoAppliedThreads = new Set<string>();
   private reposConnected = false;
 
   readonly onSnapshot = this.snapshots.event;
@@ -276,6 +280,24 @@ export class WorkbenchController implements vscode.Disposable {
         case "sandboxLogin":
           await this.startSandboxLogin(!!message.codex, reply);
           return;
+        case "launchCloudHandoff": {
+          const run = await this.withClient((client) =>
+            client.launchCloudHandoff(message.threadId, message.agent ?? null),
+          );
+          this.notice(
+            reply,
+            `Started ${labelAgent(run.agent_kind)} cloud continuation.`,
+          );
+          await this.refresh();
+          return;
+        }
+        case "reclaimCloudRun":
+          await this.withClient((client) =>
+            client.reclaimCloudRun(message.threadId),
+          );
+          this.notice(reply, "Reclaimed the cloud run.");
+          await this.refresh();
+          return;
         case "openPath":
           await vscode.env.openExternal(vscode.Uri.file(message.path));
           return;
@@ -416,6 +438,9 @@ export class WorkbenchController implements vscode.Disposable {
         localModelPolicy,
         state: detectionState,
       } = detection;
+      for (const thread of threads) {
+        this.maybeAutoApplyThread(thread);
+      }
 
       const selectedThreadId = pickSelectedThread(
         this.context.workspaceState.get<string | null>(
@@ -1015,23 +1040,35 @@ export class WorkbenchController implements vscode.Disposable {
   }
 
   private onDaemonEvent(event: AppEvent): void {
-    if (event.type === "activity") return;
+    if (event.type === "event_gap") {
+      this.detectionCache = null;
+      void this.refresh();
+      return;
+    }
     if (event.type === "agent_thread_event") {
       const data = event.data as { thread_id?: string };
       if (data.thread_id) this.diffCache.delete(data.thread_id);
     }
     if (event.type === "agent_thread_updated") {
-      const data = event.data as { id?: string; status?: string };
+      const data = event.data as Partial<AgentThread>;
       if (data.id && data.status === "running") {
         this.diffCache.delete(data.id);
         this.applyResults.delete(data.id);
+        this.autoAppliedThreads.delete(data.id);
       }
+      this.maybeAutoApplyThread(data);
+    }
+    if (event.type === "cloud_run_updated") {
+      const data = event.data as { thread_id?: string };
+      if (data.thread_id) this.diffCache.delete(data.thread_id);
     }
     // Approvals are interactive — surface them immediately. Streaming thread
     // events are coalesced just enough to avoid thrashing the webview.
     const delay =
       event.type === "approval_requested" || event.type === "approval_resolved"
         ? 0
+        : event.type === "activity" || event.type === "cloud_run_updated"
+          ? 80
         : event.type === "agent_thread_event"
           ? 150
           : 80;
@@ -1040,6 +1077,48 @@ export class WorkbenchController implements vscode.Disposable {
       this.refreshTimer = null;
       void this.refresh();
     }, delay);
+  }
+
+  private maybeAutoApplyThread(thread: Partial<AgentThread>): void {
+    if (
+      thread.id &&
+      thread.status === "review" &&
+      thread.permission &&
+      thread.permission !== "read_only" &&
+      !this.autoAppliedThreads.has(thread.id)
+    ) {
+      this.autoAppliedThreads.add(thread.id);
+      void this.autoApplyThreadChanges(thread.id);
+    }
+  }
+
+  private async autoApplyThreadChanges(threadId: string): Promise<void> {
+    if (this.autoApplyInFlight.has(threadId)) return;
+    if (!this.autoAppliedThreads.has(threadId)) return;
+    this.autoApplyInFlight.add(threadId);
+    try {
+      const result = await this.withClient((client) =>
+        client.applyThreadChanges(threadId),
+      );
+      this.applyResults.set(threadId, result);
+      this.diffCache.delete(threadId);
+      if (result.applied) {
+        this.output.appendLine(
+          `[workbench] auto-applied managed changes for thread ${threadId}`,
+        );
+      } else if (result.blockers.length) {
+        this.output.appendLine(
+          `[workbench] auto-apply blocked for thread ${threadId}: ${result.blockers.join("; ")}`,
+        );
+      }
+    } catch (err) {
+      this.output.appendLine(
+        `[workbench] auto-apply failed for thread ${threadId}: ${formatError(err)}`,
+      );
+    } finally {
+      this.autoApplyInFlight.delete(threadId);
+      await this.refresh();
+    }
   }
 
   private notice(reply: WebviewReply | undefined, message: string): void {
@@ -1062,28 +1141,53 @@ async function loadThreadDetails(
   diffEntry: DiffCacheEntry | null,
   applyResult: AgentThreadApplyResult | null,
 ): Promise<ThreadDetails> {
-  const [events, repos, turns, queued, approvals] = await Promise.all([
+  const [events, activities, repos, turns, queued, cloudRuns, approvals] =
+    await Promise.all([
     client.listThreadEvents(threadId).catch((err) => {
       output.appendLine(
         `[workbench] listThreadEvents failed: ${formatError(err)}`,
       );
       return [];
     }),
+    client
+      .listActivity(null, 250)
+      .then((items) => items.filter((item) => activityBelongsToThread(item, threadId)))
+      .catch((err) => {
+        output.appendLine(
+          `[workbench] listActivity failed: ${formatError(err)}`,
+        );
+        return [];
+      }),
     client.listThreadRepos(threadId).catch(() => []),
     client.listThreadTurns(threadId).catch(() => []),
     client.listQueuedTurns(threadId).catch(() => []),
+    client.listCloudRuns(threadId).catch(() => []),
     client.listPendingApprovals().catch(() => []),
   ]);
   return {
     events,
+    activities,
     repos,
     turns,
     queued,
+    cloudRuns,
     diff: diffEntry?.diff ?? null,
     diffState: diffEntry?.state ?? "idle",
     applyResult,
     approvals: approvals.filter((approval) => approval.thread_id === threadId),
   };
+}
+
+function activityBelongsToThread(
+  activity: { payload: unknown },
+  threadId: string,
+): boolean {
+  const payload = activity.payload;
+  return (
+    !!payload &&
+    typeof payload === "object" &&
+    (payload as { thread_id?: unknown }).thread_id === threadId
+  );
 }
 
 function emptyDetectionCache(state: DetectionCache["state"]): DetectionCache {
@@ -1294,6 +1398,12 @@ function sanitizeBackend(
 
 function sanitizeAgent(value: string | null | undefined): AgentKind {
   return value === "codex" ? "codex" : "claude_code";
+}
+
+function labelAgent(agent: AgentKind | null | undefined): string {
+  if (agent === "codex") return "Codex";
+  if (agent === "claude_code") return "Claude";
+  return "Agent";
 }
 
 function isSupportedAgent(

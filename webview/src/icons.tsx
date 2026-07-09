@@ -28,6 +28,8 @@ type IconName =
   | "paperclip"
   | "cube"
   | "cubeOff"
+  | "cloud"
+  | "download"
   | "clock"
   | "terminal"
   | "alert";
@@ -64,6 +66,8 @@ const PATHS: Record<IconName, string> = {
   paperclip: "M12.5 7.2 7.7 12a2.6 2.6 0 0 1-3.7-3.7l4.8-4.8a1.6 1.6 0 0 1 2.3 2.3l-4.8 4.8a.6.6 0 0 1-.9-.9l4.3-4.3",
   cube: "M8 1.8 13.5 4.9v6.2L8 14.2 2.5 11.1V4.9zM2.5 4.9 8 8m0 0 5.5-3.1M8 8v6.2",
   cubeOff: "M8 1.8 13.5 4.9v6.2L8 14.2 2.5 11.1V4.9zM2.5 4.9 8 8m0 0 5.5-3.1M8 8v6.2M2.2 2.2l11.6 11.6",
+  cloud: "M5.2 12.5H4a2.6 2.6 0 0 1-.4-5.2A4.2 4.2 0 0 1 11.3 5a3.3 3.3 0 0 1 .5 6.6H6.5",
+  download: "M8 2.5v7M5.2 7.3 8 10.1l2.8-2.8M3 13.2h10",
   clock: "M8 2.6a5.4 5.4 0 1 0 0 10.8 5.4 5.4 0 0 0 0-10.8zM8 5.2V8l2 1.4",
   terminal: "M3 3.5h10v9H3zM5 6.3l2 1.7-2 1.7M8.5 10h2.5",
   alert: "M8 2.5 14.5 13.5h-13zM8 6.5v3.2M8 11.6v.1",

@@ -84,6 +84,18 @@ test("extracts cloud policy responses", () => {
 test("serializes launch-quality workbench requests", () => {
   assert.equal(variant("agent_model_catalog"), "agent_model_catalog");
   assert.equal(variant("detect_local_models"), "detect_local_models");
+  assert.deepEqual(variant("list_activity", { project_id: null, limit: 250 }), {
+    list_activity: { project_id: null, limit: 250 },
+  });
+  assert.deepEqual(variant("list_cloud_runs", { thread_id: "t1" }), {
+    list_cloud_runs: { thread_id: "t1" },
+  });
+  assert.deepEqual(variant("launch_cloud_handoff", { thread_id: "t1", agent: "codex" }), {
+    launch_cloud_handoff: { thread_id: "t1", agent: "codex" },
+  });
+  assert.deepEqual(variant("reclaim_cloud_run", { thread_id: "t1" }), {
+    reclaim_cloud_run: { thread_id: "t1" },
+  });
   assert.deepEqual(variant("apply_thread_changes", { thread_id: "t1" }), {
     apply_thread_changes: { thread_id: "t1" },
   });
@@ -91,6 +103,21 @@ test("serializes launch-quality workbench requests", () => {
 });
 
 test("extracts launch-quality workbench responses", () => {
+  assert.deepEqual(
+    responsePayload(
+      { queued_turns: [{ id: "q1", message: "again", echo_user_message: false }] },
+      "queued_turns",
+    ),
+    [{ id: "q1", message: "again", echo_user_message: false }],
+  );
+  assert.deepEqual(
+    responsePayload({ activity: [{ kind: "thread.fallback_started" }] }, "activity"),
+    [{ kind: "thread.fallback_started" }],
+  );
+  assert.deepEqual(
+    responsePayload({ cloud_runs: [{ id: "c1", status: "running" }] }, "cloud_runs"),
+    [{ id: "c1", status: "running" }],
+  );
   assert.deepEqual(responsePayload({ agent_model_catalogs: [{ agent: "codex" }] }, "agent_model_catalogs"), [
     { agent: "codex" },
   ]);

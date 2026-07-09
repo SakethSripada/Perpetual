@@ -1,5 +1,4 @@
 import {
-  Fragment,
   memo,
   useEffect,
   useLayoutEffect,
@@ -30,6 +29,7 @@ import type {
 } from "./types";
 import { BrandMark, Icon } from "./icons";
 import { Markdown } from "./markdown";
+import { buildTranscriptItems, type TranscriptItem } from "./transcript";
 
 type PendingMessage = { id: string; text: string };
 type PersistedState = {
@@ -315,6 +315,9 @@ export default function App() {
     });
   }, [
     snapshot?.details?.events.length,
+    snapshot?.details?.activities.length,
+    snapshot?.details?.queued.length,
+    snapshot?.details?.cloudRuns.length,
     selectedThread?.id,
     pending.length,
     reviewOpen?.nonce,
@@ -356,6 +359,25 @@ export default function App() {
   const limitedAgents =
     snapshot?.agents.filter((status) => status.availability === "limited") ??
     [];
+  const activeCloudRuns =
+    details?.cloudRuns.filter((run) => isActiveCloudRun(run.status)) ?? [];
+  const transcriptItems = useMemo(
+    () =>
+      buildTranscriptItems({
+        thread: selectedThread,
+        events: details?.events ?? [],
+        activities: details?.activities ?? [],
+        queued: details?.queued ?? [],
+        cloudRuns: details?.cloudRuns ?? [],
+      }),
+    [
+      selectedThread,
+      details?.events,
+      details?.activities,
+      details?.queued,
+      details?.cloudRuns,
+    ],
+  );
 
   // The composer owns its own draft text so typing never re-renders the
   // transcript; it hands us the final text here on submit.
@@ -524,6 +546,27 @@ export default function App() {
         policy={snapshot?.limitPolicy ?? null}
         selectedThread={selectedThread}
       />
+      <CloudStatusBar
+        selectedThread={selectedThread}
+        activeRuns={activeCloudRuns}
+        policy={snapshot?.cloudPolicy ?? null}
+        availability={snapshot?.cloudAvailability ?? []}
+        onLaunch={() =>
+          selectedThread &&
+          vscode.postMessage({
+            type: "launchCloudHandoff",
+            threadId: selectedThread.id,
+            agent: selectedThread.active_agent ?? selectedThread.preferred_agent,
+          })
+        }
+        onReclaim={() =>
+          selectedThread &&
+          vscode.postMessage({
+            type: "reclaimCloudRun",
+            threadId: selectedThread.id,
+          })
+        }
+      />
 
       <section className="conversation">
         <div className="transcript" ref={transcriptRef}>
@@ -532,10 +575,8 @@ export default function App() {
             <EmptyState trusted={snapshot?.trusted ?? true} />
           )}
           {selectedThread &&
-            details?.events.map((event) => (
-              <Fragment key={event.id}>
-                <MessageView event={event} />
-              </Fragment>
+            transcriptItems.map((item) => (
+              <TranscriptItemView key={transcriptItemKey(item)} item={item} />
             ))}
           {pending.map((item) => (
             <article key={item.id} className="msg user pending">
@@ -677,6 +718,42 @@ export default function App() {
       )}
     </main>
   );
+}
+
+function TranscriptItemView({ item }: { item: TranscriptItem }) {
+  if (item.type === "event") return <MessageView event={item.event} />;
+  if (item.type === "queued") {
+    return (
+      <article className="activity-row queued-row">
+        <span className="activity-icon">
+          <Icon name="queue" />
+        </span>
+        <div className="activity-main">
+          <div className="activity-title">
+            <span>Queued: {item.message}</span>
+          </div>
+        </div>
+      </article>
+    );
+  }
+  return (
+    <article className={`transition-row ${item.tone}`}>
+      <span className="activity-icon">
+        <Icon name={item.tone === "danger" ? "alert" : item.tone === "warning" ? "clock" : "refresh"} />
+      </span>
+      <div className="activity-main">
+        <div className="activity-title">
+          <span>{item.text}</span>
+        </div>
+        {item.detail && <small>{item.detail}</small>}
+      </div>
+    </article>
+  );
+}
+
+function transcriptItemKey(item: TranscriptItem): string {
+  if (item.type === "event") return item.event.id;
+  return item.id;
 }
 
 // One transcript row. Memoized so a snapshot tick only re-renders the messages
@@ -1207,6 +1284,59 @@ function LimitRecoveryBar(props: {
             {props.policy?.switch_back ? "switch-back armed" : "manual return"}
           </strong>
         </span>
+      )}
+    </div>
+  );
+}
+
+function CloudStatusBar(props: {
+  selectedThread: AgentThread | null;
+  activeRuns: NonNullable<WorkbenchSnapshot["details"]>["cloudRuns"];
+  policy: CloudPolicy | null;
+  availability: WorkbenchSnapshot["cloudAvailability"];
+  onLaunch(): void;
+  onReclaim(): void;
+}) {
+  const agent =
+    props.selectedThread?.active_agent ?? props.selectedThread?.preferred_agent ?? null;
+  const active = props.activeRuns[0] ?? null;
+  const ready = !!agent && props.availability.some((item) => item.agent === agent && item.ready);
+  const canLaunch =
+    !!props.selectedThread &&
+    !!props.policy?.enabled &&
+    !active &&
+    ready &&
+    props.selectedThread.status !== "draft";
+  if (!active && !canLaunch && !props.policy?.enabled) return null;
+  return (
+    <div className="cloud-bar" role="status">
+      {active ? (
+        <>
+          <span className="cloud-pill">
+            <Icon name={active.status === "stalled" ? "alert" : "cloud"} />
+            <span>{labelAgent(active.agent_kind)} Cloud</span>
+            <strong>{humanize(active.status)}</strong>
+          </span>
+          <button type="button" className="cloud-action" onClick={props.onReclaim}>
+            <Icon name="download" />
+            <span>Reclaim</span>
+          </button>
+        </>
+      ) : (
+        <button
+          type="button"
+          className="cloud-action"
+          disabled={!canLaunch}
+          onClick={props.onLaunch}
+          title={
+            canLaunch
+              ? "Continue this session in the provider cloud"
+              : "Cloud continuation is not ready for this session"
+          }
+        >
+          <Icon name="cloud" />
+          <span>Cloud</span>
+        </button>
       )}
     </div>
   );
@@ -3719,6 +3849,10 @@ function defaultCloudPolicy(): CloudPolicy {
     codex_env_id: null,
     require_approval: false,
   };
+}
+
+function isActiveCloudRun(status: string): boolean {
+  return status === "provisioning" || status === "running" || status === "stalled";
 }
 
 function defaultLocalModelPolicy(): LocalModelPolicy {

@@ -29,7 +29,7 @@ try {
     process.exit(1);
   }
   console.log(`Daemon present for ${target}: ${expected}`);
-  console.log("Daemon capabilities present: local model fallback, local model providers, thread/work-node diffs.");
+  console.log("Daemon capabilities present: local model fallback, cloud continuity, transcript transition markers, thread/work-node diffs.");
 } catch {
   console.error(`Missing daemon binary for ${target}: ${expected}`);
   console.error("");
@@ -46,6 +46,15 @@ function requiredDaemonMarkers() {
     "LocalModelTarget",
     "thread.local_fallback_started",
     "local_fallback_active",
+    "echo_user_message",
+    "thread.fallback_started",
+    "thread.fallback_waiting",
+    "thread.switchback_completed",
+    "thread.cloud_handoff_started",
+    "thread.cloud_reclaimed",
+    "ListCloudRuns",
+    "LaunchCloudHandoff",
+    "ReclaimCloudRun",
     "ollama",
     "lm_studio",
     "ThreadDiff",

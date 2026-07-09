@@ -1,5 +1,6 @@
 import type {
   AgentKind,
+  ActivityEvent,
   AgentModelCatalog,
   AgentRunDefaults,
   AgentStatus,
@@ -15,6 +16,7 @@ import type {
   ApprovalRequest,
   CloudAvailability,
   CloudPolicy,
+  CloudRun,
   ExecutionBackend,
   GithubAuthStatus,
   GithubRepository,
@@ -92,6 +94,10 @@ export interface DaemonApi {
   getCloudPolicy(): Promise<CloudPolicy>;
   setCloudPolicy(policy: CloudPolicy): Promise<CloudPolicy>;
   cloudAvailability(): Promise<CloudAvailability[]>;
+  listCloudRuns(threadId: string): Promise<CloudRun[]>;
+  launchCloudHandoff(threadId: string, agent?: AgentKind | null): Promise<CloudRun>;
+  reclaimCloudRun(threadId: string): Promise<void>;
+  listActivity(projectId?: string | null, limit?: number | null): Promise<ActivityEvent[]>;
   getWorkGraph(projectId: string): Promise<WorkGraph>;
   createWorkNode(input: NewWorkNode): Promise<WorkNode>;
   updateWorkNode(nodeId: string, patch: WorkNodeUpdate): Promise<WorkNode>;
