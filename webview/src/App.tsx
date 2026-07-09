@@ -413,6 +413,7 @@ export default function App() {
       ...prev,
       { id: `pending-${Date.now()}-${prev.length}`, text },
     ]);
+    if (!selectedThread) setNavThreadId(undefined);
     vscode.postMessage({
       type: "submit",
       message: text,
@@ -1378,30 +1379,21 @@ function ApprovalCard(props: {
       <div className="approval-actions">
         <button
           type="button"
-          className="approval-btn deny"
-          title="Deny this request"
-          onClick={() => props.onResolve("deny")}
-        >
-          <Icon name="close" />
-          <span>Deny</span>
-        </button>
-        <button
-          type="button"
-          className="approval-btn session"
-          title="Allow for the rest of this session"
-          onClick={() => props.onResolve("allow_for_session")}
-        >
-          <Icon name="shield" />
-          <span>Session</span>
-        </button>
-        <button
-          type="button"
           className="approval-btn allow"
           title="Allow once"
           onClick={() => props.onResolve("allow")}
         >
           <Icon name="check" />
           <span>Allow</span>
+        </button>
+        <button
+          type="button"
+          className="approval-btn deny"
+          title="Deny this request"
+          onClick={() => props.onResolve("deny")}
+        >
+          <Icon name="close" />
+          <span>Deny</span>
         </button>
       </div>
     </article>
@@ -2670,6 +2662,7 @@ function ChangesView(props: {
       repo.files.map((file) => ({ ...file, repo: repo.repo_name })),
     ) ?? [];
   const hasWorktree = props.repos.some((repo) => !!repo.worktree_path);
+  const hasManagedWorktree = props.repos.some(isManagedThreadWorkspace);
   useEffect(() => {
     if (props.openSignal > 0) setOpen(true);
   }, [props.openSignal]);
@@ -2724,15 +2717,17 @@ function ChangesView(props: {
               <Icon name="refresh" />
               <span>{loaded ? "Reload Diff" : "Load Diff"}</span>
             </button>
-            <button
-              type="button"
-              className="primary-btn"
-              disabled={loading || (loaded && diffFiles.length === 0)}
-              onClick={() => props.onApply(props.threadId)}
-            >
-              <Icon name="check" />
-              <span>Apply to Repo</span>
-            </button>
+            {hasManagedWorktree && (
+              <button
+                type="button"
+                className="primary-btn"
+                disabled={loading || (loaded && diffFiles.length === 0)}
+                onClick={() => props.onApply(props.threadId)}
+              >
+                <Icon name="check" />
+                <span>Apply to Repo</span>
+              </button>
+            )}
           </div>
           {props.repos.map((repo) => (
             <div key={repo.repo_id} className="detail-row">
@@ -2745,7 +2740,7 @@ function ChangesView(props: {
                   className="link-btn"
                   onClick={() => props.onOpenPath(repo.worktree_path!)}
                 >
-                  Open Worktree
+                  {isManagedThreadWorkspace(repo) ? "Open Worktree" : "Open Repo"}
                 </button>
               )}
             </div>
@@ -2797,6 +2792,12 @@ function ChangesView(props: {
       </section>
     </div>
   );
+}
+
+function isManagedThreadWorkspace(
+  repo: NonNullable<WorkbenchSnapshot["details"]>["repos"][number],
+): boolean {
+  return Boolean(repo.worktree_path && repo.branch?.startsWith("am/thread-"));
 }
 
 function SettingsSheet(props: {

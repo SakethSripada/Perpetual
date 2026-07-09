@@ -580,6 +580,7 @@ export class WorkbenchController implements vscode.Disposable {
       local_base_url: localBaseUrl,
     });
     await this.selectThread(thread.id);
+    await this.refresh();
     void this.runThreadInBackground(
       thread.id,
       agent,
@@ -1097,9 +1098,16 @@ export class WorkbenchController implements vscode.Disposable {
     if (!this.autoAppliedThreads.has(threadId)) return;
     this.autoApplyInFlight.add(threadId);
     try {
-      const result = await this.withClient((client) =>
-        client.applyThreadChanges(threadId),
-      );
+      const result = await this.withClient(async (client) => {
+        const repos = await client.listThreadRepos(threadId).catch(() => []);
+        const hasManagedWorkspace = repos.some(
+          (repo) =>
+            Boolean(repo.worktree_path && repo.branch?.startsWith("am/thread-")),
+        );
+        if (!hasManagedWorkspace) return null;
+        return client.applyThreadChanges(threadId);
+      });
+      if (!result) return;
       this.applyResults.set(threadId, result);
       this.diffCache.delete(threadId);
       if (result.applied) {
