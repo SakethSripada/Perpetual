@@ -8,14 +8,13 @@
   "author": {
     "name": "Perpetual"
   },
-  "homepage": "https://github.com/agentmanager/agentmanager",
+  "homepage": "https://github.com/SakethSripada/AgentManagerVSCodeExtension",
   "repository": {
     "type": "git",
-    "url": "https://github.com/agentmanager/agentmanager.git",
-    "directory": "vscode-extension"
+    "url": "https://github.com/SakethSripada/AgentManagerVSCodeExtension.git"
   },
   "bugs": {
-    "url": "https://github.com/agentmanager/agentmanager/issues"
+    "url": "https://github.com/SakethSripada/AgentManagerVSCodeExtension/issues"
   },
   "categories": [
     "Machine Learning",
@@ -402,18 +401,19 @@
     "build": "npm run compile && npm run typecheck:webview && npm run build:extension && npm run build:webview",
     "watch:extension": "node scripts/esbuild.mjs --watch",
     "watch:webview": "vite build --config webview/vite.config.ts --watch",
+    "build:daemon": "node scripts/build-daemon.mjs",
     "copy-daemon": "node scripts/copy-daemon.mjs",
     "check-daemon": "node scripts/check-daemon.mjs",
     "dev:reload": "node scripts/dev-reload.mjs",
     "dev:sync": "node scripts/dev-reload.mjs --no-reload",
     "vscode:prepublish": "npm run build",
     "package": "vsce package",
-    "package:darwin-arm64": "npm run check-daemon -- --target darwin-arm64 && vsce package --target darwin-arm64",
-    "package:darwin-x64": "npm run check-daemon -- --target darwin-x64 && vsce package --target darwin-x64",
-    "package:linux-x64": "npm run check-daemon -- --target linux-x64 && vsce package --target linux-x64",
-    "package:linux-arm64": "npm run check-daemon -- --target linux-arm64 && vsce package --target linux-arm64",
-    "package:win32-x64": "npm run check-daemon -- --target win32-x64 && vsce package --target win32-x64",
-    "package:win32-arm64": "npm run check-daemon -- --target win32-arm64 && vsce package --target win32-arm64",
+    "package:darwin-arm64": "node scripts/package-target.mjs darwin-arm64",
+    "package:darwin-x64": "node scripts/package-target.mjs darwin-x64",
+    "package:linux-x64": "node scripts/package-target.mjs linux-x64",
+    "package:linux-arm64": "node scripts/package-target.mjs linux-arm64",
+    "package:win32-x64": "node scripts/package-target.mjs win32-x64",
+    "package:win32-arm64": "node scripts/package-target.mjs win32-arm64",
     "test:unit": "npm run compile && node --test out/test/*.test.js",
     "test:vscode": "vscode-test --config vscode-test.mjs",
     "test": "npm run test:unit && npm run typecheck:webview"

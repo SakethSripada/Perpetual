@@ -3,11 +3,12 @@ import { chmod, cp, mkdir, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { readArg } from "./daemon-targets.mjs";
 
 const args = process.argv.slice(2);
 const noReload = args.includes("--no-reload");
-const installDirArg = readArg("--install-dir");
-const target = readArg("--target") ?? currentTarget();
+const installDirArg = readArg(args, "--install-dir");
+const target = readArg(args, "--target") ?? currentTarget();
 const root = process.cwd();
 const manifest = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
 const extensionPrefix = `${manifest.publisher}.${manifest.name}-${manifest.version}`;
@@ -140,11 +141,6 @@ function runningMacBundleIds() {
 function run(command, commandArgs) {
   const result = spawnSync(command, commandArgs, { cwd: root, stdio: "inherit" });
   if (result.status !== 0) process.exit(result.status ?? 1);
-}
-
-function readArg(name) {
-  const hit = args.find((arg) => arg.startsWith(`${name}=`));
-  return hit ? hit.slice(name.length + 1) : undefined;
 }
 
 function currentTarget() {

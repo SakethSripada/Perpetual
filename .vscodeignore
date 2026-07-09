@@ -4,9 +4,13 @@ webview/index.html
 webview/tsconfig.json
 webview/vite.config.ts
 scripts/**
+crates/**
+target/**
 out/**
 node_modules/**
 *.vsix
+Cargo.toml
+Cargo.lock
 tsconfig.json
 vscode-test.mjs
 **/*.map

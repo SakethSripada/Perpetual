@@ -77,13 +77,15 @@ is required before running agents or attaching repositories.
 
 ## Repository layout
 
-This is a standalone repository for the VS Code extension. Its TypeScript and
-webview code live here and are edited here directly.
+This is a standalone repository for the VS Code extension. Its TypeScript,
+webview code, and vendored daemon Rust workspace live here and are edited here
+directly.
 
-The bundled `am-daemon` binaries (under `bin/<target>/`) are **build artifacts**
-produced by the Rust crates in the separate AgentManager monorepo. They are
-committed here so the extension is self-contained and packageable without a Rust
-toolchain.
+The daemon workspace includes `am-daemon`, `am-core`, `am-agents`, `am-mcp`,
+`am-db`, `am-proto`, `am-compute`, `am-policy`, and `am-vcs`. The bundled
+`am-daemon` binaries under `bin/<target>/` are build artifacts from that local
+workspace. They are committed so the published extension is self-contained and
+installs without a Rust toolchain.
 
 ## Development
 
@@ -98,36 +100,34 @@ separate terminals.
 
 ## Daemon workflow
 
-When daemon-side behavior changes in the monorepo and you want those changes in
-the extension, sync the binary **from the monorepo** (you choose when):
+When daemon-side behavior changes, build and copy the daemon from this extension
+repo:
 
 ```bash
-# run from the AgentManager monorepo checkout
-npm run sync:daemon -- --extension-repo="../AgentManagerVSCodeExtension"
-# add --target=linux-x64 (etc.) for a specific platform; default = host
-# add --all to build/sync every supported target
+npm run build:daemon -- --target=win32-x64
+npm run copy-daemon -- --target=win32-x64
 ```
 
-That rebuilds `am-daemon` and copies it into `bin/<target>/` here. Commit the
-updated `bin/` and repackage. Until you run it, the extension keeps using the
-daemon binary already committed — monorepo crate changes never leak in
-automatically.
+Replace `win32-x64` with `darwin-arm64`, `darwin-x64`, `linux-x64`,
+`linux-arm64`, or `win32-arm64` as needed. The scripts accept both
+`--target=win32-x64` and `--target win32-x64`.
+
+Commit the updated Rust source, `Cargo.lock`, and `bin/<target>/` binary before
+packaging. The AgentManager app repo keeps its own copy of the crates; changes
+do not flow between repos automatically.
 
 ## Packaging
 
 `vsce package` builds the extension first (via `vscode:prepublish`) and bundles
 the daemon for the chosen target. The `check-daemon` step fails early with the
-sync command if a target's binary is missing or if it does not include local
-model fallback and diff support.
+local build command if a target's binary is missing or if it does not include
+local model fallback and diff support.
 
 ```bash
 npm install
-npm run package:darwin-arm64   # or :darwin-x64 / :linux-x64 / :linux-arm64 / :win32-x64 / :win32-arm64
+npm run build:daemon -- --target=win32-x64
+npm run copy-daemon -- --target=win32-x64
+npm run package:win32-x64
 ```
 
 See [PUBLISHING.md](PUBLISHING.md) for the full Marketplace checklist.
-
-## ADDITIONAL:
-```bash
-npm run package:darwin-arm64 && code --install-extension agentmanager-vscode-darwin-arm64-0.1.0.vsix --force
-```

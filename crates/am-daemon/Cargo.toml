@@ -1,0 +1,25 @@
+[package]
+name = "am-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "am_daemon"
+path = "src/lib.rs"
+
+[[bin]]
+name = "am-daemon"
+path = "src/bin/am-daemon.rs"
+
+[dependencies]
+am-proto = { workspace = true }
+am-core = { workspace = true }
+am-agents = { workspace = true }
+am-mcp = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

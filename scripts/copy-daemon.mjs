@@ -1,16 +1,19 @@
 import { chmod, copyFile, mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import {
+  binaryName,
+  currentTarget,
+  hostReleaseBinaryPath,
+  readArg,
+  releaseBinaryPath,
+} from "./daemon-targets.mjs";
 
-const argTarget = process.argv.find((arg) => arg.startsWith("--target="));
-const target = argTarget?.split("=")[1] ?? currentTarget();
-const binary = target.startsWith("win32") ? "am-daemon.exe" : "am-daemon";
-// Standalone extension repo: the daemon is built in the AgentManager monorepo.
-// Point AM_DAEMON_BINARY at the freshly built binary, or use the monorepo's
-// `npm run sync:daemon` which writes straight into bin/<target>/.
-const source =
-  process.env.AM_DAEMON_BINARY ??
-  path.resolve("..", "AgentManager", "target", "release", binary);
+const args = process.argv.slice(2);
+const target = readArg(args, "--target") ?? currentTarget();
+const binary = binaryName(target);
+const root = process.cwd();
+const source = process.env.AM_DAEMON_BINARY ?? await builtBinary(root, target);
 const destinationDir = path.resolve("bin", target);
 const destination = path.join(destinationDir, binary);
 
@@ -18,7 +21,7 @@ try {
   await stat(source);
 } catch {
   console.error(`Missing daemon binary: ${source}`);
-  console.error("Build it in the AgentManager monorepo (`cargo build -p am-daemon --release`) and set AM_DAEMON_BINARY, or run `npm run sync:daemon` from the monorepo.");
+  console.error(`Build it from this extension repo first: npm run build:daemon -- --target=${target}`);
   process.exit(1);
 }
 
@@ -29,11 +32,15 @@ if (!target.startsWith("win32")) {
 }
 console.log(`Copied ${source} -> ${destination}`);
 
-function currentTarget() {
-  const platform = process.platform;
-  const arch = process.arch;
-  if (platform === "darwin") return arch === "arm64" ? "darwin-arm64" : "darwin-x64";
-  if (platform === "win32") return arch === "arm64" ? "win32-arm64" : "win32-x64";
-  if (platform === "linux") return arch === "arm64" ? "linux-arm64" : "linux-x64";
-  throw new Error(`Unsupported platform: ${platform}-${arch}`);
+async function builtBinary(rootDir, targetName) {
+  const targeted = releaseBinaryPath(rootDir, targetName);
+  try {
+    await stat(targeted);
+    return targeted;
+  } catch {
+    if (targetName === currentTarget()) {
+      return hostReleaseBinaryPath(rootDir, targetName);
+    }
+    return targeted;
+  }
 }

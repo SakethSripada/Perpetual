@@ -167,17 +167,12 @@ export class DaemonManager implements vscode.Disposable {
     const bundled = path.join(this.context.extensionPath, "bin", target, binaryName());
     if (fs.existsSync(bundled)) return bundled;
 
-    const devBinary = path.resolve(
-      this.context.extensionPath,
-      "..",
-      "target",
-      "release",
-      binaryName()
-    );
-    if (fs.existsSync(devBinary)) return devBinary;
+    for (const devBinary of devBinaryCandidates(this.context.extensionPath, target)) {
+      if (fs.existsSync(devBinary)) return devBinary;
+    }
 
     throw new Error(
-      `No bundled am-daemon binary found for ${target}. Run npm run copy-daemon or set agentmanager.daemonPath.`
+      `No bundled am-daemon binary found for ${target}. Run npm run build:daemon -- --target=${target} && npm run copy-daemon -- --target=${target}, or set agentmanager.daemonPath.`
     );
   }
 }
@@ -218,6 +213,34 @@ export function currentTarget(platform = process.platform, arch = process.arch):
 
 function binaryName(): string {
   return process.platform === "win32" ? "am-daemon.exe" : "am-daemon";
+}
+
+function devBinaryCandidates(extensionPath: string, target: string): string[] {
+  const binary = binaryName();
+  const triple = targetTriple(target);
+  return [
+    path.resolve(extensionPath, "target", triple, "release", binary),
+    path.resolve(extensionPath, "target", "release", binary),
+  ];
+}
+
+function targetTriple(target: string): string {
+  switch (target) {
+    case "darwin-arm64":
+      return "aarch64-apple-darwin";
+    case "darwin-x64":
+      return "x86_64-apple-darwin";
+    case "linux-x64":
+      return "x86_64-unknown-linux-gnu";
+    case "linux-arm64":
+      return "aarch64-unknown-linux-gnu";
+    case "win32-x64":
+      return "x86_64-pc-windows-msvc";
+    case "win32-arm64":
+      return "aarch64-pc-windows-msvc";
+    default:
+      return target;
+  }
 }
 
 async function waitForEndpoint(

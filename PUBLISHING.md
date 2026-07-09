@@ -18,17 +18,20 @@ webview bundle, Marketplace docs, assets, and one platform-specific
 
 ## Build One Platform
 
-Run these commands from `vscode-extension/` on the target platform:
+Run these commands from the extension repo on the target platform:
 
 ```bash
 npm install
-npm run build:daemon
-npm run copy-daemon -- --target darwin-arm64
-npm run package -- --target darwin-arm64
+npm run build:daemon -- --target=darwin-arm64
+npm run copy-daemon -- --target=darwin-arm64
+npm run package:darwin-arm64
 ```
 
 Replace `darwin-arm64` with `darwin-x64`, `linux-x64`, `linux-arm64`,
-`win32-x64`, or `win32-arm64`.
+`win32-x64`, or `win32-arm64`. The daemon is built from the vendored Rust
+workspace in this repository, not from the AgentManager app repo. The package
+scripts use a target-specific VSCE ignore file so each VSIX contains only the
+daemon for its target.
 
 ## Verify The VSIX
 
@@ -43,14 +46,15 @@ Confirm the file list contains:
 - `dist/webview/assets/index.js`
 - `dist/webview/assets/index.css`
 - `media/icon.png`
-- `media/screenshot-workbench.svg`
-- `bin/<target>/am-daemon`
+- `media/screenshot-workbench.png`
+- `bin/<target>/am-daemon` or `bin/<target>/am-daemon.exe` on Windows
 
 Confirm it does not contain:
 
 - source maps
 - `node_modules/`
 - raw `src/` or `webview/src/`
+- raw `crates/` or `target/`
 - GitHub OAuth tokens or generated local data
 
 ## Publish

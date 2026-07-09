@@ -1,0 +1,16 @@
+[package]
+name = "am-db"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+am-proto = { workspace = true }
+sqlx = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
