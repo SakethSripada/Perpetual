@@ -122,6 +122,8 @@ export class WorkbenchController implements vscode.Disposable {
   private applyResults = new Map<string, AgentThreadApplyResult>();
   private autoApplyInFlight = new Set<string>();
   private autoAppliedThreads = new Set<string>();
+  private repoAssignmentsPending = new Map<string, string[]>();
+  private repoAssignmentsInFlight = new Map<string, Promise<void>>();
   private reposConnected = false;
 
   readonly onSnapshot = this.snapshots.event;
@@ -203,11 +205,7 @@ export class WorkbenchController implements vscode.Disposable {
           return;
         }
         case "assignRepos":
-          await this.withClient((client) =>
-            client.assignThreadRepos(message.threadId, message.repoIds),
-          );
-          this.diffCache.delete(message.threadId);
-          await this.refresh();
+          await this.assignRepos(message.threadId, message.repoIds);
           return;
         case "loadDiff":
           await this.loadDiff(message.threadId);
@@ -358,8 +356,55 @@ export class WorkbenchController implements vscode.Disposable {
     } catch (err) {
       const text = err instanceof Error ? err.message : String(err);
       this.output.appendLine(`[workbench] ${text}`);
-      reply?.({ type: "error", message: text });
+      reply?.(
+        message.type === "assignRepos"
+          ? {
+              type: "repoAssignmentFailed",
+              threadId: message.threadId,
+              message: text,
+            }
+          : { type: "error", message: text },
+      );
       await this.refresh(text);
+    }
+  }
+
+  private assignRepos(threadId: string, repoIds: string[]): Promise<void> {
+    // Webview messages are delivered independently, so rapid checkbox clicks
+    // can overlap. Keep only the newest queued value and drain one write at a
+    // time; every caller waits until the final value has been persisted.
+    this.repoAssignmentsPending.set(threadId, [...repoIds]);
+    const inFlight = this.repoAssignmentsInFlight.get(threadId);
+    if (inFlight) return inFlight;
+
+    const run = this.drainRepoAssignments(threadId).finally(() => {
+      this.repoAssignmentsInFlight.delete(threadId);
+    });
+    this.repoAssignmentsInFlight.set(threadId, run);
+    return run;
+  }
+
+  private async drainRepoAssignments(threadId: string): Promise<void> {
+    try {
+      while (true) {
+        const repoIds = this.repoAssignmentsPending.get(threadId);
+        if (!repoIds) break;
+        this.repoAssignmentsPending.delete(threadId);
+        await this.withClient((client) =>
+          client.assignThreadRepos(threadId, repoIds),
+        );
+      }
+      this.diffCache.delete(threadId);
+      await this.refresh();
+
+      // A selection can arrive while refresh is yielding to the daemon. Drain
+      // it before resolving the shared promise so no last click is stranded.
+      if (this.repoAssignmentsPending.has(threadId)) {
+        await this.drainRepoAssignments(threadId);
+      }
+    } catch (err) {
+      this.repoAssignmentsPending.delete(threadId);
+      throw err;
     }
   }
 

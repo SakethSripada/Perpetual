@@ -422,6 +422,7 @@ export type ExtensionMessage =
   | { type: "threadEvent"; event: AgentThreadEvent }
   | { type: "githubRepos"; repos: GithubRepository[]; status: GithubAuthStatus | null }
   | { type: "repoConnected"; repo: Repo }
+  | { type: "repoAssignmentFailed"; threadId: string; message: string }
   | { type: "sandboxLoginPrompt"; prompt: { code: string; url: string }; codex: boolean }
   | { type: "notice"; message: string }
   | { type: "error"; message: string };

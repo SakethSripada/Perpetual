@@ -44,6 +44,11 @@ type PersistedState = {
   repoTouched?: boolean;
 };
 
+type PendingRepoAssignment = {
+  threadId: string;
+  repoIds: string[];
+};
+
 type VsCodeApi = {
   postMessage(message: unknown): void;
   getState(): unknown;
@@ -87,6 +92,8 @@ export default function App() {
   );
   const [localBaseUrl, setLocalBaseUrl] = useState("");
   const [repoIds, setRepoIds] = useState<string[]>(persisted.repoIds ?? []);
+  const repoIdsRef = useRef(repoIds);
+  repoIdsRef.current = repoIds;
   const [notice, setNotice] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [monitorOpen, setMonitorOpen] = useState(false);
@@ -121,6 +128,7 @@ export default function App() {
   const handoffRef = useRef<Record<string, string>>({});
   const repoTouchedRef = useRef(!!persisted.repoTouched);
   const repoInitKeyRef = useRef("");
+  const pendingRepoAssignmentRef = useRef<PendingRepoAssignment | null>(null);
 
   useEffect(() => {
     const onMessage = (event: MessageEvent<ExtensionMessage>) => {
@@ -214,10 +222,43 @@ export default function App() {
       }
       if (incoming.type === "repoConnected") {
         repoTouchedRef.current = true;
-        setRepoIds((prev) =>
-          prev.includes(incoming.repo.id) ? prev : [...prev, incoming.repo.id],
-        );
+        const next = repoIdsRef.current.includes(incoming.repo.id)
+          ? repoIdsRef.current
+          : [...repoIdsRef.current, incoming.repo.id];
+        repoIdsRef.current = next;
+        setRepoIds(next);
+        const current = snapshotRef.current;
+        const currentThreadId = current?.selectedThreadId;
+        const reposLocked =
+          !!currentThreadId &&
+          !!current?.details?.repos.some((repo) => !!repo.worktree_path);
+        if (currentThreadId && !reposLocked) {
+          pendingRepoAssignmentRef.current = {
+            threadId: currentThreadId,
+            repoIds: [...next],
+          };
+          vscode.postMessage({
+            type: "assignRepos",
+            threadId: currentThreadId,
+            repoIds: next,
+          });
+        }
         setNotice(`Connected ${incoming.repo.name}.`);
+        return;
+      }
+      if (incoming.type === "repoAssignmentFailed") {
+        if (
+          pendingRepoAssignmentRef.current?.threadId === incoming.threadId
+        ) {
+          pendingRepoAssignmentRef.current = null;
+          const current = snapshotRef.current;
+          if (current?.selectedThreadId === incoming.threadId) {
+            setRepoIds(
+              current.details?.repos.map((repo) => repo.repo_id) ?? [],
+            );
+          }
+        }
+        setNotice(incoming.message);
         return;
       }
       if (incoming.type === "notice" || incoming.type === "error") {
@@ -318,8 +359,18 @@ export default function App() {
       setLocalProvider(nextAgent === "codex" ? nextLocalProvider : "");
       setLocalBaseUrl(nextAgent === "codex" ? nextLocalBaseUrl : "");
     }
-    if (selectedThread && snapshot.details?.repos.length) {
-      setRepoIds(snapshot.details.repos.map((repo) => repo.repo_id));
+    if (
+      selectedThread &&
+      snapshot.selectedThreadId === selectedThread.id &&
+      snapshot.details
+    ) {
+      const nextRepoIds = snapshot.details.repos.map((repo) => repo.repo_id);
+      const pendingAssignment = pendingRepoAssignmentRef.current;
+      if (pendingAssignment?.threadId === selectedThread.id) {
+        if (!sameStringSet(pendingAssignment.repoIds, nextRepoIds)) return;
+        pendingRepoAssignmentRef.current = null;
+      }
+      setRepoIds(nextRepoIds);
     } else if (!selectedThread) {
       const repoKey = snapshot.repos.map((repo) => repo.id).join("|");
       if (!repoTouchedRef.current && repoInitKeyRef.current !== repoKey) {
@@ -346,6 +397,7 @@ export default function App() {
     snapshot?.defaults.local_provider,
     snapshot?.defaults.local_base_url,
     snapshot?.repos,
+    snapshot?.details?.repos,
     snapshot?.defaultRepoIds,
     snapshot?.runDefaults,
   ]);
@@ -715,6 +767,10 @@ export default function App() {
     repoTouchedRef.current = true;
     setRepoIds(next);
     if (selectedThread && !reposLocked) {
+      pendingRepoAssignmentRef.current = {
+        threadId: selectedThread.id,
+        repoIds: [...next],
+      };
       vscode.postMessage({
         type: "assignRepos",
         threadId: selectedThread.id,
@@ -724,6 +780,7 @@ export default function App() {
   };
 
   const newSession = () => {
+    pendingRepoAssignmentRef.current = null;
     setHistoryOpen(false);
     setPending([]);
     setWelcomeLeaving(false);
@@ -1204,18 +1261,24 @@ function StreamingMarkdown({
       return;
     }
     let frame = 0;
-    let lastPaint = 0;
+    let lastPaint = performance.now();
     const reveal = (now: number) => {
-      if (now - lastPaint < 24) {
-        frame = window.requestAnimationFrame(reveal);
-        return;
-      }
+      const elapsed = Math.min(50, now - lastPaint);
       lastPaint = now;
       const current = visibleRef.current.length;
       const backlog = text.length - current;
       if (backlog <= 0) return;
-      const chunk = Math.min(28, Math.max(1, Math.ceil(backlog * 0.16)));
-      const end = nextRevealBoundary(text, current, current + chunk);
+
+      // Keep the reveal moving at a brisk baseline, then accelerate in
+      // proportion to the backlog so a burst of tokens never leaves the UI
+      // visibly behind. Updating on every animation frame avoids the chunky
+      // word-at-a-time cadence of the previous throttled loop.
+      const charactersPerSecond = Math.min(1_400, 240 + backlog * 7);
+      const chunk = Math.min(
+        42,
+        Math.max(2, Math.ceil((charactersPerSecond * elapsed) / 1_000)),
+      );
+      const end = nextRevealBoundary(text, current + chunk);
       const next = text.slice(0, end);
       visibleRef.current = next;
       setVisible(next);
@@ -1233,11 +1296,8 @@ function StreamingMarkdown({
   );
 }
 
-function nextRevealBoundary(text: string, start: number, proposed: number): number {
-  let end = Math.min(text.length, Math.max(start + 1, proposed));
-  const lookAhead = Math.min(text.length, end + 12);
-  while (end < lookAhead && !/\s/.test(text[end])) end += 1;
-  if (end < text.length) end += 1;
+function nextRevealBoundary(text: string, proposed: number): number {
+  let end = Math.min(text.length, Math.max(1, proposed));
   const previous = text.charCodeAt(end - 1);
   if (previous >= 0xd800 && previous <= 0xdbff && end < text.length) end += 1;
   return end;
@@ -1245,16 +1305,12 @@ function nextRevealBoundary(text: string, start: number, proposed: number): numb
 
 function WorkingIndicator() {
   return (
-    <div className="thinking" role="status" aria-live="polite">
-      <span className="thinking-orb" aria-hidden="true">
-        <span />
-      </span>
+    <div
+      className="thinking working-indicator"
+      role="status"
+      aria-live="polite"
+    >
       <span className="thinking-label">Working</span>
-      <span className="thinking-dots" aria-hidden="true">
-        <i />
-        <i />
-        <i />
-      </span>
     </div>
   );
 }
@@ -1539,7 +1595,7 @@ function ModelPicker(props: {
   }, [open]);
 
   return (
-    <label className="field">
+    <div className="field">
       <span>
         Model
         {props.value.trim() &&
@@ -1641,7 +1697,7 @@ function ModelPicker(props: {
           ))}
         </div>
       </Popover>
-    </label>
+    </div>
   );
 }
 
@@ -2111,6 +2167,12 @@ function Composer(props: ComposerProps) {
                 {repos.length === 0 && (
                   <div className="menu-empty">No repositories connected</div>
                 )}
+                {props.reposLocked && (
+                  <div className="menu-empty repo-lock-note">
+                    Repositories are fixed after this session creates a managed
+                    workspace. Start a new session to use a different set.
+                  </div>
+                )}
                 {repos.map((repo) => {
                   const checked = props.repoIds.includes(repo.id);
                   return (
@@ -2118,6 +2180,11 @@ function Composer(props: ComposerProps) {
                       key={repo.id}
                       className={
                         checked ? "menu-item check selected" : "menu-item check"
+                      }
+                      title={
+                        props.reposLocked
+                          ? "Start a new session to change repositories"
+                          : undefined
                       }
                     >
                       <input
@@ -3945,7 +4012,7 @@ type PickerModelOption = {
   source: string;
 };
 
-function modelOptions(
+export function modelOptions(
   agent: AgentKind,
   snapshot: WorkbenchSnapshot | null,
   localProvider: LocalModelProvider | null,
@@ -3967,6 +4034,14 @@ function modelOptions(
   } else {
     for (const option of catalog?.models ?? []) {
       pushPickerOption(out, catalogOption(option));
+    }
+    const detectedModels = (catalog?.models ?? []).some(
+      (option) => option.source !== "settings" && option.available,
+    );
+    if (!detectedModels) {
+      for (const option of fallbackModelOptions(agent)) {
+        pushPickerOption(out, option);
+      }
     }
   }
 
@@ -3990,6 +4065,18 @@ function modelOptions(
     });
   }
   return out;
+}
+
+function fallbackModelOptions(agent: AgentKind): PickerModelOption[] {
+  const models =
+    agent === "claude_code"
+      ? ["opus", "sonnet", "haiku"]
+      : ["gpt-5-codex", "gpt-5", "gpt-4.1", "o3", "o4-mini"];
+  return models.map((value) => ({
+    value,
+    label: prettyModel(value),
+    source: "Built-in fallback",
+  }));
 }
 
 function catalogOption(option: AgentModelOption): PickerModelOption {
@@ -4080,6 +4167,13 @@ function sourceLabel(source: string): string {
 
 function modelIdsEqual(a: string, b: string): boolean {
   return baseModelId(a).toLowerCase() === baseModelId(b).toLowerCase();
+}
+
+export function sameStringSet(
+  a: readonly string[],
+  b: readonly string[],
+): boolean {
+  return a.length === b.length && a.every((value) => b.includes(value));
 }
 
 // Strips provider decorations from a model id — e.g. the "[1m]" 1M-context
