@@ -1060,10 +1060,6 @@ textarea {
   color: var(--vscode-foreground);
   background: var(--am-control-bg);
 }
-.composer-icon-btn.warning {
-  color: var(--am-warn);
-  background: color-mix(in srgb, var(--am-warn) 14%, transparent);
-}
 .icon-chip.danger {
   color: var(--am-warn);
   background: color-mix(in srgb, var(--am-warn) 15%, transparent);

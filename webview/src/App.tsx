@@ -507,6 +507,66 @@ export default function App() {
       setNotice(command.message);
       return;
     }
+    if (command?.kind === "local") {
+      switch (command.action) {
+        case "help":
+          setNotice(
+            `Commands: ${availableSlashCommands(agent)
+              .map((item) => `/${item.name}`)
+              .join(", ")}`,
+          );
+          return;
+        case "status": {
+          const availability = snapshot?.agents.find(
+            (item) => item.kind === agent,
+          )?.availability;
+          const selectedRepoCount =
+            snapshot?.repos.filter((repo) => repoIds.includes(repo.id)).length ??
+            0;
+          setNotice(
+            [
+              labelAgent(agent),
+              availability ? humanize(availability) : "Status unavailable",
+              model.trim() ? prettyModel(model) : "Default model",
+              reasoning.trim()
+                ? `${humanize(reasoning)} effort`
+                : "Default effort",
+              permissionComposerLabel(permission),
+              backend === "docker_sandbox" ? "Docker Sandbox" : "Host",
+              `${selectedRepoCount} repo${selectedRepoCount === 1 ? "" : "s"}`,
+              selectedThread ? (isRunning ? "Running" : "Idle") : "New session",
+            ].join(" · "),
+          );
+          return;
+        }
+        case "diff":
+          if (!selectedThread) {
+            setNotice("Start or resume a session before opening its changes.");
+            return;
+          }
+          reviewChanges();
+          return;
+        case "new":
+          newSession();
+          return;
+        case "resume":
+          setHistoryOpen(true);
+          return;
+        case "settings":
+          setSettingsOpen(true);
+          return;
+        case "stop":
+          if (!selectedThread || !isRunning) {
+            setNotice("There is no active run to stop.");
+            return;
+          }
+          vscode.postMessage({
+            type: "stopThread",
+            threadId: selectedThread.id,
+          });
+          return;
+      }
+    }
     if (command?.kind === "setting") {
       if (command.setting === "model") {
         const nextModel = command.argument.trim();
@@ -527,10 +587,37 @@ export default function App() {
         setNotice(`Model set to ${prettyModel(nextModel)} for future ${labelAgent(agent)} runs.`);
         return;
       }
+      if (command.setting === "reasoning") {
+        const requestedEffort = command.argument.trim();
+        if (!requestedEffort) {
+          setNotice("Usage: /effort <level>, or /effort default.");
+          return;
+        }
+        if (["auto", "default"].includes(requestedEffort.toLowerCase())) {
+          setReasoning("");
+          setNotice(`Using the ${labelAgent(agent)} default reasoning effort.`);
+          return;
+        }
+        const supportedEffort = reasoningOptions(agent, snapshot).find(
+          (option) =>
+            option.value.toLowerCase() === requestedEffort.toLowerCase(),
+        );
+        if (!supportedEffort?.value) {
+          setNotice(
+            `${humanize(requestedEffort)} reasoning is not available for ${labelAgent(agent)}.`,
+          );
+          return;
+        }
+        setReasoning(supportedEffort.value);
+        setNotice(
+          `Reasoning effort set to ${humanize(supportedEffort.value)} for future ${labelAgent(agent)} runs.`,
+        );
+        return;
+      }
 
       const nextPermission = permissionFromCommand(command.argument);
       if (!nextPermission) {
-        setNotice("Usage: /permission read-only, write, or full-access.");
+        setNotice("Usage: /permissions read-only, write, or full-access.");
         return;
       }
       setPermission(nextPermission);
@@ -547,7 +634,13 @@ export default function App() {
       );
       return;
     }
-    const run = command?.kind === "read_only_run" ? command : null;
+    const run = command?.kind === "run" ? command : null;
+    if (run?.requiresWrite && permission === "read_only") {
+      setNotice(
+        `/${text.split(/\s/, 1)[0].slice(1)} requires write access. Use /permissions write first.`,
+      );
+      return;
+    }
     const message = run?.message ?? text;
     const runPermission = run?.permission ?? permission;
     const submittedLocalProvider =
@@ -1851,10 +1944,11 @@ function Composer(props: ComposerProps) {
   const selectedRepos = repos.filter((repo) => props.repoIds.includes(repo.id));
   const noRepoSelected = repos.length > 0 && selectedRepos.length === 0;
   const draftCommand = resolveAppCommand(draft, props.agent);
-  const isSettingCommand = draftCommand?.kind === "setting";
+  const isAppOnlyCommand =
+    draftCommand !== null && draftCommand.kind !== "run";
   const canSend =
     !!draft.trim() &&
-    (isSettingCommand ||
+    (isAppOnlyCommand ||
       (!!props.snapshot?.trusted &&
         !noRepoSelected &&
         (!localOn || !!props.model.trim())));
@@ -2002,7 +2096,7 @@ function Composer(props: ComposerProps) {
                 <button
                   ref={ref as (el: HTMLButtonElement | null) => void}
                   type="button"
-                  className={`composer-icon-btn${noRepoSelected ? " warning" : ""}`}
+                  className="composer-icon-btn"
                   title={reposTitle}
                   aria-label={reposLabel}
                   onClick={toggle}
@@ -2325,19 +2419,42 @@ type SlashCommand = {
 };
 
 type AppCommand = SlashCommand & {
-  action: "model" | "permission" | "plan" | "review";
+  action:
+    | "debug"
+    | "diff"
+    | "effort"
+    | "help"
+    | "init"
+    | "model"
+    | "new"
+    | "permissions"
+    | "plan"
+    | "resume"
+    | "review"
+    | "run"
+    | "security-review"
+    | "settings"
+    | "simplify"
+    | "status"
+    | "stop"
+    | "verify";
 };
 
 type AppCommandResolution =
   | {
       kind: "setting";
-      setting: "model" | "permission";
+      setting: "model" | "permission" | "reasoning";
       argument: string;
     }
   | {
-      kind: "read_only_run";
-      permission: PermissionPolicy;
+      kind: "run";
+      permission?: PermissionPolicy;
+      requiresWrite?: boolean;
       message: string;
+    }
+  | {
+      kind: "local";
+      action: "diff" | "help" | "new" | "resume" | "settings" | "status" | "stop";
     }
   | { kind: "error"; message: string }
   | { kind: "unsupported"; name: string };
@@ -2354,6 +2471,7 @@ const APP_COMMANDS: AppCommand[] = [
   },
   {
     name: "review",
+    aliases: ["code-review"],
     scopes: ["claude_code", "codex"],
     description: "Review code or changes without making changes",
     takesInput: true,
@@ -2367,12 +2485,107 @@ const APP_COMMANDS: AppCommand[] = [
     action: "model",
   },
   {
-    name: "permission",
-    aliases: ["permissions"],
+    name: "permissions",
+    aliases: ["permission"],
     scopes: ["claude_code", "codex"],
     description: "Set read-only, write, or full-access mode",
     takesInput: true,
-    action: "permission",
+    action: "permissions",
+  },
+  {
+    name: "effort",
+    aliases: ["reasoning"],
+    scopes: ["claude_code", "codex"],
+    description: "Set reasoning effort for future runs",
+    takesInput: true,
+    action: "effort",
+  },
+  {
+    name: "init",
+    scopes: ["claude_code", "codex"],
+    description: "Generate provider-native repository guidance",
+    takesInput: true,
+    action: "init",
+  },
+  {
+    name: "security-review",
+    scopes: ["claude_code", "codex"],
+    description: "Review pending changes for security risks",
+    takesInput: true,
+    action: "security-review",
+  },
+  {
+    name: "debug",
+    scopes: ["claude_code", "codex"],
+    description: "Diagnose and fix a concrete problem",
+    takesInput: true,
+    action: "debug",
+  },
+  {
+    name: "simplify",
+    scopes: ["claude_code", "codex"],
+    description: "Simplify changed code and verify the result",
+    takesInput: true,
+    action: "simplify",
+  },
+  {
+    name: "run",
+    scopes: ["claude_code", "codex"],
+    description: "Build, launch, and observe the app",
+    takesInput: true,
+    action: "run",
+  },
+  {
+    name: "verify",
+    scopes: ["claude_code", "codex"],
+    description: "Verify behavior with builds, tests, and runtime checks",
+    takesInput: true,
+    action: "verify",
+  },
+  {
+    name: "diff",
+    scopes: ["claude_code", "codex"],
+    description: "Open Perpetual's current changes view",
+    action: "diff",
+  },
+  {
+    name: "status",
+    scopes: ["claude_code", "codex"],
+    description: "Show Perpetual's active run configuration",
+    action: "status",
+  },
+  {
+    name: "new",
+    aliases: ["clear", "reset"],
+    scopes: ["claude_code", "codex"],
+    description: "Start a fresh Perpetual session",
+    action: "new",
+  },
+  {
+    name: "resume",
+    aliases: ["history"],
+    scopes: ["claude_code", "codex"],
+    description: "Open Perpetual's session history",
+    action: "resume",
+  },
+  {
+    name: "stop",
+    scopes: ["claude_code", "codex"],
+    description: "Stop the active Perpetual run",
+    action: "stop",
+  },
+  {
+    name: "settings",
+    aliases: ["config"],
+    scopes: ["claude_code", "codex"],
+    description: "Open Perpetual settings",
+    action: "settings",
+  },
+  {
+    name: "help",
+    scopes: ["claude_code", "codex"],
+    description: "List commands Perpetual can execute",
+    action: "help",
   },
 ];
 
@@ -2447,23 +2660,69 @@ function resolveAppCommand(
   switch (command.action) {
     case "model":
       return { kind: "setting", setting: "model", argument };
-    case "permission":
+    case "permissions":
       return { kind: "setting", setting: "permission", argument };
+    case "effort":
+      return { kind: "setting", setting: "reasoning", argument };
     case "plan":
-      if (!argument.trim()) {
-        return { kind: "error", message: "Usage: /plan <request>." };
-      }
       return {
-        kind: "read_only_run",
+        kind: "run",
         permission: "read_only",
         message: planPrompt(argument),
       };
     case "review":
       return {
-        kind: "read_only_run",
+        kind: "run",
         permission: "read_only",
         message: reviewPrompt(argument),
       };
+    case "security-review":
+      return {
+        kind: "run",
+        permission: "read_only",
+        message: securityReviewPrompt(argument),
+      };
+    case "init":
+      return {
+        kind: "run",
+        requiresWrite: true,
+        message: initPrompt(agent, argument),
+      };
+    case "debug":
+      if (!argument.trim()) {
+        return { kind: "error", message: "Usage: /debug <problem>." };
+      }
+      return {
+        kind: "run",
+        requiresWrite: true,
+        message: debugPrompt(argument),
+      };
+    case "simplify":
+      return {
+        kind: "run",
+        requiresWrite: true,
+        message: simplifyPrompt(argument),
+      };
+    case "run":
+      return {
+        kind: "run",
+        requiresWrite: true,
+        message: runPrompt(argument),
+      };
+    case "verify":
+      return {
+        kind: "run",
+        requiresWrite: true,
+        message: verifyPrompt(argument),
+      };
+    case "diff":
+    case "help":
+    case "new":
+    case "resume":
+    case "settings":
+    case "status":
+    case "stop":
+      return { kind: "local", action: command.action };
   }
 }
 
@@ -2486,12 +2745,46 @@ function permissionFromCommand(value: string): PermissionPolicy | null {
 }
 
 function planPrompt(request: string): string {
-  return `Create an implementation plan for the request below. Inspect the repository as needed, but do not modify files, write files, or perform external actions. Return the scope, affected files, ordered implementation steps, verification plan, and risks or assumptions.\n\nRequest:\n${request.trim()}`;
+  const requestedWork =
+    request.trim() ||
+    "Plan the next appropriate work for the current task and repository state.";
+  return `Create an implementation plan for the request below. Inspect the repository as needed, but do not modify files, write files, or perform external actions. Return the scope, affected files, ordered implementation steps, verification plan, and risks or assumptions.\n\nRequest:\n${requestedWork}`;
 }
 
 function reviewPrompt(scope: string): string {
   const requestedScope = scope.trim() || "Review the current working tree and recent changes.";
   return `Perform a read-only code review for the scope below. Inspect the relevant repository files and changes, but do not modify files or perform external actions. Report only actionable findings, ordered by severity, with file and line references where possible. If there are no findings, say so plainly.\n\nScope:\n${requestedScope}`;
+}
+
+function securityReviewPrompt(scope: string): string {
+  const requestedScope =
+    scope.trim() || "Review the current working tree and pending changes.";
+  return `Perform a read-only security review for the scope below. Inspect the relevant code and diff without modifying files. Focus on exploitable issues such as injection, broken authorization, secret exposure, unsafe deserialization, path traversal, insecure defaults, and data leakage. Report actionable findings ordered by severity with file and line references, impact, and a concise remediation. If there are no findings, say so plainly.\n\nScope:\n${requestedScope}`;
+}
+
+function initPrompt(agent: AgentKind, scope: string): string {
+  const guidanceFile = agent === "claude_code" ? "CLAUDE.md" : "AGENTS.md";
+  const requestedScope = scope.trim() || "the current repository";
+  return `Initialize durable agent guidance for ${requestedScope}. Inspect the repository, its existing documentation, package scripts, build files, and tests. Create or update ${guidanceFile} with concise, accurate instructions covering architecture, conventions, common commands, verification steps, and important constraints. Preserve useful existing guidance and do not invent commands you have not verified.`;
+}
+
+function debugPrompt(problem: string): string {
+  return `Diagnose and fix the concrete problem below. Reproduce it when practical, trace it to its root cause, make the smallest correct change, and run focused verification that demonstrates the fix. Preserve unrelated behavior and report the cause, changes, and evidence.\n\nProblem:\n${problem.trim()}`;
+}
+
+function simplifyPrompt(scope: string): string {
+  const requestedScope = scope.trim() || "the current working tree changes";
+  return `Simplify ${requestedScope} without changing observable behavior. Inspect the surrounding code, remove unnecessary complexity and duplication, reuse established helpers, keep the change narrowly scoped, and run focused tests or builds that verify behavior is preserved.`;
+}
+
+function runPrompt(scope: string): string {
+  const requestedScope = scope.trim() || "the project's primary application";
+  return `Build and launch ${requestedScope}, then exercise the relevant behavior in the running application. Resolve setup or runtime issues that block a meaningful check when they are within the repository, avoid unrelated changes, and report the exact commands, observed behavior, and any remaining limitation.`;
+}
+
+function verifyPrompt(scope: string): string {
+  const requestedScope = scope.trim() || "the current working tree changes";
+  return `Verify ${requestedScope} end to end. Determine the relevant build, test, lint, type-check, and runtime checks from repository guidance and package configuration; run the focused checks that materially prove the behavior; fix in-scope failures; and report concrete results rather than assumptions.`;
 }
 
 const PERMISSIONS: {

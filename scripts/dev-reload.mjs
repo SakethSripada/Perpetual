@@ -12,9 +12,12 @@ const target = readArg(args, "--target") ?? currentTarget();
 const root = process.cwd();
 const manifest = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
 const extensionPrefix = `${manifest.publisher}.${manifest.name}-${manifest.version}`;
+const npmCommand = npmInvocation();
 
-run("npm", ["run", "build"]);
-run("npm", ["run", "check-daemon", "--", `--target=${target}`]);
+runNpm(["run", "build"]);
+runNpm(["run", "build:daemon", "--", `--target=${target}`]);
+runNpm(["run", "copy-daemon", "--", `--target=${target}`]);
+runNpm(["run", "check-daemon", "--", `--target=${target}`]);
 
 const installs = installDirArg
   ? [path.resolve(installDirArg)]
@@ -47,8 +50,70 @@ async function syncInstalledExtension(installDir, targetName) {
   const destBinaryDir = path.join(installDir, "bin", targetName);
   const destBinary = path.join(destBinaryDir, binary);
   await mkdir(destBinaryDir, { recursive: true });
-  await cp(sourceBinary, destBinary);
+  await replaceInstalledDaemon(sourceBinary, destBinary);
   if (!targetName.startsWith("win32")) await chmod(destBinary, 0o755);
+}
+
+async function replaceInstalledDaemon(source, destination) {
+  const maxAttempts = process.platform === "win32" ? 8 : 1;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    if (process.platform === "win32") stopWindowsProcessAt(destination);
+    try {
+      await cp(source, destination);
+      return;
+    } catch (err) {
+      if (
+        process.platform !== "win32" ||
+        !["EBUSY", "EPERM"].includes(err?.code) ||
+        attempt === maxAttempts
+      ) {
+        throw err;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+}
+
+function stopWindowsProcessAt(executablePath) {
+  const target = executablePath.replace(/'/g, "''");
+  const script = `
+$ProgressPreference = 'SilentlyContinue'
+$target = [IO.Path]::GetFullPath('${target}')
+Get-Process -Name 'am-daemon' -ErrorAction SilentlyContinue |
+  ForEach-Object {
+    $candidate = $null
+    try { $candidate = $_.Path } catch {}
+    if (
+      $candidate -and
+      [String]::Equals(
+        [IO.Path]::GetFullPath($candidate),
+        $target,
+        [StringComparison]::OrdinalIgnoreCase
+      )
+    ) {
+      Stop-Process -Id $_.Id -Force -ErrorAction Stop
+      $_.Id
+    }
+  }
+exit 0
+`;
+  try {
+    const encoded = Buffer.from(script, "utf16le").toString("base64");
+    const stopped = execFileSync(
+      "powershell.exe",
+      ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+      { encoding: "utf8" },
+    )
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    if (stopped.length) {
+      console.log(`Stopped installed daemon process${stopped.length === 1 ? "" : "es"}: ${stopped.join(", ")}`);
+    }
+  } catch (err) {
+    console.error(`Could not stop the installed daemon at ${executablePath}.`);
+    if (err?.message) console.error(err.message);
+  }
 }
 
 async function copyDir(source, destination) {
@@ -138,9 +203,50 @@ function runningMacBundleIds() {
   }
 }
 
-function run(command, commandArgs) {
-  const result = spawnSync(command, commandArgs, { cwd: root, stdio: "inherit" });
+function npmInvocation() {
+  if (process.env.npm_execpath) {
+    return {
+      command: process.execPath,
+      argsPrefix: [process.env.npm_execpath],
+      viaCmd: false,
+    };
+  }
+  if (process.platform === "win32") {
+    return { command: "npm.cmd", argsPrefix: [], viaCmd: true };
+  }
+  return { command: "npm", argsPrefix: [], viaCmd: false };
+}
+
+function runNpm(commandArgs) {
+  run(npmCommand.command, [...npmCommand.argsPrefix, ...commandArgs], {
+    viaCmd: npmCommand.viaCmd,
+  });
+}
+
+function run(command, commandArgs, options = {}) {
+  const result = options.viaCmd
+    ? spawnSync(
+        process.env.ComSpec ?? "cmd.exe",
+        ["/d", "/s", "/c", commandLine(command, commandArgs)],
+        { cwd: root, stdio: "inherit" },
+      )
+    : spawnSync(command, commandArgs, { cwd: root, stdio: "inherit" });
+  if (result.error) {
+    console.error(`Failed to run ${command}: ${result.error.message}`);
+    process.exit(1);
+  }
   if (result.status !== 0) process.exit(result.status ?? 1);
+}
+
+function commandLine(command, commandArgs) {
+  return [command, ...commandArgs].map(quoteWindowsArg).join(" ");
+}
+
+function quoteWindowsArg(arg) {
+  const text = String(arg);
+  if (text.length === 0) return '""';
+  if (!/[\s&()^=;!'+,`~|<>"]/u.test(text)) return text;
+  return `"${text.replace(/"/g, '""')}"`;
 }
 
 function currentTarget() {
