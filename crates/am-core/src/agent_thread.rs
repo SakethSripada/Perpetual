@@ -2575,9 +2575,6 @@ fn build_thread_initial_prompt(
     if prompt.trim().is_empty() {
         prompt = thread.title.clone();
     }
-    if is_native_slash_command(&prompt) {
-        return prompt.trim().to_string();
-    }
     if context_files_available {
         prompt.push_str(
             "\n\nBefore making changes, read TASK_CONTEXT.md and AGENTS.md in this workspace. Multiple repositories, if selected, are sibling directories under the current workspace root.",
@@ -2588,14 +2585,6 @@ fn build_thread_initial_prompt(
         );
     }
     prompt
-}
-
-fn is_native_slash_command(message: &str) -> bool {
-    let trimmed = message.trim_start();
-    trimmed
-        .strip_prefix('/')
-        .and_then(|rest| rest.chars().next())
-        .is_some_and(|ch| ch.is_ascii_alphabetic())
 }
 
 fn build_thread_resume_prompt(thread: &AgentThread, context_files_available: bool) -> String {
@@ -3010,15 +2999,9 @@ mod tests {
     }
 
     #[test]
-    fn native_slash_initial_prompt_is_passed_through_exactly() {
-        let prompt = build_thread_initial_prompt(&test_thread(), "  /plan fix auth", false);
-        assert_eq!(prompt, "/plan fix auth");
-    }
-
-    #[test]
-    fn native_slash_followup_prompt_is_passed_through_exactly() {
-        let prompt = build_thread_followup_prompt("/verify the login flow");
-        assert_eq!(prompt, "/verify the login flow");
+    fn initial_prompt_keeps_context_for_slash_like_text() {
+        let prompt = build_thread_initial_prompt(&test_thread(), "/plan fix auth", false);
+        assert!(prompt.starts_with("/plan fix auth\n\nUse the current repository"));
     }
 
     #[test]

@@ -142,18 +142,8 @@ fn build_args(spec: &SessionSpec, resume: Option<&SessionRef>) -> Vec<String> {
         .as_ref()
         .and_then(|mcp| mcp.claude_settings_path.as_ref());
     let has_mcp = spec.mcp.is_some();
-    let native_slash_command = is_native_slash_command(&spec.prompt);
     let mut allowed: Option<&str> = None;
     match spec.permission {
-        PermissionPolicy::ReadOnly if native_slash_command => {
-            args.push("--permission-mode".into());
-            if settings.is_some() {
-                args.push("default".into());
-                allowed = Some(MCP_ALLOWED_TOOLS);
-            } else {
-                args.push("acceptEdits".into());
-            }
-        }
         PermissionPolicy::ReadOnly => {
             args.push("--permission-mode".into());
             args.push("plan".into());
@@ -217,14 +207,6 @@ fn build_args(spec: &SessionSpec, resume: Option<&SessionRef>) -> Vec<String> {
         args.push(prior.agent_session_id.clone());
     }
     args
-}
-
-fn is_native_slash_command(message: &str) -> bool {
-    let trimmed = message.trim_start();
-    trimmed
-        .strip_prefix('/')
-        .and_then(|rest| rest.chars().next())
-        .is_some_and(|ch| ch.is_ascii_alphabetic())
 }
 
 fn push_policy_args(args: &mut Vec<String>, policy: &crate::AgentPolicyRuntime) {
@@ -901,10 +883,10 @@ mod tests {
     }
 
     #[test]
-    fn native_slash_commands_are_not_pre_forced_into_plan_mode() {
+    fn read_only_runs_use_claude_plan_mode() {
         let spec = SessionSpec {
             worktree: "/tmp/worktree".into(),
-            prompt: "/plan fix auth".into(),
+            prompt: "Create a plan for fixing auth.".into(),
             model: None,
             reasoning: None,
             local_model: None,
@@ -916,41 +898,7 @@ mod tests {
         };
 
         let args = build_args(&spec, None);
-        assert!(args.windows(2).any(|p| p == ["-p", "/plan fix auth"]));
-        assert!(!args.windows(2).any(|p| p == ["--permission-mode", "plan"]));
-        assert!(args
-            .windows(2)
-            .any(|p| p == ["--permission-mode", "acceptEdits"]));
-    }
-
-    #[test]
-    fn native_slash_commands_keep_approval_hook_when_available() {
-        let spec = SessionSpec {
-            worktree: "/tmp/worktree".into(),
-            prompt: "  /context".into(),
-            model: None,
-            reasoning: None,
-            local_model: None,
-            mcp: Some(crate::AgentMcpConfig {
-                url: "http://127.0.0.1:7777/mcp".into(),
-                token: "secret".into(),
-                claude_config_path: Some("/tmp/cfg.json".into()),
-                claude_settings_path: Some("/tmp/settings.json".into()),
-            }),
-            permission: PermissionPolicy::ReadOnly,
-            runtime: crate::SessionRuntime::default(),
-            policy: None,
-            approver: None,
-        };
-
-        let args = build_args(&spec, None);
-        assert!(!args.windows(2).any(|p| p == ["--permission-mode", "plan"]));
-        assert!(args
-            .windows(2)
-            .any(|p| p == ["--permission-mode", "default"]));
-        assert!(args
-            .windows(2)
-            .any(|p| p == ["--settings", "/tmp/settings.json"]));
+        assert!(args.windows(2).any(|p| p == ["--permission-mode", "plan"]));
     }
 
     #[test]

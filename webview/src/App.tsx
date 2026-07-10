@@ -495,7 +495,49 @@ export default function App() {
   // transcript; it hands us the final text here on submit.
   const send = (raw: string) => {
     const text = raw.trim();
-    if (!text || !snapshot?.trusted) return;
+    if (!text) return;
+    const command = resolveAppCommand(text, agent);
+    if (command?.kind === "unsupported") {
+      setNotice(
+        `/${command.name} is not supported in Perpetual. Choose a command from the picker.`,
+      );
+      return;
+    }
+    if (command?.kind === "error") {
+      setNotice(command.message);
+      return;
+    }
+    if (command?.kind === "setting") {
+      if (command.setting === "model") {
+        const nextModel = command.argument.trim();
+        if (!nextModel) {
+          setNotice("Usage: /model <model-id>, or /model default.");
+          return;
+        }
+        if (nextModel.toLowerCase() === "default") {
+          setModel("");
+          setNotice(`Using the ${labelAgent(agent)} default model for future runs.`);
+          return;
+        }
+        if (!modelCompatibleWithAgent(agent, nextModel)) {
+          setNotice(`${prettyModel(nextModel)} is not available for ${labelAgent(agent)}.`);
+          return;
+        }
+        setModel(nextModel);
+        setNotice(`Model set to ${prettyModel(nextModel)} for future ${labelAgent(agent)} runs.`);
+        return;
+      }
+
+      const nextPermission = permissionFromCommand(command.argument);
+      if (!nextPermission) {
+        setNotice("Usage: /permission read-only, write, or full-access.");
+        return;
+      }
+      setPermission(nextPermission);
+      setNotice(`Permission set to ${permissionComposerLabel(nextPermission)} for future runs.`);
+      return;
+    }
+    if (!snapshot?.trusted) return;
     const validRepoIds = snapshot.repos
       .filter((repo) => repoIds.includes(repo.id))
       .map((repo) => repo.id);
@@ -505,11 +547,11 @@ export default function App() {
       );
       return;
     }
-    const nativeSlash = isNativeSlashCommandText(text);
+    const run = command?.kind === "read_only_run" ? command : null;
+    const message = run?.message ?? text;
+    const runPermission = run?.permission ?? permission;
     const submittedLocalProvider =
-      agent === "codex" && (!nativeSlash || !!model.trim())
-        ? localProvider || null
-        : null;
+      agent === "codex" ? localProvider || null : null;
     const submittedModel = sanitizeModelForAgent(
       agent,
       model,
@@ -541,12 +583,12 @@ export default function App() {
     ]);
     vscode.postMessage({
       type: "submit",
-      message: text,
+      message,
       clientMessageId,
       threadId: selectedThread?.id ?? null,
       repoIds: validRepoIds,
       agent,
-      permission,
+      permission: runPermission,
       executionBackend: sanitizeBackend(agent, backend),
       model: submittedModel,
       reasoning: reasoning.trim() || null,
@@ -1808,12 +1850,14 @@ function Composer(props: ComposerProps) {
   const repos = props.snapshot?.repos ?? [];
   const selectedRepos = repos.filter((repo) => props.repoIds.includes(repo.id));
   const noRepoSelected = repos.length > 0 && selectedRepos.length === 0;
-  const nativeSlashDraft = isNativeSlashCommandText(draft);
+  const draftCommand = resolveAppCommand(draft, props.agent);
+  const isSettingCommand = draftCommand?.kind === "setting";
   const canSend =
     !!draft.trim() &&
-    !!props.snapshot?.trusted &&
-    !noRepoSelected &&
-    (!localOn || !!props.model.trim() || nativeSlashDraft);
+    (isSettingCommand ||
+      (!!props.snapshot?.trusted &&
+        !noRepoSelected &&
+        (!localOn || !!props.model.trim())));
   const slashState = parseSlashDraft(draft, selectionStart);
   const slashMatches = slashState
     ? matchingSlashCommands(slashState.query, props.agent)
@@ -2280,654 +2324,65 @@ type SlashCommand = {
   takesInput?: boolean;
 };
 
-const SLASH_COMMANDS: SlashCommand[] = [
-  {
-    name: "help",
-    scopes: ["claude_code", "codex"],
-    description: "Show native slash-command help",
-  },
+type AppCommand = SlashCommand & {
+  action: "model" | "permission" | "plan" | "review";
+};
+
+type AppCommandResolution =
+  | {
+      kind: "setting";
+      setting: "model" | "permission";
+      argument: string;
+    }
+  | {
+      kind: "read_only_run";
+      permission: PermissionPolicy;
+      message: string;
+    }
+  | { kind: "error"; message: string }
+  | { kind: "unsupported"; name: string };
+
+// Perpetual owns these commands. They never pass slash text to a headless CLI:
+// each one either changes an app run setting or produces a read-only request.
+const APP_COMMANDS: AppCommand[] = [
   {
     name: "plan",
     scopes: ["claude_code", "codex"],
-    description: "Enter native plan mode",
+    description: "Plan requested work without making changes",
     takesInput: true,
-  },
-  {
-    name: "model",
-    scopes: ["claude_code", "codex"],
-    description: "Switch the active model",
-    takesInput: true,
-  },
-  {
-    name: "permissions",
-    aliases: ["allowed-tools"],
-    scopes: ["claude_code", "codex"],
-    description: "Manage the native approval/permission policy",
-    takesInput: true,
-  },
-  {
-    name: "status",
-    scopes: ["claude_code", "codex"],
-    description: "Show session configuration and status",
-  },
-  {
-    name: "usage",
-    aliases: ["cost", "stats"],
-    scopes: ["claude_code", "codex"],
-    description: "Show usage, cost, or limits",
-  },
-  {
-    name: "compact",
-    scopes: ["claude_code", "codex"],
-    description: "Summarize context to free tokens",
-    takesInput: true,
-  },
-  {
-    name: "diff",
-    scopes: ["claude_code", "codex"],
-    description: "Open the native diff view",
-  },
-  {
-    name: "init",
-    scopes: ["claude_code", "codex"],
-    description: "Generate repository guidance files",
-    takesInput: true,
-  },
-  {
-    name: "mcp",
-    scopes: ["claude_code", "codex"],
-    description: "Inspect or manage MCP tools",
-    takesInput: true,
+    action: "plan",
   },
   {
     name: "review",
     scopes: ["claude_code", "codex"],
-    description: "Run the native review workflow",
+    description: "Review code or changes without making changes",
     takesInput: true,
+    action: "review",
   },
   {
-    name: "clear",
-    aliases: ["new", "reset"],
+    name: "model",
     scopes: ["claude_code", "codex"],
-    description: "Start a fresh native conversation",
+    description: "Set the model for future runs",
     takesInput: true,
+    action: "model",
   },
   {
-    name: "resume",
-    aliases: ["continue"],
+    name: "permission",
+    aliases: ["permissions"],
     scopes: ["claude_code", "codex"],
-    description: "Resume a saved native conversation",
+    description: "Set read-only, write, or full-access mode",
     takesInput: true,
-  },
-  {
-    name: "fork",
-    scopes: ["claude_code", "codex"],
-    description: "Fork or branch the current conversation",
-    takesInput: true,
-  },
-  {
-    name: "goal",
-    scopes: ["claude_code", "codex"],
-    description: "Set, view, pause, resume, or clear a task goal",
-    takesInput: true,
-  },
-  {
-    name: "fast",
-    scopes: ["claude_code", "codex"],
-    description: "Toggle or inspect fast mode",
-    takesInput: true,
-  },
-  {
-    name: "hooks",
-    scopes: ["claude_code", "codex"],
-    description: "View or manage lifecycle hooks",
-    takesInput: true,
-  },
-  {
-    name: "ide",
-    scopes: ["claude_code", "codex"],
-    description: "Manage IDE/editor context",
-  },
-  {
-    name: "skills",
-    aliases: ["skill"],
-    scopes: ["claude_code", "codex"],
-    description: "Browse or use native skills",
-    takesInput: true,
-  },
-  {
-    name: "plugins",
-    aliases: ["plugin"],
-    scopes: ["claude_code", "codex"],
-    description: "Browse or manage native plugins",
-    takesInput: true,
-  },
-  {
-    name: "agents",
-    aliases: ["agent"],
-    scopes: ["claude_code", "codex"],
-    description: "Manage native subagents or agent threads",
-    takesInput: true,
-  },
-  {
-    name: "doctor",
-    scopes: ["claude_code", "codex"],
-    description: "Diagnose CLI setup and runtime issues",
-    takesInput: true,
-  },
-  {
-    name: "debug",
-    aliases: ["debug-config"],
-    scopes: ["claude_code", "codex"],
-    description: "Enable or inspect native debug diagnostics",
-    takesInput: true,
-  },
-  {
-    name: "feedback",
-    aliases: ["bug", "share"],
-    scopes: ["claude_code", "codex"],
-    description: "Send native feedback or diagnostics",
-    takesInput: true,
-  },
-  {
-    name: "logout",
-    scopes: ["claude_code", "codex"],
-    description: "Sign out of the selected CLI",
-  },
-  {
-    name: "exit",
-    aliases: ["quit"],
-    scopes: ["claude_code", "codex"],
-    description: "Exit or detach the native session",
-  },
-  {
-    name: "stop",
-    scopes: ["claude_code", "codex"],
-    description: "Stop native background work",
-  },
-  {
-    name: "statusline",
-    scopes: ["claude_code", "codex"],
-    description: "Configure native status-line fields",
-    takesInput: true,
-  },
-  {
-    name: "theme",
-    scopes: ["claude_code", "codex"],
-    description: "Configure the native theme",
-    takesInput: true,
-  },
-  {
-    name: "add-dir",
-    scopes: ["claude_code"],
-    description: "Add a working directory for Claude Code file access",
-    takesInput: true,
-  },
-  {
-    name: "advisor",
-    scopes: ["claude_code"],
-    description: "Enable or disable Claude Code advisor",
-    takesInput: true,
-  },
-  {
-    name: "autofix-pr",
-    scopes: ["claude_code"],
-    description: "Start Claude Code web autofix for the current PR",
-    takesInput: true,
-  },
-  {
-    name: "background",
-    aliases: ["bg"],
-    scopes: ["claude_code"],
-    description: "Detach the Claude Code session to the background",
-    takesInput: true,
-  },
-  {
-    name: "batch",
-    scopes: ["claude_code"],
-    description: "Run Claude Code batch workflow",
-    takesInput: true,
-  },
-  {
-    name: "branch",
-    scopes: ["claude_code"],
-    description: "Create a Claude Code conversation branch",
-    takesInput: true,
-  },
-  {
-    name: "btw",
-    scopes: ["claude_code"],
-    description: "Ask a Claude Code side question",
-    takesInput: true,
-  },
-  {
-    name: "cd",
-    scopes: ["claude_code"],
-    description: "Move the Claude Code session to a new directory",
-    takesInput: true,
-  },
-  {
-    name: "chrome",
-    scopes: ["claude_code"],
-    description: "Configure Claude in Chrome settings",
-  },
-  {
-    name: "claude-api",
-    scopes: ["claude_code"],
-    description: "Use Claude API reference workflow",
-    takesInput: true,
-  },
-  {
-    name: "code-review",
-    aliases: ["simplify"],
-    scopes: ["claude_code"],
-    description: "Run Claude Code review workflow",
-    takesInput: true,
-  },
-  {
-    name: "color",
-    scopes: ["claude_code"],
-    description: "Set the Claude Code prompt-bar color",
-    takesInput: true,
-  },
-  {
-    name: "config",
-    aliases: ["settings"],
-    scopes: ["claude_code"],
-    description: "Open or set Claude Code configuration",
-    takesInput: true,
-  },
-  {
-    name: "context",
-    scopes: ["claude_code"],
-    description: "Visualize Claude Code context usage",
-    takesInput: true,
-  },
-  {
-    name: "dataviz",
-    scopes: ["claude_code"],
-    description: "Use Claude Code data-visualization guidance",
-    takesInput: true,
-  },
-  {
-    name: "deep-research",
-    scopes: ["claude_code"],
-    description: "Run Claude Code deep research workflow",
-    takesInput: true,
-  },
-  {
-    name: "design-login",
-    scopes: ["claude_code"],
-    description: "Authorize Claude design-system access",
-  },
-  {
-    name: "design-sync",
-    scopes: ["claude_code"],
-    description: "Sync a design system for Claude",
-    takesInput: true,
-  },
-  {
-    name: "desktop",
-    aliases: ["app"],
-    scopes: ["claude_code"],
-    description: "Continue in Claude Code Desktop",
-  },
-  {
-    name: "effort",
-    scopes: ["claude_code"],
-    description: "Set Claude Code effort level",
-    takesInput: true,
-  },
-  {
-    name: "export",
-    scopes: ["claude_code"],
-    description: "Export the Claude Code conversation",
-    takesInput: true,
-  },
-  {
-    name: "fewer-permission-prompts",
-    scopes: ["claude_code"],
-    description: "Generate Claude Code permission allowlists",
-  },
-  {
-    name: "focus",
-    scopes: ["claude_code"],
-    description: "Toggle Claude Code focus view",
-  },
-  {
-    name: "heapdump",
-    scopes: ["claude_code"],
-    description: "Write a Claude Code heap snapshot",
-  },
-  {
-    name: "insights",
-    scopes: ["claude_code"],
-    description: "Analyze Claude Code session history",
-  },
-  {
-    name: "install-github-app",
-    scopes: ["claude_code"],
-    description: "Install the Claude GitHub app",
-    takesInput: true,
-  },
-  {
-    name: "install-slack-app",
-    scopes: ["claude_code"],
-    description: "Install the Claude Slack app",
-  },
-  {
-    name: "keybindings",
-    scopes: ["claude_code"],
-    description: "Open Claude Code keybindings",
-  },
-  {
-    name: "login",
-    scopes: ["claude_code"],
-    description: "Sign in to Claude Code",
-  },
-  {
-    name: "loop",
-    aliases: ["proactive"],
-    scopes: ["claude_code"],
-    description: "Run a Claude Code recurring loop",
-    takesInput: true,
-  },
-  {
-    name: "memory",
-    scopes: ["claude_code"],
-    description: "Edit Claude Code memory files",
-  },
-  {
-    name: "mobile",
-    aliases: ["ios", "android"],
-    scopes: ["claude_code"],
-    description: "Show Claude mobile app QR code",
-  },
-  {
-    name: "passes",
-    scopes: ["claude_code"],
-    description: "Share Claude Code passes",
-  },
-  {
-    name: "powerup",
-    scopes: ["claude_code"],
-    description: "Discover Claude Code features",
-  },
-  {
-    name: "privacy-settings",
-    scopes: ["claude_code"],
-    description: "View Claude privacy settings",
-  },
-  { name: "radio", scopes: ["claude_code"], description: "Open Claude FM" },
-  {
-    name: "recap",
-    scopes: ["claude_code"],
-    description: "Generate a Claude Code session recap",
-  },
-  {
-    name: "release-notes",
-    scopes: ["claude_code"],
-    description: "View Claude Code release notes",
-  },
-  {
-    name: "reload-plugins",
-    scopes: ["claude_code"],
-    description: "Reload Claude Code plugins",
-    takesInput: true,
-  },
-  {
-    name: "reload-skills",
-    scopes: ["claude_code"],
-    description: "Reload Claude Code skills",
-  },
-  {
-    name: "remote-control",
-    aliases: ["rc"],
-    scopes: ["claude_code"],
-    description: "Enable Claude Code remote control",
-  },
-  {
-    name: "remote-env",
-    scopes: ["claude_code"],
-    description: "Choose Claude Code cloud environment",
-  },
-  {
-    name: "rename",
-    scopes: ["claude_code"],
-    description: "Rename the Claude Code session",
-    takesInput: true,
-  },
-  {
-    name: "rewind",
-    aliases: ["checkpoint", "undo"],
-    scopes: ["claude_code"],
-    description: "Rewind Claude Code conversation or code",
-    takesInput: true,
-  },
-  {
-    name: "run",
-    scopes: ["claude_code"],
-    description: "Run and observe the app with Claude Code",
-    takesInput: true,
-  },
-  {
-    name: "run-skill-generator",
-    scopes: ["claude_code"],
-    description: "Generate a Claude Code run/verify skill",
-  },
-  {
-    name: "sandbox",
-    scopes: ["claude_code"],
-    description: "Toggle Claude Code sandbox mode",
-  },
-  {
-    name: "schedule",
-    aliases: ["routines"],
-    scopes: ["claude_code"],
-    description: "Create or manage Claude Code routines",
-    takesInput: true,
-  },
-  {
-    name: "scroll-speed",
-    scopes: ["claude_code"],
-    description: "Adjust Claude Code scroll speed",
-  },
-  {
-    name: "security-review",
-    scopes: ["claude_code"],
-    description: "Run Claude Code security review",
-    takesInput: true,
-  },
-  {
-    name: "setup-bedrock",
-    scopes: ["claude_code"],
-    description: "Configure Claude Code Bedrock authentication",
-  },
-  {
-    name: "setup-vertex",
-    scopes: ["claude_code"],
-    description: "Configure Claude Code Vertex authentication",
-  },
-  {
-    name: "stickers",
-    scopes: ["claude_code"],
-    description: "Order Claude Code stickers",
-  },
-  {
-    name: "tasks",
-    aliases: ["bashes"],
-    scopes: ["claude_code"],
-    description: "View Claude Code background tasks",
-  },
-  {
-    name: "team-onboarding",
-    scopes: ["claude_code"],
-    description: "Generate Claude Code team onboarding",
-  },
-  {
-    name: "teleport",
-    aliases: ["tp"],
-    scopes: ["claude_code"],
-    description: "Pull a Claude web session into the terminal",
-  },
-  {
-    name: "terminal-setup",
-    scopes: ["claude_code"],
-    description: "Configure terminal keybindings",
-  },
-  {
-    name: "tui",
-    scopes: ["claude_code"],
-    description: "Set Claude Code terminal UI renderer",
-    takesInput: true,
-  },
-  {
-    name: "ultraplan",
-    scopes: ["claude_code"],
-    description: "Draft a Claude Code ultraplan",
-    takesInput: true,
-  },
-  {
-    name: "ultrareview",
-    scopes: ["claude_code"],
-    description: "Run a deep Claude Code review",
-    takesInput: true,
-  },
-  {
-    name: "upgrade",
-    scopes: ["claude_code"],
-    description: "Open Claude plan upgrade flow",
-  },
-  {
-    name: "usage-credits",
-    scopes: ["claude_code"],
-    description: "Configure Claude usage credits",
-  },
-  {
-    name: "verify",
-    scopes: ["claude_code"],
-    description: "Verify behavior by running the app",
-    takesInput: true,
-  },
-  {
-    name: "voice",
-    scopes: ["claude_code"],
-    description: "Configure Claude Code voice input",
-    takesInput: true,
-  },
-  {
-    name: "web-setup",
-    scopes: ["claude_code"],
-    description: "Connect GitHub for Claude Code web",
-  },
-  {
-    name: "workflows",
-    scopes: ["claude_code"],
-    description: "Open Claude Code workflow progress",
-  },
-  {
-    name: "keymap",
-    scopes: ["codex"],
-    description: "Remap Codex TUI keyboard shortcuts",
-  },
-  {
-    name: "vim",
-    scopes: ["codex"],
-    description: "Toggle Codex composer Vim mode",
-  },
-  {
-    name: "sandbox-add-read-dir",
-    scopes: ["codex"],
-    description: "Grant Codex sandbox read access",
-    takesInput: true,
-  },
-  {
-    name: "apps",
-    aliases: ["app"],
-    scopes: ["codex"],
-    description: "Browse Codex apps/connectors",
-    takesInput: true,
-  },
-  {
-    name: "archive",
-    scopes: ["codex"],
-    description: "Archive the Codex session and exit",
-  },
-  {
-    name: "delete",
-    scopes: ["codex"],
-    description: "Delete the Codex session and exit",
-  },
-  {
-    name: "copy",
-    scopes: ["codex"],
-    description: "Copy recent Codex output",
-    takesInput: true,
-  },
-  {
-    name: "experimental",
-    scopes: ["codex"],
-    description: "Toggle Codex experimental features",
-  },
-  {
-    name: "approve",
-    scopes: ["codex"],
-    description: "Approve a recent Codex review denial",
-  },
-  {
-    name: "memories",
-    aliases: ["memory"],
-    scopes: ["codex"],
-    description: "Configure Codex memories",
-  },
-  {
-    name: "import",
-    scopes: ["codex"],
-    description: "Import external agent setup into Codex",
-  },
-  {
-    name: "mention",
-    scopes: ["codex"],
-    description: "Attach a file or folder to Codex",
-    takesInput: true,
-  },
-  {
-    name: "personality",
-    scopes: ["codex"],
-    description: "Choose Codex response style",
-    takesInput: true,
-  },
-  {
-    name: "ps",
-    scopes: ["codex"],
-    description: "Show Codex background terminals",
-  },
-  {
-    name: "side",
-    aliases: ["btw"],
-    scopes: ["codex"],
-    description: "Start a Codex side conversation",
-    takesInput: true,
-  },
-  {
-    name: "raw",
-    scopes: ["codex"],
-    description: "Toggle Codex raw scrollback mode",
-  },
-  {
-    name: "title",
-    scopes: ["codex"],
-    description: "Configure Codex terminal title fields",
+    action: "permission",
   },
 ];
 
-function availableSlashCommands(agent: AgentKind): SlashCommand[] {
-  return SLASH_COMMANDS.filter(
+function availableSlashCommands(agent: AgentKind): AppCommand[] {
+  return APP_COMMANDS.filter(
     (command) => !command.scopes || command.scopes.includes(agent),
   );
 }
 
-function commandScopeLabel(command: SlashCommand): string {
+function commandScopeLabel(command: AppCommand): string {
   if (!command.scopes) return "";
   return command.scopes.map(labelAgent).join(" / ");
 }
@@ -2937,11 +2392,10 @@ function parseSlashDraft(
   selectionStart = value.length,
 ): { query: string; start: number; end: number } | null {
   const cursor = Math.max(0, Math.min(selectionStart, value.length));
-  const beforeCursor = value.slice(0, cursor);
-  const start = beforeCursor.search(/(^|[\s([{])\/[A-Za-z-_:]*$/);
-  if (start < 0) return null;
-  const prefix = beforeCursor[start];
-  const slashStart = prefix === "/" ? start : start + 1;
+  const slashStart = value.match(/^\s*/)?.[0].length ?? 0;
+  if (value[slashStart] !== "/" || cursor < slashStart) return null;
+  const beforeCursor = value.slice(slashStart, cursor);
+  if (!/^\/[A-Za-z-_:]*$/.test(beforeCursor)) return null;
   const afterCursor = value.slice(cursor);
   const suffix = afterCursor.match(/^[A-Za-z-_:]*/)?.[0] ?? "";
   const end = cursor + suffix.length;
@@ -2950,15 +2404,10 @@ function parseSlashDraft(
   return { query: token.toLowerCase(), start: slashStart, end };
 }
 
-function isNativeSlashCommandText(value: string): boolean {
-  const trimmedLeft = value.replace(/^\s+/, "");
-  return /^\/[A-Za-z]/.test(trimmedLeft);
-}
-
 function matchingSlashCommands(
   query: string,
   agent: AgentKind,
-): SlashCommand[] {
+): AppCommand[] {
   return availableSlashCommands(agent).filter((command) =>
     [command.name, ...(command.aliases ?? [])].some((name) =>
       name.startsWith(query),
@@ -2969,7 +2418,7 @@ function matchingSlashCommands(
 function applySlashCompletion(
   value: string,
   slashState: { start: number; end: number },
-  command: SlashCommand,
+  command: AppCommand,
 ): string {
   const replacement = `/${command.name}${command.takesInput ? " " : ""}`;
   return `${value.slice(0, slashState.start)}${replacement}${value.slice(slashState.end)}`;
@@ -2977,9 +2426,72 @@ function applySlashCompletion(
 
 function slashCompletionCursor(
   slashState: { start: number },
-  command: SlashCommand,
+  command: AppCommand,
 ): number {
   return slashState.start + command.name.length + 1 + (command.takesInput ? 1 : 0);
+}
+
+function resolveAppCommand(
+  value: string,
+  agent: AgentKind,
+): AppCommandResolution | null {
+  const match = /^\s*\/([A-Za-z][A-Za-z-]*)(?:\s+([\s\S]*))?$/.exec(value);
+  if (!match) return null;
+  const [, rawName, argument = ""] = match;
+  const name = rawName.toLowerCase();
+  const command = availableSlashCommands(agent).find((candidate) =>
+    [candidate.name, ...(candidate.aliases ?? [])].includes(name),
+  );
+  if (!command) return { kind: "unsupported", name: rawName };
+
+  switch (command.action) {
+    case "model":
+      return { kind: "setting", setting: "model", argument };
+    case "permission":
+      return { kind: "setting", setting: "permission", argument };
+    case "plan":
+      if (!argument.trim()) {
+        return { kind: "error", message: "Usage: /plan <request>." };
+      }
+      return {
+        kind: "read_only_run",
+        permission: "read_only",
+        message: planPrompt(argument),
+      };
+    case "review":
+      return {
+        kind: "read_only_run",
+        permission: "read_only",
+        message: reviewPrompt(argument),
+      };
+  }
+}
+
+function permissionFromCommand(value: string): PermissionPolicy | null {
+  switch (value.trim().toLowerCase().replace(/[\s_]+/g, "-")) {
+    case "read":
+    case "read-only":
+    case "plan":
+      return "read_only";
+    case "write":
+    case "edit":
+    case "workspace-write":
+      return "workspace_write";
+    case "autonomous":
+    case "full-access":
+      return "autonomous";
+    default:
+      return null;
+  }
+}
+
+function planPrompt(request: string): string {
+  return `Create an implementation plan for the request below. Inspect the repository as needed, but do not modify files, write files, or perform external actions. Return the scope, affected files, ordered implementation steps, verification plan, and risks or assumptions.\n\nRequest:\n${request.trim()}`;
+}
+
+function reviewPrompt(scope: string): string {
+  const requestedScope = scope.trim() || "Review the current working tree and recent changes.";
+  return `Perform a read-only code review for the scope below. Inspect the relevant repository files and changes, but do not modify files or perform external actions. Report only actionable findings, ordered by severity, with file and line references where possible. If there are no findings, say so plainly.\n\nScope:\n${requestedScope}`;
 }
 
 const PERMISSIONS: {
