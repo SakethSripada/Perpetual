@@ -577,7 +577,7 @@ textarea {
   justify-content: center;
   width: clamp(160px, 32vw, 280px);
   height: clamp(160px, 32vw, 280px);
-  color: color-mix(in srgb, var(--vscode-foreground) 11%, transparent);
+  color: color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
   background: transparent;
 }
 .empty-mark svg {

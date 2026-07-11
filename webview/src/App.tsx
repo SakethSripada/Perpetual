@@ -2010,6 +2010,15 @@ function Composer(props: ComposerProps) {
       (!!props.snapshot?.trusted &&
         !noRepoSelected &&
         (!localOn || !!props.model.trim())));
+  const sendDisabledReason = !props.snapshot
+    ? "Connecting to Perpetual"
+    : !props.snapshot.trusted
+      ? "Trust this workspace in VS Code to send messages"
+      : noRepoSelected
+        ? "Select a connected repository before sending"
+        : localOn && !props.model.trim()
+          ? "Choose a local model before sending"
+          : undefined;
   const slashState = parseSlashDraft(draft, selectionStart);
   const slashMatches = slashState
     ? matchingSlashCommands(slashState.query, props.agent)
@@ -2445,6 +2454,8 @@ function Composer(props: ComposerProps) {
             title={
               stopMode
                 ? "Stop the agent"
+                : sendDisabledReason
+                  ? sendDisabledReason
                 : props.isRunning
                   ? "Queue message (Enter)"
                   : "Send (Enter)"
