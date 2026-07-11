@@ -90,13 +90,20 @@ async fn main() {
     }
     tracing::info!(%addr, mcp_addr = %mcp.addr, ?endpoint, "AgentManager daemon listening");
 
+    let power = am_daemon::power::spawn(core.clone());
     let serve = tokio::spawn(server.serve());
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => tracing::info!("shutdown signal received"),
+        _ = wait_for_terminate() => tracing::info!("terminate signal received"),
         _ = wait_forever(&serve) => {}
     }
 
+    // Shutdown handoff must run before the daemon tears down its sessions.
+    // The extension also calls this RPC during normal deactivation; this path
+    // covers OS termination and direct daemon shutdowns.
+    let _ = core.prepare_shutdown().await;
+    power.shutdown().await;
     serve.abort();
     core.clear_mcp_endpoint().await;
     mcp.shutdown().await;
@@ -129,6 +136,18 @@ async fn wait_forever(serve: &tokio::task::JoinHandle<()>) {
             return;
         }
     }
+}
+
+async fn wait_for_terminate() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        if let Ok(mut signal) = signal(SignalKind::terminate()) {
+            let _ = signal.recv().await;
+            return;
+        }
+    }
+    std::future::pending::<()>().await;
 }
 
 #[derive(Debug, Deserialize)]

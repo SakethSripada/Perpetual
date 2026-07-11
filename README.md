@@ -15,6 +15,8 @@ without rebuilding state.
   model, reasoning, and runtime controls.
 - Automatic handoff when an agent hits a usage limit, with configurable fallback
   order, recovery behavior, and retry timing.
+- Cloud continuity for configured sleep/shutdown handoff, with native daemon
+  lifecycle monitoring, bounded checkpoints, and local reclaim on return.
 - Codex can be pointed at local Ollama or LM Studio models for local-model
   fallback/continuation when the bundled daemon supports it.
 - Local repository attachment plus GitHub repository connection through VS Code's
@@ -60,6 +62,9 @@ policy:
 - `autoSwitchOnLimit`, `switchBackOnRecovery`, `fallbackPriority`,
   `resumeWithEarliestAgent`, and `unknownLimitRetrySeconds` control handoff
   behavior.
+- `cloud.*` controls sleep/shutdown continuation, cross-provider handoff,
+  checkpoints, monitoring, and approval requirements. Cloud continuation is
+  opt-in and requires the selected provider's cloud prerequisites.
 - `sandbox.maxConcurrent`, `sandbox.cpus`, `sandbox.memory`, and
   `sandbox.networkPreset` control Docker Sandbox runs.
 - `daemonPath` can point at a custom `am-daemon` binary. Empty uses the binary

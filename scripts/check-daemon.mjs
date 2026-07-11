@@ -46,7 +46,6 @@ function requiredDaemonMarkers() {
     "LocalModelPolicy",
     "LocalModelTarget",
     "thread.local_fallback_started",
-    "local_fallback_active",
     "echo_user_message",
     "thread.fallback_started",
     "thread.fallback_waiting",

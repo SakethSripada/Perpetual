@@ -148,6 +148,7 @@ impl AppCore {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_target_hash(
     agent: AgentKind,
     model: Option<&str>,
@@ -523,7 +524,7 @@ fn normalize_policy(mut policy: LocalModelPolicy) -> LocalModelPolicy {
     policy.targets = policy
         .targets
         .into_iter()
-        .filter_map(|target| normalize_target(target))
+        .filter_map(normalize_target)
         .filter(|target| {
             seen.insert((
                 target.provider,

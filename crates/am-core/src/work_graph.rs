@@ -1611,6 +1611,7 @@ impl AppCore {
         .await;
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn update_plan_run(
         &self,
         plan_run_id: &str,
@@ -2320,6 +2321,18 @@ fn render_context_packet_prompt(packet: &ContextPacket) -> String {
     out
 }
 
+pub(crate) fn truncate(value: &str, max: usize) -> String {
+    let value = value.trim();
+    if value.len() <= max {
+        return value.to_string();
+    }
+    let mut end = max.saturating_sub(20);
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}... [trimmed]", &value[..end])
+}
+
 #[cfg(test)]
 mod context_tests {
     use super::*;
@@ -2400,16 +2413,4 @@ mod context_tests {
             "global rule applies everywhere"
         );
     }
-}
-
-pub(crate) fn truncate(value: &str, max: usize) -> String {
-    let value = value.trim();
-    if value.len() <= max {
-        return value.to_string();
-    }
-    let mut end = max.saturating_sub(20);
-    while end > 0 && !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}... [trimmed]", &value[..end])
 }

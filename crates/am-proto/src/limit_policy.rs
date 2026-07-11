@@ -5,9 +5,10 @@ use crate::AgentKind;
 /// Global policy controlling what happens when an agent hits a usage limit.
 ///
 /// Defaults are tuned to keep work flowing without stalling: switch to any
-/// ready agent immediately, resume with whichever agent recovers first, bound
-/// the wait when a limit reports no reset time, and hold the machine awake so
-/// in-flight work survives idle/sleep.
+/// ready agent immediately, resume with whichever agent recovers first, and
+/// bound the wait when a limit reports no reset time. `keep_awake` is retained
+/// for wire compatibility; machine power behavior is controlled by the cloud
+/// continuity policy in this extension.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LimitPolicy {
     /// Immediately switch to another ready agent when the active one is limited.
@@ -27,8 +28,9 @@ pub struct LimitPolicy {
     /// than waiting indefinitely. 0 disables the bounded retry.
     #[serde(default = "default_unknown_retry")]
     pub unknown_reset_retry_secs: u64,
-    /// Hold a power assertion so the machine keeps working through idle/sleep
-    /// while runs are in flight.
+    /// Compatibility field retained for clients that persist the broader
+    /// AgentManager policy. It does not override the native power lifecycle
+    /// monitor or cloud-continuity settings.
     #[serde(default = "default_true")]
     pub keep_awake: bool,
 }

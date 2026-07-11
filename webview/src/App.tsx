@@ -910,7 +910,6 @@ export default function App() {
           {!navigating &&
             ((!selectedThread && pending.length === 0) || welcomeLeaving) && (
             <EmptyState
-              trusted={snapshot?.trusted ?? true}
               exiting={welcomeLeaving}
             />
           )}
@@ -964,7 +963,7 @@ export default function App() {
             details.events.length === 0 &&
             pending.length === 0 &&
             !isRunning && (
-              <EmptyState trusted={snapshot?.trusted ?? true} compact />
+              <EmptyState compact />
             )}
         </div>
       </section>
@@ -1058,6 +1057,9 @@ export default function App() {
             setSettingsOpen(false);
           }}
           onOpenSettings={() => vscode.postMessage({ type: "openSettings" })}
+          onOpenExternal={(url) =>
+            vscode.postMessage({ type: "openExternal", url })
+          }
           onSignInAgent={(agent) =>
             vscode.postMessage({ type: "signInAgent", agent })
           }
@@ -3214,6 +3216,7 @@ function SettingsSheet(props: {
     localModelPolicy: LocalModelPolicy,
   ): void;
   onOpenSettings(): void;
+  onOpenExternal(url: string): void;
   onSignInAgent(agent: AgentKind): void;
   onSandboxLogin(codex: boolean): void;
   onGithubSignIn(): void;
@@ -3233,10 +3236,6 @@ function SettingsSheet(props: {
   );
   const cloudClaudeFirst =
     (cloud.provider_priority?.[0] ?? "claude_code") !== "codex";
-  const cloudBlockers = (props.snapshot.cloudAvailability ?? []).filter(
-    (item) => !item.ready,
-  );
-
   return (
     <div className="sheet-backdrop" onMouseDown={props.onClose}>
       <section
@@ -3314,14 +3313,6 @@ function SettingsSheet(props: {
                     )}
                 </div>
               )}
-              {props.snapshot.cloudAvailability.map((item) => (
-                <div key={item.agent} className="readiness-row">
-                  <span>{labelAgent(item.agent)} cloud</span>
-                  <small>
-                    {item.ready ? "Ready" : (item.blockers[0] ?? "Not ready")}
-                  </small>
-                </div>
-              ))}
 	              <div className="readiness-row">
 	                <span>GitHub</span>
 	                <small>
@@ -3463,6 +3454,55 @@ function SettingsSheet(props: {
 
           <div className="settings-group">
             <div className="group-title">Cloud continuity</div>
+            <p className="settings-help">
+              Set up either cloud here, then turn on continuity to keep work
+              running when this machine sleeps or shuts down. Click Apply to
+              save your setup.
+            </p>
+            <div className="cloud-setup-grid">
+              <CloudSetupCard
+                title="Claude Code on the web"
+                ready={props.snapshot.cloudAvailability.find(
+                  (item) => item.agent === "claude_code",
+                )?.ready ?? false}
+                steps={[
+                  "Sign in with a Claude.ai subscription in the Claude Code CLI.",
+                  "Refresh readiness once sign-in is complete.",
+                ]}
+                primaryLabel="Sign in to Claude"
+                onPrimary={() => props.onSignInAgent("claude_code")}
+                secondaryLabel="Open Claude"
+                onSecondary={() => props.onOpenExternal("https://claude.ai/code")}
+              />
+              <CloudSetupCard
+                title="Codex Cloud"
+                ready={props.snapshot.cloudAvailability.find(
+                  (item) => item.agent === "codex",
+                )?.ready ?? false}
+                steps={[
+                  "Sign in to the Codex CLI.",
+                  "Create or choose an environment in Codex Cloud, then paste its ID below.",
+                ]}
+                primaryLabel="Sign in to Codex"
+                onPrimary={() => props.onSignInAgent("codex")}
+                secondaryLabel="Open Codex Cloud"
+                onSecondary={() => props.onOpenExternal("https://chatgpt.com/codex")}
+              >
+                <label className="field cloud-env-field">
+                  <span>Codex environment ID</span>
+                  <input
+                    value={cloud.codex_env_id ?? ""}
+                    placeholder="Paste the environment ID"
+                    onChange={(event) =>
+                      setCloud({
+                        ...cloud,
+                        codex_env_id: event.target.value.trim() || null,
+                      })
+                    }
+                  />
+                </label>
+              </CloudSetupCard>
+            </div>
             <label className="toggle">
               <input
                 type="checkbox"
@@ -3586,28 +3626,7 @@ function SettingsSheet(props: {
                       }
                     />
                   </label>
-                  <label className="field">
-                    <span>Codex environment ID</span>
-                    <input
-                      value={cloud.codex_env_id ?? ""}
-                      placeholder="From chatgpt.com/codex"
-                      onChange={(event) =>
-                        setCloud({
-                          ...cloud,
-                          codex_env_id: event.target.value.trim() || null,
-                        })
-                      }
-                    />
-                  </label>
                 </div>
-                {cloudBlockers.map((item) => (
-                  <div key={item.agent} className="menu-empty">
-                    {labelAgent(item.agent)} cloud:{" "}
-                    {item.blockers.length
-                      ? item.blockers.join(" ")
-                      : "not ready"}
-                  </div>
-                ))}
               </>
             )}
           </div>
@@ -3899,6 +3918,42 @@ function SettingsSheet(props: {
   );
 }
 
+function CloudSetupCard(props: {
+  title: string;
+  ready: boolean;
+  steps: string[];
+  primaryLabel: string;
+  onPrimary(): void;
+  secondaryLabel: string;
+  onSecondary(): void;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="cloud-setup-card">
+      <div className="cloud-setup-heading">
+        <strong>{props.title}</strong>
+        <span className={props.ready ? "cloud-status ready" : "cloud-status"}>
+          {props.ready ? "Ready" : "Set up"}
+        </span>
+      </div>
+      <ol className="cloud-setup-steps">
+        {props.steps.map((step) => (
+          <li key={step}>{step}</li>
+        ))}
+      </ol>
+      {props.children}
+      <div className="cloud-setup-actions">
+        <button type="button" className="readiness-action" onClick={props.onPrimary}>
+          {props.primaryLabel}
+        </button>
+        <button type="button" className="readiness-action" onClick={props.onSecondary}>
+          {props.secondaryLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function GithubSheet(props: {
   loading: boolean;
   repos: GithubRepository[];
@@ -3962,11 +4017,9 @@ function GithubSheet(props: {
 }
 
 function EmptyState({
-  trusted,
   compact = false,
   exiting = false,
 }: {
-  trusted: boolean;
   compact?: boolean;
   exiting?: boolean;
 }) {
@@ -3980,13 +4033,7 @@ function EmptyState({
       aria-hidden={exiting || undefined}
     >
       <span className="empty-mark">
-        <BrandMark size={34} />
-      </span>
-      <strong>{trusted ? "Start a session" : "Restricted Mode"}</strong>
-      <span>
-        {trusted
-          ? "Pick an agent and ask anything from the composer below."
-          : "Trust this workspace to run agents."}
+        <BrandMark size={240} />
       </span>
     </div>
   );

@@ -552,11 +552,7 @@ textarea {
   display: grid;
   justify-items: center;
   align-content: center;
-  gap: 8px;
   margin: auto;
-  max-width: 280px;
-  padding: 24px;
-  text-align: center;
   color: var(--am-muted);
 }
 .empty.welcome {
@@ -572,9 +568,6 @@ textarea {
 .empty.welcome.is-leaving {
   animation: welcome-out 0.46s cubic-bezier(0.4, 0, 0.2, 1) both;
 }
-.empty.welcome > span:last-child {
-  max-width: 280px;
-}
 .empty.welcome:not(.is-leaving) .empty-mark {
   animation: welcome-mark 4.8s ease-in-out infinite;
 }
@@ -582,19 +575,14 @@ textarea {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 48px;
-  height: 48px;
-  margin-bottom: 6px;
-  color: var(--vscode-foreground);
+  width: clamp(160px, 32vw, 280px);
+  height: clamp(160px, 32vw, 280px);
+  color: color-mix(in srgb, var(--vscode-foreground) 11%, transparent);
   background: transparent;
 }
-.empty strong {
-  color: var(--vscode-foreground);
-  font-size: 14px;
-}
-.empty span {
-  font-size: 12px;
-  line-height: 1.5;
+.empty-mark svg {
+  width: 100%;
+  height: 100%;
 }
 
 /* ---------- inline changes ---------- */
@@ -1612,6 +1600,66 @@ textarea {
 .settings-group {
   display: grid;
   gap: 10px;
+}
+.settings-help {
+  margin: -2px 0 0;
+  color: var(--am-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.cloud-setup-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.cloud-setup-card {
+  display: grid;
+  align-content: start;
+  gap: 9px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--am-border-soft);
+  border-radius: var(--am-radius-sm);
+  background: var(--am-surface);
+}
+.cloud-setup-heading,
+.cloud-setup-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.cloud-setup-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+.cloud-status {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--am-surface-2);
+  color: var(--am-muted);
+  font-size: 11px;
+}
+.cloud-status.ready {
+  color: var(--vscode-testing-iconPassed);
+}
+.cloud-setup-steps {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--am-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.cloud-env-field {
+  gap: 5px;
+}
+@media (max-width: 540px) {
+  .cloud-setup-grid {
+    grid-template-columns: 1fr;
+  }
 }
 .readiness-grid {
   display: grid;

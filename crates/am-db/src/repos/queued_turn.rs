@@ -59,6 +59,7 @@ pub async fn enqueue(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn enqueue_with_echo(
     pool: &SqlitePool,
     thread_id: &str,
@@ -106,7 +107,7 @@ pub async fn list_for_thread(
     thread_id: &str,
 ) -> Result<Vec<QueuedTurn>, DbError> {
     let rows = sqlx::query_as::<_, QueuedTurnRow>(&format!(
-        "{SELECT} WHERE thread_id = ? ORDER BY created_at ASC"
+        "{SELECT} WHERE thread_id = ? ORDER BY created_at ASC, id ASC"
     ))
     .bind(thread_id)
     .fetch_all(pool)
@@ -115,18 +116,23 @@ pub async fn list_for_thread(
 }
 
 pub async fn pop_next(pool: &SqlitePool, thread_id: &str) -> Result<Option<QueuedTurn>, DbError> {
-    let row = sqlx::query_as::<_, QueuedTurnRow>(&format!(
-        "{SELECT} WHERE thread_id = ? ORDER BY created_at ASC LIMIT 1"
-    ))
+    // Select-and-delete in one SQLite statement. A separate SELECT followed
+    // by DELETE lets two scheduler/session completions claim the same queued
+    // turn under concurrent wakeups.
+    let row = sqlx::query_as::<_, QueuedTurnRow>(
+        "DELETE FROM queued_turns WHERE id = (
+           SELECT id FROM queued_turns
+           WHERE thread_id = ?
+           ORDER BY created_at ASC, id ASC
+           LIMIT 1
+         )
+         RETURNING id, thread_id, agent_kind, permission, message,
+                   echo_user_message, client_message_id, policy_envelope_id, created_at",
+    )
     .bind(thread_id)
     .fetch_optional(pool)
     .await?;
-    let Some(row) = row else {
-        return Ok(None);
-    };
-    let queued = QueuedTurn::try_from(row)?;
-    delete(pool, &queued.id).await?;
-    Ok(Some(queued))
+    row.map(QueuedTurn::try_from).transpose()
 }
 
 pub async fn update_message(pool: &SqlitePool, id: &str, message: &str) -> Result<(), DbError> {

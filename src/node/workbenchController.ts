@@ -81,6 +81,7 @@ type WebviewMessage =
   | { type: "launchCloudHandoff"; threadId: string; agent?: AgentKind | null }
   | { type: "reclaimCloudRun"; threadId: string }
   | { type: "openPath"; path: string }
+  | { type: "openExternal"; url: string }
   | { type: "openSettings" | "openPanel" }
   | { type: "deleteQueuedTurn"; id: string }
   | { type: "updateQueuedTurn"; id: string; message: string }
@@ -115,6 +116,8 @@ export class WorkbenchController implements vscode.Disposable {
   private readonly snapshots = new vscode.EventEmitter<WorkbenchSnapshot>();
   private readonly threadEvents = new vscode.EventEmitter<AgentThreadEvent>();
   private refreshTimer: NodeJS.Timeout | null = null;
+  private refreshSequence = 0;
+  private messageQueue: Promise<void> = Promise.resolve();
   private lastSyncedSettings = "";
   private disposed = false;
   private detectionCache: DetectionCache | null = null;
@@ -155,6 +158,17 @@ export class WorkbenchController implements vscode.Disposable {
   }
 
   async handleMessage(
+    message: WebviewMessage,
+    reply?: WebviewReply,
+  ): Promise<void> {
+    const next = this.messageQueue.then(() =>
+      this.handleMessageNow(message, reply),
+    );
+    this.messageQueue = next.catch(() => undefined);
+    return next;
+  }
+
+  private async handleMessageNow(
     message: WebviewMessage,
     reply?: WebviewReply,
   ): Promise<void> {
@@ -239,45 +253,50 @@ export class WorkbenchController implements vscode.Disposable {
           await this.refresh();
           return;
         case "setLimitPolicy":
-          await this.withClient((client) =>
-            client.setLimitPolicy(normalizeLimitPolicy(message.policy)),
-          );
-          await this.mirrorLimitPolicyToConfig(
-            normalizeLimitPolicy(message.policy),
-          );
+          {
+            const policy = normalizeLimitPolicy(message.policy);
+            const applied = await this.withClient((client) =>
+              client.setLimitPolicy(policy),
+            );
+            await this.mirrorLimitPolicyToConfig(applied);
+          }
           this.lastSyncedSettings = "";
           this.detectionCache = null;
           await this.refresh();
           return;
         case "setSandboxPolicy":
-          await this.withClient((client) =>
-            client.setSandboxPolicy(message.policy),
-          );
-          await this.mirrorSandboxPolicyToConfig(message.policy);
+          {
+            const applied = await this.withClient((client) =>
+              client.setSandboxPolicy(message.policy),
+            );
+            await this.mirrorSandboxPolicyToConfig(applied);
+          }
           this.lastSyncedSettings = "";
           this.detectionCache = null;
           await this.refresh();
           return;
         case "setCloudPolicy":
-          await this.withClient((client) =>
-            client.setCloudPolicy(message.policy),
-          );
+          {
+            const applied = await this.withClient((client) =>
+              client.setCloudPolicy(message.policy),
+            );
           // Mirror into VS Code settings so the next settings sync doesn't undo
           // what the user just applied from the in-webview sheet.
-          await this.mirrorCloudPolicyToConfig(message.policy);
+            await this.mirrorCloudPolicyToConfig(applied);
+          }
           this.lastSyncedSettings = "";
           this.detectionCache = null;
           await this.refresh();
           return;
         case "setLocalModelPolicy":
-          await this.withClient((client) =>
-            client.setLocalModelPolicy(
-              normalizeLocalModelPolicy(message.policy),
-            ),
-          );
-          await this.mirrorLocalModelPolicyToConfig(
-            normalizeLocalModelPolicy(message.policy),
-          );
+          {
+            const applied = await this.withClient((client) =>
+              client.setLocalModelPolicy(
+                normalizeLocalModelPolicy(message.policy),
+              ),
+            );
+            await this.mirrorLocalModelPolicyToConfig(applied);
+          }
           this.lastSyncedSettings = "";
           this.detectionCache = null;
           await this.refresh();
@@ -319,6 +338,14 @@ export class WorkbenchController implements vscode.Disposable {
         case "openPath":
           await vscode.env.openExternal(vscode.Uri.file(message.path));
           return;
+        case "openExternal": {
+          const uri = vscode.Uri.parse(message.url);
+          if (uri.scheme !== "https" || !uri.authority) {
+            throw new Error("Only HTTPS links can be opened from the workbench.");
+          }
+          await vscode.env.openExternal(uri);
+          return;
+        }
         case "openSettings":
           await vscode.commands.executeCommand(
             "workbench.action.openSettings",
@@ -409,8 +436,9 @@ export class WorkbenchController implements vscode.Disposable {
   }
 
   async refresh(error: string | null = null): Promise<void> {
+    const sequence = ++this.refreshSequence;
     const snapshot = await this.snapshot(error);
-    if (!this.disposed) {
+    if (!this.disposed && sequence === this.refreshSequence) {
       this.snapshots.fire(snapshot);
     }
   }
@@ -569,6 +597,9 @@ export class WorkbenchController implements vscode.Disposable {
     if (!text) return;
 
     const client = await this.daemon.getClient();
+    // The user can change extension settings and submit immediately; mirror
+    // the effective values before admitting this turn to the daemon.
+    await this.syncSettings(client);
     const project = await client.ensureWorkbenchProject();
     if (!this.reposConnected) {
       await this.autoConnectWorkspaceRepos(client, project.id);
@@ -796,8 +827,12 @@ export class WorkbenchController implements vscode.Disposable {
     const prompt = codex
       ? await client.codexSandboxLogin()
       : await client.sandboxLogin();
+    const promptUri = vscode.Uri.parse(prompt.url);
+    if (promptUri.scheme !== "https" || !promptUri.authority) {
+      throw new Error("Sandbox sign-in returned an invalid HTTPS URL.");
+    }
     reply?.({ type: "sandboxLoginPrompt", prompt, codex });
-    await vscode.env.openExternal(vscode.Uri.parse(prompt.url));
+    await vscode.env.openExternal(promptUri);
   }
 
   private async startAgentSignIn(
@@ -1439,9 +1474,11 @@ function getDefaults(): WorkbenchDefaults {
 
 function getSettingsSnapshot() {
   const config = vscode.workspace.getConfiguration("agentmanager");
-  const autoResumeOnLimitReset = config.get<boolean | undefined>(
-    "autoResumeOnLimitReset",
-    undefined,
+  const autoResumeSetting = config.inspect<boolean>("autoResumeOnLimitReset");
+  const autoResumeIsExplicit = Boolean(
+    autoResumeSetting?.globalValue !== undefined ||
+      autoResumeSetting?.workspaceValue !== undefined ||
+      autoResumeSetting?.workspaceFolderValue !== undefined,
   );
   return {
     defaultExecutionBackend: config.get<ExecutionBackend>(
@@ -1451,8 +1488,9 @@ function getSettingsSnapshot() {
     autoSwitchOnLimit: config.get<boolean>("autoSwitchOnLimit", true),
     switchBackOnRecovery: config.get<boolean>("switchBackOnRecovery", true),
     resumeWithEarliestAgent:
-      autoResumeOnLimitReset ??
-      config.get<boolean>("resumeWithEarliestAgent", true),
+      autoResumeIsExplicit
+        ? config.get<boolean>("autoResumeOnLimitReset", true)
+        : config.get<boolean>("resumeWithEarliestAgent", true),
     unknownLimitRetrySeconds: config.get<number>(
       "unknownLimitRetrySeconds",
       600,
@@ -1569,6 +1607,11 @@ function normalizeLimitPolicy(policy: LimitPolicy): LimitPolicy {
   return {
     ...policy,
     agent_priority: normalizeAgentPriority(policy.agent_priority),
+    unknown_reset_retry_secs: clampInt(
+      policy.unknown_reset_retry_secs,
+      0,
+      7 * 24 * 60 * 60,
+    ),
   };
 }
 
@@ -1576,6 +1619,11 @@ function normalizeCloudPolicy(policy: CloudPolicy): CloudPolicy {
   return {
     ...policy,
     provider_priority: normalizeAgentPriority(policy.provider_priority),
+    max_concurrent_cloud_runs: clampInt(
+      policy.max_concurrent_cloud_runs,
+      1,
+      8,
+    ),
   };
 }
 

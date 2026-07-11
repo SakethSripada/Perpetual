@@ -46,6 +46,7 @@ impl AppCore {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn record_token_usage(
         &self,
         _project_id: Option<String>,

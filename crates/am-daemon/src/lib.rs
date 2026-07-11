@@ -10,6 +10,7 @@
 //! authenticated with a shared token and bound to `127.0.0.1` only.
 
 mod client;
+pub mod power;
 pub mod protocol;
 mod server;
 

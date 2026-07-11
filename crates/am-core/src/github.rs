@@ -8,7 +8,7 @@ use keyring::Entry;
 use reqwest::header::{ACCEPT, AUTHORIZATION};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::{AppCore, CoreError};
 
@@ -277,11 +277,11 @@ impl AppCore {
     async fn ensure_github_clone(
         &self,
         remote_url: &str,
-        clone_path: &PathBuf,
+        clone_path: &Path,
         token: &str,
     ) -> Result<am_vcs::RepoInfo, CoreError> {
         let remote_url = remote_url.to_string();
-        let clone_path = clone_path.clone();
+        let clone_path = clone_path.to_path_buf();
         let auth_header = github_basic_auth_header(token);
         tokio::task::spawn_blocking(move || {
             am_vcs::clone_repo(&remote_url, &clone_path, Some(&auth_header))

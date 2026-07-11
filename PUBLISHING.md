@@ -18,7 +18,8 @@ webview bundle, Marketplace docs, assets, and one platform-specific
 
 ## Build One Platform
 
-Run these commands from the extension repo on the target platform:
+Run these commands from the extension repo on the target platform (or use the
+`Package production VSIXes` workflow for a tagged release):
 
 ```bash
 npm install
@@ -36,7 +37,7 @@ daemon for its target.
 ## Verify The VSIX
 
 ```bash
-npx vsce ls --tree --target darwin-arm64
+npx vsce ls --tree
 code --install-extension agentmanager-vscode-darwin-arm64-0.1.0.vsix
 ```
 
@@ -56,6 +57,10 @@ Confirm it does not contain:
 - raw `src/` or `webview/src/`
 - raw `crates/` or `target/`
 - GitHub OAuth tokens or generated local data
+
+The release workflow builds all six target binaries and packages each VSIX in
+an isolated job. A target is not publishable until its job's `check-daemon`
+step passes; never substitute a binary built for another OS or architecture.
 
 ## Publish
 

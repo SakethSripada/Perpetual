@@ -429,6 +429,87 @@ async fn agent_thread_repos_turns_messages_and_queue_roundtrip() {
     assert!(listed
         .iter()
         .any(|turn| turn.message == "silent" && !turn.echo_user_message));
+
+    queued_turn::enqueue(
+        &db.pool,
+        &thread.id,
+        AgentKind::ClaudeCode,
+        "read_only",
+        "parallel-a",
+        None,
+    )
+    .await
+    .unwrap();
+    queued_turn::enqueue(
+        &db.pool,
+        &thread.id,
+        AgentKind::Codex,
+        "read_only",
+        "parallel-b",
+        None,
+    )
+    .await
+    .unwrap();
+    let (left, right) = tokio::join!(
+        queued_turn::pop_next(&db.pool, &thread.id),
+        queued_turn::pop_next(&db.pool, &thread.id),
+    );
+    let left = left.unwrap().unwrap();
+    let right = right.unwrap().unwrap();
+    assert_ne!(
+        left.id, right.id,
+        "concurrent queue claims duplicated a turn"
+    );
+
+    // An interrupted turn is reinserted ahead of follow-ups that arrived
+    // while it was running. The persisted order, not insertion timing, must
+    // determine the next claim.
+    let interrupted = queued_turn::enqueue_with_echo(
+        &db.pool,
+        &thread.id,
+        AgentKind::ClaudeCode,
+        "workspace_write",
+        "interrupted original",
+        None,
+        false,
+        Some("client-original"),
+    )
+    .await
+    .unwrap();
+    let followup = queued_turn::enqueue(
+        &db.pool,
+        &thread.id,
+        AgentKind::Codex,
+        "workspace_write",
+        "later follow-up",
+        None,
+    )
+    .await
+    .unwrap();
+    let mut ordered_ids = vec![interrupted.id.clone()];
+    ordered_ids.extend(
+        queued_turn::list_for_thread(&db.pool, &thread.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|turn| turn.id != interrupted.id)
+            .map(|turn| turn.id),
+    );
+    queued_turn::reorder(&db.pool, &thread.id, &ordered_ids)
+        .await
+        .unwrap();
+    let popped = queued_turn::pop_next(&db.pool, &thread.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(popped.id, interrupted.id);
+    assert_eq!(popped.client_message_id.as_deref(), Some("client-original"));
+    assert!(!popped.echo_user_message);
+    assert!(queued_turn::list_for_thread(&db.pool, &thread.id)
+        .await
+        .unwrap()
+        .iter()
+        .any(|turn| turn.id == followup.id));
 }
 
 #[tokio::test]

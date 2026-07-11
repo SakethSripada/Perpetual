@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use am_agents::SessionControl;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 
 use crate::admission::{AdmissionController, AdmissionPermit};
 
@@ -22,6 +22,7 @@ pub type SessionPermit = AdmissionPermit;
 pub struct SessionManager {
     active: Mutex<HashMap<String, SessionControl>>,
     admission: AdmissionController,
+    inactive: Notify,
 }
 
 impl SessionManager {
@@ -29,6 +30,7 @@ impl SessionManager {
         Self {
             active: Mutex::new(HashMap::new()),
             admission: AdmissionController::new(max_concurrent),
+            inactive: Notify::new(),
         }
     }
 
@@ -38,6 +40,7 @@ impl SessionManager {
 
     /// Acquire a concurrency slot now, or `Err` if at capacity. `scope` is the
     /// project id when known, so per-project caps apply.
+    #[allow(clippy::result_unit_err)]
     pub fn try_acquire(&self, scope: Option<&str>) -> Result<SessionPermit, ()> {
         self.admission.try_acquire(scope).ok_or(())
     }
@@ -77,9 +80,12 @@ impl SessionManager {
             .insert(task_id.to_string(), control);
     }
 
-    /// Cancel a running session (kills its process group via the driver).
+    /// Request cancellation of a running session. The entry remains active
+    /// until the driver emits its terminal event and the consumer calls
+    /// [`Self::remove`], preventing a replacement run from overlapping the
+    /// process that is still shutting down.
     pub async fn cancel(&self, task_id: &str) -> bool {
-        if let Some(mut control) = self.active.lock().await.remove(task_id) {
+        if let Some(control) = self.active.lock().await.get_mut(task_id) {
             control.cancel();
             true
         } else {
@@ -89,6 +95,26 @@ impl SessionManager {
 
     pub async fn remove(&self, task_id: &str) {
         self.active.lock().await.remove(task_id);
+        self.inactive.notify_waiters();
+    }
+
+    /// Wait until a cancelled session's consumer has observed its terminal
+    /// event and removed it from the active registry.
+    pub async fn wait_until_inactive(&self, task_id: &str, timeout: std::time::Duration) -> bool {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            if !self.is_active(task_id).await {
+                return true;
+            }
+            let notified = self.inactive.notified();
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return !self.is_active(task_id).await;
+            }
+            if tokio::time::timeout(remaining, notified).await.is_err() {
+                return !self.is_active(task_id).await;
+            }
+        }
     }
 
     /// Cancel every running session (used on app shutdown).
@@ -97,6 +123,7 @@ impl SessionManager {
         for (_, mut control) in map.drain() {
             control.cancel();
         }
+        self.inactive.notify_waiters();
     }
 }
 
@@ -158,13 +185,43 @@ mod tests {
         assert!(mgr.is_active("t1").await);
 
         // Cancelling delivers the signal (the driver would kill the process group)
-        // and reports that a session was removed.
+        // but keeps the session active until its terminal event is consumed.
         assert!(mgr.cancel("t1").await);
         assert!(rx.try_recv().is_ok(), "cancel signal delivered");
+        assert!(mgr.is_active("t1").await);
+        mgr.remove("t1").await;
         assert!(!mgr.is_active("t1").await);
 
         // Cancelling an unknown task is a no-op.
         assert!(!mgr.cancel("missing").await);
+    }
+
+    #[tokio::test]
+    async fn wait_until_inactive_blocks_until_consumer_removes_session() {
+        let mgr = std::sync::Arc::new(SessionManager::new(1));
+        let (tx, _rx) = oneshot::channel();
+        mgr.register("t1", SessionControl::new(tx)).await;
+
+        let waiter = {
+            let mgr = mgr.clone();
+            tokio::spawn(async move {
+                mgr.wait_until_inactive("t1", std::time::Duration::from_secs(1))
+                    .await
+            })
+        };
+        tokio::task::yield_now().await;
+        assert!(
+            !waiter.is_finished(),
+            "active session must not be treated as settled"
+        );
+
+        mgr.remove("t1").await;
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
+                .await
+                .expect("inactive waiter should be notified")
+                .expect("waiter task should finish")
+        );
     }
 
     #[tokio::test]

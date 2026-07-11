@@ -35,7 +35,7 @@
     "color": "#101012",
     "theme": "dark"
   },
-  "preview": true,
+  "preview": false,
   "engines": {
     "vscode": "^1.99.0"
   },
@@ -50,7 +50,8 @@
     "onCommand:agentmanager.newSession",
     "onCommand:agentmanager.refresh",
     "onCommand:agentmanager.connectLocalRepo",
-    "onCommand:agentmanager.connectGithubRepo"
+    "onCommand:agentmanager.connectGithubRepo",
+    "onCommand:agentmanager.openSettings"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
@@ -405,6 +406,7 @@
     "build:daemon": "node scripts/build-daemon.mjs",
     "copy-daemon": "node scripts/copy-daemon.mjs",
     "check-daemon": "node scripts/check-daemon.mjs",
+    "audit:rust": "node scripts/audit-rust.mjs",
     "install:local": "node scripts/install-local.mjs",
     "dev:reload": "node scripts/dev-reload.mjs",
     "dev:sync": "node scripts/dev-reload.mjs --no-reload",

@@ -149,7 +149,7 @@ async fn run_live_approval(agent: AgentKind, permission: PermissionPolicy, expec
             description: Some(
                 "Use ONLY the shell/Bash tool (do NOT use Write, Edit, or any file tool). \
                  Run exactly this single command and report its output, then stop: \
-                 echo AgentManager-OK"
+                 python3 -c 'print(\"AgentManager-OK\")'"
                     .into(),
             ),
             priority: TaskPriority::Medium,

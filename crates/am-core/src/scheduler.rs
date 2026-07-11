@@ -771,9 +771,11 @@ mod tests {
 
     #[test]
     fn thread_limit_resume_waits_for_original_agent_when_earliest_disabled() {
-        let mut policy = am_proto::LimitPolicy::default();
-        policy.resume_with_earliest = false;
-        policy.agent_priority = vec![AgentKind::Codex, AgentKind::ClaudeCode];
+        let policy = am_proto::LimitPolicy {
+            resume_with_earliest: false,
+            agent_priority: vec![AgentKind::Codex, AgentKind::ClaudeCode],
+            ..Default::default()
+        };
         let statuses = [
             status(AgentKind::ClaudeCode, AvailabilityState::Limited),
             status(AgentKind::Codex, AvailabilityState::Available),
@@ -787,9 +789,11 @@ mod tests {
 
     #[test]
     fn thread_limit_resume_can_use_first_recovered_agent_when_enabled() {
-        let mut policy = am_proto::LimitPolicy::default();
-        policy.resume_with_earliest = true;
-        policy.agent_priority = vec![AgentKind::Codex, AgentKind::ClaudeCode];
+        let policy = am_proto::LimitPolicy {
+            resume_with_earliest: true,
+            agent_priority: vec![AgentKind::Codex, AgentKind::ClaudeCode],
+            ..Default::default()
+        };
         let statuses = [
             status(AgentKind::ClaudeCode, AvailabilityState::Limited),
             status(AgentKind::Codex, AvailabilityState::Available),

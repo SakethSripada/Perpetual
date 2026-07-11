@@ -20,6 +20,7 @@ media/screenshot-workbench.svg
 .gitignore
 .claude/**
 .vscode/**
+.github/**
 !README.md
 !CHANGELOG.md
 !LICENSE

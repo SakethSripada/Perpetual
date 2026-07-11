@@ -29,6 +29,7 @@ const AGENTS_FILE: &str = "AGENTS.md";
 const GENERATED_CONTEXT_FILES: &[&str] = &[THREAD_CONTEXT_FILE, CLAUDE_FILE, AGENTS_FILE];
 const MAX_THREAD_PROGRESS_BYTES: usize = 20 * 1024;
 const MAX_EVENT_TEXT_CHARS: usize = 2_000;
+const CANCEL_SETTLE: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[derive(Debug, Clone)]
 struct PendingThreadMessage {
@@ -230,6 +231,11 @@ impl AppCore {
             .ok_or(CoreError::NotFound)?;
         if active {
             let _ = self.sessions.cancel(id).await;
+            if !self.sessions.wait_until_inactive(id, CANCEL_SETTLE).await {
+                return Err(CoreError::Other(
+                    "the running session did not stop before deletion timed out".into(),
+                ));
+            }
         }
         self.cleanup_thread_sandboxes(id).await;
         am_db::repos::agent_thread::delete(&self.db.pool, id).await?;
@@ -1072,6 +1078,7 @@ impl AppCore {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn consume_agent_thread_turn(
         &self,
         turn_id: String,
@@ -1324,7 +1331,18 @@ impl AppCore {
                     .flatten()
                     .map(|t| t.permission)
                     .unwrap_or_else(|| permission_to_string(PermissionPolicy::default()));
-                let _ = am_db::repos::queued_turn::enqueue_with_echo(
+                // The interrupted turn is older than follow-ups that arrived
+                // while it was running. Put it back at the head so a limit or
+                // network interruption cannot make later messages overtake
+                // the user's original request.
+                let existing_ids =
+                    am_db::repos::queued_turn::list_for_thread(&self.db.pool, &thread_id)
+                        .await
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|queued| queued.id)
+                        .collect::<Vec<_>>();
+                let queued = am_db::repos::queued_turn::enqueue_with_echo(
                     &self.db.pool,
                     &thread_id,
                     agent,
@@ -1335,6 +1353,13 @@ impl AppCore {
                     msg.client_message_id.as_deref(),
                 )
                 .await;
+                if let Ok(queued) = queued {
+                    let mut ordered_ids = vec![queued.id];
+                    ordered_ids.extend(existing_ids);
+                    let _ =
+                        am_db::repos::queued_turn::reorder(&self.db.pool, &thread_id, &ordered_ids)
+                            .await;
+                }
             }
         }
 
@@ -1355,13 +1380,24 @@ impl AppCore {
 
         if let Ok(Some(next)) = am_db::repos::queued_turn::pop_next(&self.db.pool, &thread_id).await
         {
+            // A queued message records the agent selected when it was sent,
+            // but an automatic switchback may have completed while the
+            // previous turn was draining. Re-read the thread so the queued
+            // continuation follows the resolved active agent instead of
+            // immediately re-entering the fallback provider.
+            let next_agent = am_db::repos::agent_thread::get(&self.db.pool, &thread_id)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|thread| thread.active_agent)
+                .unwrap_or(next.agent_kind);
             let core = self.clone();
             tokio::spawn(async move {
                 let permission = parse_permission(&next.permission);
                 let _ = core
                     .run_agent_thread_boxed(
                         &thread_id,
-                        next.agent_kind,
+                        next_agent,
                         permission,
                         Some(PendingThreadMessage::from_queued(next)),
                     )
@@ -2509,7 +2545,7 @@ fn file_status_label(letter: char) -> &'static str {
         'D' => "deleted",
         'R' => "renamed",
         'C' => "copied",
-        'M' | _ => "modified",
+        _ => "modified",
     }
 }
 

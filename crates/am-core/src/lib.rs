@@ -115,7 +115,12 @@ pub struct AppCore {
     cloud_checkpoint_marks: Arc<std::sync::Mutex<HashMap<String, Instant>>>,
     /// Last provider/remote poll per active cloud run.
     cloud_monitor_marks: Arc<std::sync::Mutex<HashMap<String, Instant>>>,
+    /// Serialize cloud handoffs so a power event, manual action, and daemon
+    /// shutdown cannot all checkpoint and launch the same thread concurrently.
+    cloud_handoff_lock: Arc<tokio::sync::Mutex<()>>,
 }
+
+const CANCEL_SETTLE: std::time::Duration = std::time::Duration::from_secs(10);
 
 impl AppCore {
     /// Initialize the core: open the database under `data_dir` and set up the
@@ -157,6 +162,7 @@ impl AppCore {
             layout_debounce: Arc::new(std::sync::Mutex::new(HashMap::new())),
             cloud_checkpoint_marks: Arc::new(std::sync::Mutex::new(HashMap::new())),
             cloud_monitor_marks: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            cloud_handoff_lock: Arc::new(tokio::sync::Mutex::new(())),
         };
         core.reconcile_stale_sandboxes();
         core.scheduler.start(core.clone_for_scheduler()).await;
@@ -191,6 +197,7 @@ impl AppCore {
             layout_debounce: self.layout_debounce.clone(),
             cloud_checkpoint_marks: self.cloud_checkpoint_marks.clone(),
             cloud_monitor_marks: self.cloud_monitor_marks.clone(),
+            cloud_handoff_lock: self.cloud_handoff_lock.clone(),
         }
     }
 
@@ -398,12 +405,25 @@ impl AppCore {
             .ok_or(CoreError::NotFound)?;
         let threads = am_db::repos::agent_thread::list(&self.db.pool, Some(project_id)).await?;
         for thread in threads {
-            let _ = self.delete_agent_thread(&thread.id, true).await;
+            // Do not delete the project underneath a session that failed to
+            // settle. The caller must be able to retry once the agent process
+            // has exited, otherwise its consumer can keep writing into a
+            // project whose rows have just been cascaded away.
+            self.delete_agent_thread(&thread.id, true).await?;
         }
         let tasks = am_db::repos::task::list_for_project(&self.db.pool, project_id).await?;
         for task in tasks {
             if self.sessions.is_active(&task.id).await {
                 let _ = self.sessions.cancel(&task.id).await;
+                if !self
+                    .sessions
+                    .wait_until_inactive(&task.id, CANCEL_SETTLE)
+                    .await
+                {
+                    return Err(CoreError::Other(
+                        "a running task did not stop before project deletion timed out".into(),
+                    ));
+                }
             }
         }
         am_db::repos::project::delete(&self.db.pool, project_id).await?;
@@ -648,6 +668,7 @@ pub(crate) async fn test_core() -> AppCore {
         layout_debounce: Arc::new(std::sync::Mutex::new(HashMap::new())),
         cloud_checkpoint_marks: Arc::new(std::sync::Mutex::new(HashMap::new())),
         cloud_monitor_marks: Arc::new(std::sync::Mutex::new(HashMap::new())),
+        cloud_handoff_lock: Arc::new(tokio::sync::Mutex::new(())),
     }
 }
 
@@ -1139,7 +1160,7 @@ mod tests {
 
         // No attempts recorded yet: retry budget admits a requeue.
         let retried = core
-            .retry_failed_plan_nodes(&plan, &[node.id.clone()])
+            .retry_failed_plan_nodes(&plan, std::slice::from_ref(&node.id))
             .await
             .unwrap();
         assert!(retried);
@@ -1175,7 +1196,7 @@ mod tests {
         .await
         .unwrap();
         let retried = core
-            .retry_failed_plan_nodes(&plan, &[node.id.clone()])
+            .retry_failed_plan_nodes(&plan, std::slice::from_ref(&node.id))
             .await
             .unwrap();
         assert!(!retried, "retry budget must be exhausted after 2 attempts");

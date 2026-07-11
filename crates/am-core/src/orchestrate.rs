@@ -417,6 +417,7 @@ impl AppCore {
     /// Drain a session's normalized event stream: persist + broadcast each event,
     /// and apply session/task state transitions. Holds the concurrency permit
     /// until the stream closes.
+    #[allow(clippy::too_many_arguments)]
     async fn consume_session(
         &self,
         session_id: String,
@@ -856,15 +857,17 @@ impl AppCore {
 
     pub async fn get_limit_policy(&self) -> Result<am_proto::LimitPolicy, CoreError> {
         let raw = am_db::repos::settings::get(&self.db.pool, LIMIT_POLICY_KEY).await?;
-        Ok(raw
+        let policy = raw
             .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default())
+            .unwrap_or_default();
+        Ok(normalize_limit_policy(policy))
     }
 
     pub async fn set_limit_policy(
         &self,
         policy: am_proto::LimitPolicy,
     ) -> Result<am_proto::LimitPolicy, CoreError> {
+        let policy = normalize_limit_policy(policy);
         let raw = serde_json::to_string(&policy).unwrap_or_default();
         am_db::repos::settings::set(&self.db.pool, LIMIT_POLICY_KEY, &raw).await?;
         self.activity(
@@ -1251,6 +1254,21 @@ impl AppCore {
     }
 }
 
+fn normalize_limit_policy(mut policy: am_proto::LimitPolicy) -> am_proto::LimitPolicy {
+    policy.unknown_reset_retry_secs = policy.unknown_reset_retry_secs.min(7 * 24 * 60 * 60);
+    let mut priority = Vec::new();
+    for agent in policy.agent_priority {
+        if !priority.contains(&agent) {
+            priority.push(agent);
+        }
+    }
+    if priority.is_empty() {
+        priority = vec![AgentKind::ClaudeCode, AgentKind::Codex];
+    }
+    policy.agent_priority = priority;
+    policy
+}
+
 /// Compose the initial agent prompt from a task.
 fn build_prompt(task: &Task) -> String {
     let mut prompt = task.title.clone();
@@ -1295,7 +1313,7 @@ fn build_agent_model_catalog() -> Vec<AgentModelCatalog> {
         .iter()
         .find(|defaults| defaults.kind == AgentKind::ClaudeCode)
         .cloned()
-        .unwrap_or_else(|| AgentRunDefaults {
+        .unwrap_or(AgentRunDefaults {
             kind: AgentKind::ClaudeCode,
             model: None,
             reasoning: None,
@@ -1304,7 +1322,7 @@ fn build_agent_model_catalog() -> Vec<AgentModelCatalog> {
         .iter()
         .find(|defaults| defaults.kind == AgentKind::Codex)
         .cloned()
-        .unwrap_or_else(|| AgentRunDefaults {
+        .unwrap_or(AgentRunDefaults {
             kind: AgentKind::Codex,
             model: None,
             reasoning: None,
@@ -1717,7 +1735,7 @@ fn model_ids_equal(a: &str, b: &str) -> bool {
 fn model_dedupe_key(value: &str) -> String {
     value
         .trim()
-        .trim_end_matches(|ch| ch == ']' || ch == ')')
+        .trim_end_matches([']', ')'])
         .split('[')
         .next()
         .unwrap_or("")
@@ -1838,7 +1856,7 @@ fn simple_toml_string(raw: &str, key: &str) -> Option<String> {
             return None;
         }
         let value = unquote_toml_string(right.trim())?;
-        (!value.is_empty()).then(|| value)
+        (!value.is_empty()).then_some(value)
     })
 }
 

@@ -27,6 +27,7 @@ export class DaemonManager implements vscode.Disposable {
   ) {}
 
   async getClient(): Promise<DaemonClient> {
+    if (this.disposed) throw new Error("Perpetual daemon manager is disposed");
     if (this.client) return this.client;
     if (this.startPromise) return this.startPromise;
 
@@ -41,7 +42,7 @@ export class DaemonManager implements vscode.Disposable {
     await client.ping();
   }
 
-  async prepareShutdown(timeoutMs = 5000): Promise<void> {
+  async prepareShutdown(timeoutMs = 360_000): Promise<void> {
     const client = this.client;
     if (client) {
       try {
@@ -96,22 +97,34 @@ export class DaemonManager implements vscode.Disposable {
       if (this.child === child) this.child = null;
     });
 
-    const endpoint = await waitForEndpoint(endpointPath, () => {
-      if (child.exitCode !== null) {
-        throw new Error(`am-daemon exited before writing endpoint file (code ${child.exitCode})`);
-      }
-    });
-    const client = await DaemonClient.connect(endpoint.port, endpoint.token);
-    client.on("event", (event: AppEvent) => this.events.fire(event));
-    client.on("event_gap", (gap: unknown) =>
-      this.events.fire({ type: "event_gap", data: gap } as AppEvent),
-    );
-    client.on("disconnect", (err: Error) => {
-      if (!this.disposed) this.output.appendLine(`[daemon] disconnected: ${err.message}`);
-      if (this.client === client) this.client = null;
-    });
-    this.client = client;
-    return client;
+    try {
+      const endpoint = await waitForEndpoint(endpointPath, () => {
+        if (child.exitCode !== null) {
+          throw new Error(`am-daemon exited before writing endpoint file (code ${child.exitCode})`);
+        }
+      });
+      const client = await DaemonClient.connect(endpoint.port, endpoint.token);
+      client.on("event", (event: AppEvent) => this.events.fire(event));
+      client.on("event_gap", (gap: unknown) =>
+        this.events.fire({ type: "event_gap", data: gap } as AppEvent),
+      );
+      client.on("disconnect", (err: Error) => {
+        if (!this.disposed) this.output.appendLine(`[daemon] disconnected: ${err.message}`);
+        if (this.client === client) this.client = null;
+        // A broken socket is not a healthy daemon session. Terminate the
+        // associated child so a reconnect cannot leave an orphaned daemon
+        // holding the database and agent processes open.
+        if (!this.disposed && this.child === child && child.exitCode === null) {
+          child.kill();
+        }
+      });
+      this.client = client;
+      return client;
+    } catch (err) {
+      if (this.child === child) this.child = null;
+      if (child.exitCode === null) child.kill();
+      throw err;
+    }
   }
 
   private appendDaemonOutput(kind: "out" | "err", chunk: string): void {

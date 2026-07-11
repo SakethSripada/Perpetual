@@ -529,7 +529,7 @@ pub(crate) fn status_label(letter: char) -> &'static str {
         'D' => "deleted",
         'R' => "renamed",
         'C' => "copied",
-        'M' | _ => "modified",
+        _ => "modified",
     }
 }
 

@@ -97,22 +97,24 @@ pub(crate) fn cloud_decision(
 
 impl AppCore {
     /// Best-effort shutdown preparation for clients that are about to tear down
-    /// the daemon. VS Code has no reliable sleep hook, so shutdown explicitly
-    /// checkpoints and then runs the existing power-event handoff matrix.
+    /// the daemon. VS Code has no reliable sleep hook, so shutdown runs the
+    /// power-event handoff matrix; each handoff quiesces and checkpoints its
+    /// worktree before launching cloud execution.
     pub async fn prepare_shutdown(&self) -> Result<(), CoreError> {
-        let _ = self.run_cloud_checkpoints().await;
         self.handle_power_event(PowerEvent::ShutdownImminent).await;
         Ok(())
     }
 
     pub async fn get_cloud_policy(&self) -> Result<CloudPolicy, CoreError> {
-        Ok(am_db::repos::settings::get(&self.db.pool, CLOUD_POLICY_KEY)
+        let policy = am_db::repos::settings::get(&self.db.pool, CLOUD_POLICY_KEY)
             .await?
             .and_then(|raw| serde_json::from_str::<CloudPolicy>(&raw).ok())
-            .unwrap_or_default())
+            .unwrap_or_default();
+        Ok(normalize_cloud_policy(policy))
     }
 
     pub async fn set_cloud_policy(&self, policy: CloudPolicy) -> Result<CloudPolicy, CoreError> {
+        let policy = normalize_cloud_policy(policy);
         let value = serde_json::to_string(&policy).map_err(|e| CoreError::Other(e.to_string()))?;
         am_db::repos::settings::set(&self.db.pool, CLOUD_POLICY_KEY, &value).await?;
         self.wake_scheduler();
@@ -163,6 +165,10 @@ impl AppCore {
         trigger: CloudHandoffTrigger,
         agent_override: Option<AgentKind>,
     ) -> Result<CloudRun, CoreError> {
+        // A sleep notification can race a manual handoff or shutdown. Hold a
+        // process-wide launch gate across the check, checkpoint, provider
+        // launch, and DB transition so one thread cannot be handed off twice.
+        let _handoff_guard = self.cloud_handoff_lock.lock().await;
         let policy = self.get_cloud_policy().await?;
         if !policy.enabled {
             return Err(CoreError::Other("cloud continuation is disabled".into()));
@@ -268,11 +274,14 @@ impl AppCore {
         // freshen the handoff files the cloud agent will read.
         if self.sessions.is_active(thread_id).await {
             self.sessions.cancel(thread_id).await;
-            let settle_until = tokio::time::Instant::now() + CANCEL_SETTLE;
-            while self.sessions.is_active(thread_id).await
-                && tokio::time::Instant::now() < settle_until
+            if !self
+                .sessions
+                .wait_until_inactive(thread_id, CANCEL_SETTLE)
+                .await
             {
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                return Err(CoreError::Other(
+                    "the local session did not stop before cloud handoff timed out".into(),
+                ));
             }
         }
         // Reload: the session-end handler may have updated progress/handoff.
@@ -825,6 +834,32 @@ fn primary_worktree(links: &[am_proto::AgentThreadRepo]) -> Option<(PathBuf, Str
     })
 }
 
+fn normalize_cloud_policy(mut policy: CloudPolicy) -> CloudPolicy {
+    policy.max_concurrent_cloud_runs = policy.max_concurrent_cloud_runs.clamp(1, 64);
+    policy.checkpoint_interval_secs = policy.checkpoint_interval_secs.min(86_400);
+    policy.monitor_poll_secs = policy.monitor_poll_secs.clamp(1, 3_600);
+    policy.stall_timeout_secs = policy.stall_timeout_secs.clamp(60, 86_400);
+    policy.codex_env_id = policy
+        .codex_env_id
+        .take()
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty());
+
+    let mut priority = Vec::new();
+    for agent in policy.provider_priority {
+        if matches!(agent, AgentKind::ClaudeCode | AgentKind::Codex) && !priority.contains(&agent) {
+            priority.push(agent);
+        }
+    }
+    for agent in [AgentKind::ClaudeCode, AgentKind::Codex] {
+        if !priority.contains(&agent) {
+            priority.push(agent);
+        }
+    }
+    policy.provider_priority = priority;
+    policy
+}
+
 /// Continuation prompt for the cloud agent. TASK_CONTEXT.md (committed with
 /// the checkpoint) carries the full state; the prompt makes reading it and
 /// not redoing finished work explicit.
@@ -992,6 +1027,100 @@ mod tests {
             p.max_concurrent_cloud_runs as usize,
         );
         assert_eq!(d, CloudDecision::Pause);
+    }
+
+    #[test]
+    fn decision_matrix_covers_trigger_toggles_and_provider_states() {
+        let ready_claude = avail(AgentKind::ClaudeCode, true);
+        let ready_codex = avail(AgentKind::Codex, true);
+        let blocked_claude = avail(AgentKind::ClaudeCode, false);
+        let blocked_codex = avail(AgentKind::Codex, false);
+
+        for trigger in [CloudHandoffTrigger::Sleep, CloudHandoffTrigger::Shutdown] {
+            let mut disabled_trigger = policy(true);
+            if trigger == CloudHandoffTrigger::Sleep {
+                disabled_trigger.continue_on_sleep = false;
+            } else {
+                disabled_trigger.continue_on_shutdown = false;
+            }
+            assert_eq!(
+                cloud_decision(
+                    trigger,
+                    &disabled_trigger,
+                    AgentKind::ClaudeCode,
+                    Some(&ready_claude),
+                    Some(&ready_codex),
+                    0,
+                ),
+                CloudDecision::Disabled
+            );
+
+            let same_provider = cloud_decision(
+                trigger,
+                &policy(true),
+                AgentKind::ClaudeCode,
+                Some(&ready_claude),
+                Some(&ready_codex),
+                0,
+            );
+            assert_eq!(same_provider, CloudDecision::Launch(AgentKind::ClaudeCode));
+
+            let no_cross_provider = cloud_decision(
+                trigger,
+                &policy(true),
+                AgentKind::ClaudeCode,
+                Some(&blocked_claude),
+                Some(&ready_codex),
+                0,
+            );
+            assert_eq!(no_cross_provider, CloudDecision::Pause);
+
+            let mut cross_provider = policy(true);
+            cross_provider.allow_cross_provider = true;
+            assert_eq!(
+                cloud_decision(
+                    trigger,
+                    &cross_provider,
+                    AgentKind::ClaudeCode,
+                    Some(&blocked_claude),
+                    Some(&ready_codex),
+                    0,
+                ),
+                CloudDecision::Launch(AgentKind::Codex)
+            );
+
+            assert_eq!(
+                cloud_decision(
+                    trigger,
+                    &cross_provider,
+                    AgentKind::ClaudeCode,
+                    Some(&blocked_claude),
+                    Some(&blocked_codex),
+                    0,
+                ),
+                CloudDecision::Pause
+            );
+        }
+    }
+
+    #[test]
+    fn cloud_policy_normalization_keeps_launch_limits_safe() {
+        let mut p = policy(true);
+        p.max_concurrent_cloud_runs = 0;
+        p.monitor_poll_secs = 0;
+        p.stall_timeout_secs = 0;
+        p.provider_priority = vec![AgentKind::Gemini, AgentKind::Codex, AgentKind::Codex];
+        p.codex_env_id = Some("  env-123  ".into());
+
+        let normalized = normalize_cloud_policy(p);
+        assert_eq!(normalized.max_concurrent_cloud_runs, 1);
+        assert_eq!(normalized.monitor_poll_secs, 1);
+        assert_eq!(normalized.stall_timeout_secs, 60);
+        assert_eq!(
+            normalized.provider_priority,
+            vec![AgentKind::Codex, AgentKind::ClaudeCode]
+        );
+        assert_eq!(normalized.codex_env_id.as_deref(), Some("env-123"));
     }
 
     #[test]

@@ -2,12 +2,13 @@
 //! stopping a session terminates the agent and any tool subprocesses it spawned.
 //! Unix uses process groups; Windows uses a Job Object with kill-on-close.
 
-use std::io;
 use std::path::Path;
 use std::process::Stdio;
 
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 
+#[cfg(windows)]
+use std::io;
 #[cfg(windows)]
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 

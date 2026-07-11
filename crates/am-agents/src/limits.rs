@@ -151,10 +151,11 @@ fn parse_clock_time(text: &str) -> Option<DateTime<Utc>> {
         hour_raw + 12
     } else if rest.starts_with("am") && hour_raw == 12 {
         0
-    } else if rest.starts_with("am") || rest.starts_with("pm") {
-        hour_raw
-    } else if hour_raw <= 23 && after[hour_digits.len()..].starts_with(':') {
-        hour_raw // 24h form like "at 19:30"
+    } else if rest.starts_with("am")
+        || rest.starts_with("pm")
+        || (hour_raw <= 23 && after[hour_digits.len()..].starts_with(':'))
+    {
+        hour_raw // 12h suffix form or 24h form like "at 19:30"
     } else {
         return None; // bare number without am/pm or minutes is too ambiguous
     };

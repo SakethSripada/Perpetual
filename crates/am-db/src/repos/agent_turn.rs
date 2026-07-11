@@ -70,6 +70,7 @@ const SELECT: &str = "SELECT id, thread_id, agent_kind, agent_session_id, status
     model_target, compute_lease_id, compute_provider, estimated_compute_cost_usd, \
     fallback_model_target, target_hash, policy_envelope_id, started_at, ended_at FROM agent_turns";
 
+#[allow(clippy::too_many_arguments)]
 pub async fn create(
     pool: &SqlitePool,
     thread_id: &str,

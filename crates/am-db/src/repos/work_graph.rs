@@ -645,14 +645,14 @@ pub async fn blocking_edges_for_node(
     pool: &SqlitePool,
     node_id: &str,
 ) -> Result<Vec<WorkEdge>, DbError> {
-    let rows = sqlx::query_as::<_, WorkEdgeRow>(&format!(
+    let rows = sqlx::query_as::<_, WorkEdgeRow>(
         "SELECT e.id, e.project_id, e.source_id, e.target_id, e.kind, e.label, \
          e.created_at, e.updated_at FROM work_edges e \
          JOIN work_nodes blocker ON \
            ((e.kind = 'blocks' AND blocker.id = e.source_id AND e.target_id = ?) OR \
             (e.kind = 'depends_on' AND blocker.id = e.target_id AND e.source_id = ?)) \
-         WHERE blocker.status NOT IN ('done', 'cancelled')"
-    ))
+         WHERE blocker.status NOT IN ('done', 'cancelled')",
+    )
     .bind(node_id)
     .bind(node_id)
     .fetch_all(pool)
@@ -1017,6 +1017,7 @@ pub async fn list_plan_runs(
     rows.into_iter().map(WorkPlanRun::try_from).collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn update_plan_run_progress(
     pool: &SqlitePool,
     id: &str,

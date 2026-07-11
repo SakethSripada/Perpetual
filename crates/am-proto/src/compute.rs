@@ -32,18 +32,13 @@ impl ComputeProviderKind {
 /// Model target selected for an agent run. The VS Code extension supports
 /// frontier defaults and local providers; `RentedCompute` remains parsable so
 /// stale rows fail gracefully at launch time instead of corrupting reads.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelTargetKind {
+    #[default]
     FrontierDefault,
     LocalProvider,
     RentedCompute,
-}
-
-impl Default for ModelTargetKind {
-    fn default() -> Self {
-        Self::FrontierDefault
-    }
 }
 
 impl ModelTargetKind {

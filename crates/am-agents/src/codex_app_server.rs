@@ -131,37 +131,56 @@ async fn drive(
         next_id: next_id.clone(),
     };
 
-    let final_status = match run_turn(&rpc, &spec, resume.as_ref(), &events_tx).await {
-        Ok(turn_id) => {
-            // Wait for the turn to complete, the user to cancel, or a timeout.
-            let hard = tokio::time::sleep(limits.run_timeout);
-            tokio::pin!(hard);
-            tokio::select! {
-                status = terminal_rx => status.unwrap_or(SessionStatus::Failed),
-                _ = &mut cancel_rx => {
-                    rpc.notify_or_request_interrupt(&turn_id).await;
-                    SessionStatus::Interrupted
-                }
-                _ = &mut hard => {
-                    let _ = events_tx
-                        .send(NormalizedEvent::Error {
-                            message: "agent run timed out".into(),
-                            retryable: true,
-                        })
-                        .await;
-                    SessionStatus::Interrupted
+    // Keep cancellation active during initialize/thread-start/turn-start too.
+    // Previously a hung app-server handshake could ignore Stop until the RPC
+    // future completed, leaving the worktree and session slot busy.
+    let startup = run_turn(&rpc, &spec, resume.as_ref(), &events_tx);
+    tokio::pin!(startup);
+    let startup_timeout = tokio::time::sleep(limits.startup_timeout);
+    tokio::pin!(startup_timeout);
+    let final_status = tokio::select! {
+        result = &mut startup => match result {
+            Ok(turn_id) => {
+                // Wait for the turn to complete, the user to cancel, or a timeout.
+                let hard = tokio::time::sleep(limits.run_timeout);
+                tokio::pin!(hard);
+                tokio::select! {
+                    status = terminal_rx => status.unwrap_or(SessionStatus::Failed),
+                    _ = &mut cancel_rx => {
+                        rpc.notify_or_request_interrupt(&turn_id).await;
+                        SessionStatus::Interrupted
+                    }
+                    _ = &mut hard => {
+                        let _ = events_tx
+                            .send(NormalizedEvent::Error {
+                                message: "agent run timed out".into(),
+                                retryable: true,
+                            })
+                            .await;
+                        SessionStatus::Interrupted
+                    }
                 }
             }
-        }
-        Err(message) => {
+            Err(message) => {
+                let _ = events_tx
+                    .send(NormalizedEvent::Error {
+                        message,
+                        retryable: false,
+                    })
+                    .await;
+                SessionStatus::Failed
+            }
+        },
+        _ = &mut cancel_rx => SessionStatus::Interrupted,
+        _ = &mut startup_timeout => {
             let _ = events_tx
                 .send(NormalizedEvent::Error {
-                    message,
-                    retryable: false,
+                    message: "codex app-server did not finish starting before the startup timeout".into(),
+                    retryable: true,
                 })
                 .await;
-            SessionStatus::Failed
-        }
+            SessionStatus::Interrupted
+        },
     };
 
     // Tear the child down and finish the stream.
@@ -405,11 +424,12 @@ async fn handle_server_request(
     if let Some(ask) = approval_ask_for(method, &params) {
         let approver = approver.clone();
         let out_tx = out_tx.clone();
+        let method = method.to_string();
         tokio::spawn(async move {
             let decision = approver.ask(ask).await;
             let reply = json!({
                 "id": id,
-                "result": { "decision": review_decision(decision) }
+                "result": approval_response(&method, decision, &params)
             });
             let _ = out_tx.send(reply.to_string()).await;
         });
@@ -425,15 +445,19 @@ async fn handle_server_request(
 fn approval_ask_for(method: &str, params: &Value) -> Option<ApprovalAsk> {
     match method {
         "item/commandExecution/requestApproval" | "execCommandApproval" => {
-            let command = params
-                .get("command")
-                .and_then(Value::as_array)
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|c| c.as_str().map(ToString::to_string))
-                        .collect::<Vec<_>>()
-                })
-                .filter(|c| !c.is_empty());
+            let command = match params.get("command") {
+                Some(Value::String(command)) if !command.trim().is_empty() => {
+                    Some(vec![command.clone()])
+                }
+                Some(Value::Array(array)) => {
+                    let command = array
+                        .iter()
+                        .filter_map(|part| part.as_str().map(ToString::to_string))
+                        .collect::<Vec<_>>();
+                    (!command.is_empty()).then_some(command)
+                }
+                _ => None,
+            };
             Some(ApprovalAsk {
                 kind: ApprovalKind::Command,
                 tool_name: "command".to_string(),
@@ -449,6 +473,20 @@ fn approval_ask_for(method: &str, params: &Value) -> Option<ApprovalAsk> {
                     .map(ToString::to_string),
             })
         }
+        "item/permissions/requestApproval" => Some(ApprovalAsk {
+            kind: ApprovalKind::Tool,
+            tool_name: "permissions".to_string(),
+            command: None,
+            cwd: params
+                .get("cwd")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            input: params.clone(),
+            reason: params
+                .get("reason")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+        }),
         "item/fileChange/requestApproval" | "applyPatchApproval" => Some(ApprovalAsk {
             kind: ApprovalKind::FileChange,
             tool_name: "apply_patch".to_string(),
@@ -465,6 +503,40 @@ fn approval_ask_for(method: &str, params: &Value) -> Option<ApprovalAsk> {
         }),
         _ => None,
     }
+}
+
+/// Codex has two approval wire formats in the wild. The current v2
+/// `item/*/requestApproval` methods use `accept`/`decline`; legacy
+/// `execCommandApproval`/`applyPatchApproval` methods use the older
+/// `approved`/`denied` values. Keep that distinction at the adapter boundary
+/// so an Allow decision never becomes a provider denial.
+fn approval_response(method: &str, decision: ApprovalDecision, params: &Value) -> Value {
+    if method == "item/permissions/requestApproval" {
+        let permissions = if decision.is_allow() {
+            params
+                .get("permissions")
+                .cloned()
+                .unwrap_or_else(|| json!({}))
+        } else {
+            json!({})
+        };
+        return json!({
+            "permissions": permissions,
+            "scope": if decision == ApprovalDecision::AllowForSession { "session" } else { "turn" },
+        });
+    }
+
+    let decision = if method.starts_with("item/") {
+        match decision {
+            ApprovalDecision::Allow => "accept",
+            ApprovalDecision::AllowForSession => "acceptForSession",
+            ApprovalDecision::Deny => "decline",
+            ApprovalDecision::Abort => "cancel",
+        }
+    } else {
+        review_decision(decision)
+    };
+    json!({ "decision": decision })
 }
 
 /// Map our decision onto Codex's `ReviewDecision`.
@@ -748,6 +820,52 @@ mod tests {
         assert_eq!(ask.command.as_deref().unwrap().len(), 3);
         assert_eq!(ask.cwd.as_deref(), Some("/work"));
         assert_eq!(ask.reason.as_deref(), Some("destructive"));
+    }
+
+    #[test]
+    fn current_command_schema_keeps_string_command_for_ui() {
+        let ask = approval_ask_for(
+            "item/commandExecution/requestApproval",
+            &json!({ "command": "python3 -c 'print(1)'", "cwd": "/work" }),
+        )
+        .unwrap();
+        assert_eq!(ask.command, Some(vec!["python3 -c 'print(1)'".to_string()]));
+    }
+
+    #[test]
+    fn current_v2_approval_decisions_use_current_wire_values() {
+        let params = json!({ "permissions": { "network": { "enabled": true } } });
+        assert_eq!(
+            approval_response(
+                "item/commandExecution/requestApproval",
+                ApprovalDecision::Allow,
+                &params
+            ),
+            json!({ "decision": "accept" })
+        );
+        assert_eq!(
+            approval_response(
+                "item/fileChange/requestApproval",
+                ApprovalDecision::Deny,
+                &params
+            ),
+            json!({ "decision": "decline" })
+        );
+        assert_eq!(
+            approval_response("execCommandApproval", ApprovalDecision::Allow, &params),
+            json!({ "decision": "approved" })
+        );
+        assert_eq!(
+            approval_response(
+                "item/permissions/requestApproval",
+                ApprovalDecision::Allow,
+                &params
+            ),
+            json!({
+                "permissions": { "network": { "enabled": true } },
+                "scope": "turn"
+            })
+        );
     }
 
     #[test]
