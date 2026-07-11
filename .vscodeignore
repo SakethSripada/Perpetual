@@ -15,8 +15,6 @@ tsconfig.json
 vscode-test.mjs
 **/*.map
 dist/**/*.map
-bin/*/README.md
-media/screenshot-workbench.svg
 .gitignore
 .claude/**
 .vscode/**
