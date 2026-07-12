@@ -172,49 +172,6 @@ textarea {
   overflow-wrap: anywhere;
 }
 
-.limit-bar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  overflow-x: auto;
-  padding: 7px 10px 0;
-  flex: 0 0 auto;
-}
-.limit-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  flex: 0 0 auto;
-  padding: 5px 8px;
-  border: 1px solid color-mix(in srgb, var(--am-warn) 32%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--am-warn) 9%, transparent);
-  color: var(--am-muted);
-  font-size: 11px;
-}
-.limit-pill svg {
-  width: 13px;
-  height: 13px;
-  color: var(--am-warn);
-}
-.limit-pill span,
-.limit-pill strong {
-  white-space: nowrap;
-}
-.limit-pill strong {
-  color: var(--vscode-foreground);
-  font-weight: 600;
-}
-.limit-pill.fallback {
-  border-color: color-mix(in srgb, var(--am-accent) 28%, transparent);
-  background: color-mix(in srgb, var(--am-accent) 8%, transparent);
-}
-.limit-pill.fallback svg {
-  color: var(--am-accent);
-}
-
 .cloud-bar {
   display: flex;
   align-items: center;
@@ -476,32 +433,43 @@ textarea {
   font-size: 11px;
 }
 
+/*
+ * Status transitions are ambient notices, not alerts: the tone reads from the
+ * accent rule and the icon, so a rate limit never floods the transcript with a
+ * saturated card.
+ */
 .transition-row {
+  --transition-tone: color-mix(in srgb, var(--am-muted) 60%, transparent);
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: 9px;
   min-width: 0;
-  padding: 6px 8px;
+  padding: 7px 10px 7px 9px;
   border-radius: var(--am-radius-sm);
   font-size: 12px;
   border: 1px solid var(--am-border-soft);
-  background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+  border-left: 2px solid var(--transition-tone);
+  background: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
   animation: transcript-in 0.14s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 .transition-row.info {
-  border-color: color-mix(in srgb, var(--am-accent) 22%, transparent);
-  background: color-mix(in srgb, var(--am-accent) 7%, transparent);
+  --transition-tone: color-mix(in srgb, var(--am-accent) 70%, transparent);
 }
 .transition-row.warning {
-  border-color: color-mix(in srgb, var(--am-warn) 30%, transparent);
-  background: color-mix(in srgb, var(--am-warn) 8%, transparent);
+  --transition-tone: color-mix(in srgb, var(--am-warn) 70%, transparent);
 }
 .transition-row.danger {
-  border-color: color-mix(in srgb, var(--vscode-errorForeground, #f85149) 28%, transparent);
-  background: color-mix(in srgb, var(--vscode-errorForeground, #f85149) 7%, transparent);
+  --transition-tone: color-mix(in srgb, var(--vscode-errorForeground, #f85149) 70%, transparent);
+}
+.transition-row .activity-icon {
+  color: var(--transition-tone);
+}
+.transition-row .activity-main {
+  gap: 2px;
 }
 .transition-row .activity-title span {
   color: var(--vscode-foreground);
+  font-weight: 500;
 }
 .transition-row small {
   color: var(--am-muted);

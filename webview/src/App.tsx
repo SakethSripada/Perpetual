@@ -544,9 +544,6 @@ export default function App() {
     !!selectedThread && !!details?.repos.some((repo) => !!repo.worktree_path);
   const canReviewChanges =
     !!selectedThread && !!details?.repos.some((repo) => !!repo.worktree_path);
-  const limitedAgents =
-    snapshot?.agents.filter((status) => status.availability === "limited") ??
-    [];
   const activeCloudRuns =
     details?.cloudRuns.filter((run) => isActiveCloudRun(run.status)) ?? [];
   const transcriptItems = useMemo(
@@ -908,11 +905,6 @@ export default function App() {
         </div>
       )}
 
-      <LimitRecoveryBar
-        limitedAgents={limitedAgents}
-        policy={snapshot?.limitPolicy ?? null}
-        selectedThread={selectedThread}
-      />
       <CloudStatusBar
         selectedThread={selectedThread}
         activeRuns={activeCloudRuns}
@@ -1997,45 +1989,6 @@ const APPROVAL_ICON: Record<
   file_change: "repo",
   tool: "agent",
 };
-
-function LimitRecoveryBar(props: {
-  limitedAgents: AgentStatus[];
-  policy: LimitPolicy | null;
-  selectedThread: AgentThread | null;
-}) {
-  const activeFallback =
-    props.selectedThread?.fallback_agent &&
-    props.selectedThread.active_agent === props.selectedThread.fallback_agent &&
-    (props.selectedThread.handoff_state === "fallback_active" ||
-      !!props.selectedThread.original_agent);
-  if (props.limitedAgents.length === 0 && !activeFallback) return null;
-  return (
-    <div className="limit-bar" role="status">
-      {props.limitedAgents.map((agent) => (
-        <span key={agent.kind} className="limit-pill">
-          <Icon name="clock" />
-          <span>{labelAgent(agent.kind)} limited</span>
-          <strong>
-            {agent.reset_at
-              ? formatResetTime(agent.reset_at)
-              : retryLabel(props.policy)}
-          </strong>
-        </span>
-      ))}
-      {activeFallback && props.selectedThread?.fallback_agent && (
-        <span className="limit-pill fallback">
-          <Icon name="refresh" />
-          <span>
-            Running on {labelAgent(props.selectedThread.fallback_agent)}
-          </span>
-          <strong>
-            {props.policy?.switch_back ? "switch-back armed" : "manual return"}
-          </strong>
-        </span>
-      )}
-    </div>
-  );
-}
 
 function CloudStatusBar(props: {
   selectedThread: AgentThread | null;
