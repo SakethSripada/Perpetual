@@ -555,6 +555,7 @@ export default function App() {
         activities: details?.activities ?? [],
         queued: details?.queued ?? [],
         cloudRuns: details?.cloudRuns ?? [],
+        pending,
       }),
     [
       selectedThread,
@@ -562,6 +563,7 @@ export default function App() {
       details?.activities,
       details?.queued,
       details?.cloudRuns,
+      pending,
     ],
   );
   const visibleTranscriptItems = useMemo(() => {
@@ -941,7 +943,7 @@ export default function App() {
               exiting={welcomeLeaving}
             />
           )}
-          {selectedThread &&
+          {(selectedThread || pending.length > 0) &&
             visibleTranscriptItems.map((item) => (
               <TranscriptItemView
                 key={transcriptItemKey(item)}
@@ -983,14 +985,6 @@ export default function App() {
                 }}
               />
             ))}
-          {pending.map((item) => (
-            <article
-              key={item.id}
-              className={`msg user pending${item.firstTurn ? " first-turn" : ""}`}
-            >
-              <div className="msg-body">{item.text}</div>
-            </article>
-          ))}
           {details?.approvals.map((approval) => (
             <ApprovalCard
               key={approval.id}
@@ -1220,10 +1214,26 @@ function TranscriptItemView({
       </article>
     );
   }
+  if (item.type === "pending") {
+    return (
+      <article className={`msg user pending${item.firstTurn ? " first-turn" : ""}`}>
+        <div className="msg-body">{item.text}</div>
+      </article>
+    );
+  }
   return (
     <div className={`transition-row ${item.tone}`} role="status">
       <span className="transition-body">
-        <Icon name={item.tone === "danger" ? "alert" : item.tone === "warning" ? "clock" : "refresh"} />
+        <Icon
+          name={
+            item.icon ??
+            (item.tone === "danger"
+              ? "alert"
+              : item.tone === "warning"
+                ? "clock"
+                : "refresh")
+          }
+        />
         <span className="transition-text">{item.text}</span>
         {item.detail && <span className="transition-detail">{item.detail}</span>}
       </span>

@@ -167,6 +167,88 @@ test("a limit and the switch it caused read as one notice, after the message tha
   assert.deepEqual(order, ["user", "transition", "assistant"]);
 });
 
+test("the limit notice trails the optimistic message it belongs to, before the event persists", async () => {
+  const { buildTranscriptItems } = await loadTranscriptModule();
+  // The window between sending and the daemon persisting the user message: the
+  // bubble is still optimistic, so the notice has no event to anchor to. It must
+  // already sort below it, or it renders above and jumps a second later.
+  const items = buildTranscriptItems({
+    thread: {
+      id: "t1",
+      preferred_agent: "codex",
+      fallback_agent: "claude_code",
+      limit_reset_at: null,
+    },
+    queued: [],
+    cloudRuns: [],
+    events: [],
+    pending: [{ id: "p1", text: "Ship the pink theme.", firstTurn: false }],
+    activities: [
+      {
+        id: "a1",
+        kind: "thread.fallback_started",
+        payload: { from: "codex", to: "claude_code", reason: "known_limited" },
+        ts: "2026-07-09T00:00:01Z",
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    items.map((item) => item.type),
+    ["pending", "transition"],
+  );
+});
+
+test("a completed switch-back reports the outcome only", async () => {
+  const { buildTranscriptItems } = await loadTranscriptModule();
+  const items = buildTranscriptItems({
+    thread: { id: "t1", preferred_agent: "codex", limit_reset_at: null },
+    queued: [],
+    cloudRuns: [],
+    events: [],
+    activities: [
+      {
+        id: "a1",
+        kind: "thread.switchback_started",
+        payload: { from: "claude_code", to: "codex" },
+        ts: "2026-07-09T00:00:00Z",
+      },
+      {
+        id: "a2",
+        kind: "thread.switchback_completed",
+        payload: { agent: "codex" },
+        ts: "2026-07-09T00:00:01Z",
+      },
+    ],
+  });
+
+  const transitions = items.filter((item) => item.type === "transition");
+  assert.equal(transitions.length, 1);
+  assert.equal(transitions[0].text, "Back on Codex");
+});
+
+test("a switch-back still in flight says so", async () => {
+  const { buildTranscriptItems } = await loadTranscriptModule();
+  const items = buildTranscriptItems({
+    thread: { id: "t1", preferred_agent: "codex", limit_reset_at: null },
+    queued: [],
+    cloudRuns: [],
+    events: [],
+    activities: [
+      {
+        id: "a1",
+        kind: "thread.switchback_started",
+        payload: { from: "claude_code", to: "codex" },
+        ts: "2026-07-09T00:00:00Z",
+      },
+    ],
+  });
+
+  const transitions = items.filter((item) => item.type === "transition");
+  assert.equal(transitions.length, 1);
+  assert.equal(transitions[0].text, "Codex is available again; switching back");
+});
+
 test("a limit with no follow-up still reports itself", async () => {
   const { buildTranscriptItems } = await loadTranscriptModule();
   const items = buildTranscriptItems({
@@ -197,7 +279,7 @@ test("a limit with no follow-up still reports itself", async () => {
   assert.equal(transitions.length, 1);
   assert.equal(transitions[0].text, "Codex rate-limited");
   // Rendered in the viewer's timezone, so only assert the shape.
-  assert.match(transitions[0].detail, /^Reset \d{1,2}:\d{2}/);
+  assert.match(transitions[0].detail, /^Resets at \d{1,2}:\d{2}/);
 });
 
 test("transcript builder shows queued public turns and hides silent carryover", async () => {

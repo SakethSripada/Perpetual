@@ -7,10 +7,28 @@ import type {
   QueuedTurn,
 } from "./types";
 
+/** Icon names the transcript may ask the view for, so the glyph carries the
+ * meaning (a clock waits, an alert failed) rather than merely echoing the tone. */
+export type TransitionIcon =
+  | "clock"
+  | "refresh"
+  | "alert"
+  | "queue"
+  | "cloud"
+  | "terminal";
+
 export type TranscriptItem =
   | { type: "event"; event: AgentThreadEvent }
-  | { type: "transition"; id: string; tone: "info" | "warning" | "danger"; text: string; detail?: string | null }
-  | { type: "queued"; id: string; message: string };
+  | {
+      type: "transition";
+      id: string;
+      tone: "info" | "warning" | "danger";
+      text: string;
+      detail?: string | null;
+      icon?: TransitionIcon;
+    }
+  | { type: "queued"; id: string; message: string }
+  | { type: "pending"; id: string; text: string; firstTurn?: boolean };
 
 export type PendingTranscriptMessage = {
   id: string;
@@ -65,6 +83,7 @@ export function buildTranscriptItems(input: {
   activities: ActivityEvent[];
   queued: QueuedTurn[];
   cloudRuns: CloudRun[];
+  pending?: PendingTranscriptMessage[];
 }): TranscriptItem[] {
   const items: TranscriptItem[] = [];
   const transitionIds = new Set<string>();
@@ -92,7 +111,7 @@ export function buildTranscriptItems(input: {
     items.push({ type: "event", event });
   }
 
-  const superseded = supersededLimitActivities(input.activities);
+  const superseded = supersededActivities(input.activities);
   for (const activity of input.activities) {
     if (superseded.has(activity.id)) {
       limitTransitionAdded = true;
@@ -110,13 +129,16 @@ export function buildTranscriptItems(input: {
     const original = input.thread.original_agent ?? input.thread.preferred_agent;
     const text = fallback
       ? `${labelAgent(original)} rate-limited; switching to ${labelAgent(fallback)}`
-      : `Waiting for ${labelAgent(original)} reset`;
+      : `${labelAgent(original)} rate-limited; waiting for the reset`;
     items.push({
       type: "transition",
       id: `usage-limit-${input.thread.id}`,
       tone: fallback ? "warning" : "danger",
       text,
-      detail: input.thread.limit_reset_at ? `Reset ${formatReset(input.thread.limit_reset_at)}` : null,
+      detail: input.thread.limit_reset_at
+        ? `Resets at ${formatReset(input.thread.limit_reset_at)}`
+        : null,
+      icon: fallback ? "refresh" : "clock",
     });
   }
 
@@ -130,12 +152,22 @@ export function buildTranscriptItems(input: {
       tone: run.status === "stalled" ? "warning" : "info",
       text: `Continuing in ${labelAgent(run.agent_kind)} Cloud`,
       detail: run.url ?? run.branch,
+      icon: "cloud",
     });
   }
 
   for (const queued of input.queued) {
     if (queued.echo_user_message === false) continue;
     items.push({ type: "queued", id: queued.id, message: queued.message });
+  }
+
+  for (const message of input.pending ?? []) {
+    items.push({
+      type: "pending",
+      id: message.id,
+      text: message.text,
+      firstTurn: message.firstTurn,
+    });
   }
 
   const anchors = sendTimeAnchors(input.activities, input.events);
@@ -145,30 +177,25 @@ export function buildTranscriptItems(input: {
 }
 
 /**
- * A limit that resolves into a switch, a wait, or a hard stop is reported by the
- * follow-up activity, which already names the rate limit ("Codex rate-limited;
- * switching to Claude"). Rendering the bare "Codex rate-limited" beside it says
- * the same thing twice, so keep only the follow-up. A limit with no follow-up is
- * still shown on its own.
+ * Some transitions announce something they immediately resolve, and the outcome
+ * already carries the news: "Codex rate-limited" next to "Codex rate-limited;
+ * switching to Claude" says it twice, as does "Codex is available again;
+ * switching back" next to "Back on Codex". Keep only the outcome. An opener that
+ * never resolves still speaks for itself, which is what makes it worth showing.
  */
-function supersededLimitActivities(activities: ActivityEvent[]): Set<string> {
+function supersededActivities(activities: ActivityEvent[]): Set<string> {
   const ordered = [...activities].sort(
     (a, b) => (Date.parse(a.ts) || 0) - (Date.parse(b.ts) || 0),
   );
   const superseded = new Set<string>();
   ordered.forEach((activity, index) => {
-    if (activity.kind !== "thread.agent_limited") return;
-    const agent = parseAgent(asRecord(activity.payload).agent);
+    const agent = openerAgent(activity);
+    if (!agent) return;
     for (const later of ordered.slice(index + 1)) {
-      // A fresh limit for the same agent opens a new episode: stop looking, so an
-      // earlier unresolved limit is never cancelled by a later one's follow-up.
-      if (
-        later.kind === "thread.agent_limited" &&
-        parseAgent(asRecord(later.payload).agent) === agent
-      ) {
-        break;
-      }
-      if (!resolvesLimitFor(later, agent)) continue;
+      // A repeat of the same opener starts a new episode: stop looking, so an
+      // earlier unresolved opener is never cancelled by a later one's outcome.
+      if (later.kind === activity.kind && openerAgent(later) === agent) break;
+      if (!resolves(activity.kind, later, agent)) continue;
       superseded.add(activity.id);
       break;
     }
@@ -176,20 +203,38 @@ function supersededLimitActivities(activities: ActivityEvent[]): Set<string> {
   return superseded;
 }
 
-function resolvesLimitFor(
+/** The agent an opening transition is about, or null if it does not open one. */
+function openerAgent(activity: ActivityEvent): AgentKind | null {
+  const payload = asRecord(activity.payload);
+  if (activity.kind === "thread.agent_limited") return parseAgent(payload.agent);
+  if (activity.kind === "thread.switchback_started") return parseAgent(payload.to);
+  return null;
+}
+
+function resolves(
+  opener: string,
   activity: ActivityEvent,
   agent: AgentKind | null,
 ): boolean {
   const payload = asRecord(activity.payload);
-  switch (activity.kind) {
-    case "thread.fallback_started":
-      return parseAgent(payload.from) === agent;
-    case "thread.fallback_waiting":
-    case "thread.fallback_disabled":
-      return parseAgent(payload.agent) === agent;
-    default:
-      return false;
+  if (opener === "thread.agent_limited") {
+    switch (activity.kind) {
+      case "thread.fallback_started":
+        return parseAgent(payload.from) === agent;
+      case "thread.fallback_waiting":
+      case "thread.fallback_disabled":
+        return parseAgent(payload.agent) === agent;
+      default:
+        return false;
+    }
   }
+  if (opener === "thread.switchback_started") {
+    return (
+      activity.kind === "thread.switchback_completed" &&
+      parseAgent(payload.agent) === agent
+    );
+  }
+  return false;
 }
 
 /**
@@ -217,7 +262,6 @@ function sendTimeAnchors(
     .map((event) => Date.parse(event.ts) || 0)
     .sort((a, b) => a - b);
   const anchors = new Map<string, number>();
-  if (userTimes.length === 0) return anchors;
   for (const activity of activities) {
     if (!isLimitActivity(activity.kind)) continue;
     const reason = asRecord(activity.payload).reason;
@@ -226,9 +270,14 @@ function sendTimeAnchors(
     }
     const ts = Date.parse(activity.ts) || 0;
     const trigger = userTimes.find((time) => time >= ts);
-    if (trigger === undefined) continue;
-    // Half a millisecond lands it after the message but before any reply.
-    anchors.set(`activity-${activity.id}`, trigger + 0.5);
+    // Until the message is persisted it is still the optimistic bubble at the
+    // end of the transcript, so trail everything rather than briefly sorting
+    // above it and then jumping once the real event lands.
+    // Half a millisecond lands the notice after the message but before any reply.
+    anchors.set(
+      `activity-${activity.id}`,
+      trigger === undefined ? TRAILING_RANK : trigger + 0.5,
+    );
   }
   return anchors;
 }
@@ -281,43 +330,104 @@ function transitionFromActivity(activity: ActivityEvent): TransitionItem | null 
   const from = parseAgent(payload.from);
   const to = parseAgent(payload.to);
   const reset = typeof payload.reset_at === "string" ? payload.reset_at : null;
-  const detail = reset ? `Reset ${formatReset(reset)}` : detailText(payload);
+  const detail = reset ? `Resets at ${formatReset(reset)}` : detailText(payload);
   switch (activity.kind) {
     case "thread.agent_limited":
-      return transition(activity, "warning", `${labelAgent(agent)} rate-limited`, detail);
+      return transition(activity, "warning", `${labelAgent(agent)} rate-limited`, detail, "clock");
     case "thread.fallback_started":
       return transition(
         activity,
         "warning",
         `${labelAgent(from)} rate-limited; switching to ${labelAgent(to)}`,
         detail,
+        "refresh",
       );
     case "thread.fallback_waiting":
       return transition(
         activity,
         "danger",
-        `${labelAgent(agent)} rate-limited; waiting for reset`,
+        `${labelAgent(agent)} rate-limited; waiting for the reset`,
         detail,
+        "clock",
       );
     case "thread.fallback_disabled":
-      return transition(activity, "danger", `${labelAgent(agent)} rate-limited; switching is off`, detail);
+      return transition(
+        activity,
+        "danger",
+        `${labelAgent(agent)} rate-limited; auto-switch is off`,
+        detail,
+        "clock",
+      );
     case "thread.switchback_started":
-      return transition(activity, "info", `${labelAgent(to)} available; switching back`, null);
+      return transition(
+        activity,
+        "info",
+        `${labelAgent(to)} is available again; switching back`,
+        null,
+        "refresh",
+      );
     case "thread.switchback_completed":
-      return transition(activity, "info", `Switched back to ${labelAgent(agent)}`, null);
+      return transition(activity, "info", `Back on ${labelAgent(agent)}`, null, "refresh");
+    case "thread.capacity_queued":
+      return transition(
+        activity,
+        "info",
+        `Waiting for a free ${labelAgent(agent)} slot`,
+        null,
+        "queue",
+      );
+    case "thread.context_handoff":
+      return transition(
+        activity,
+        "info",
+        `Context limit reached; continuing in a fresh ${labelAgent(agent)} session`,
+        null,
+        "refresh",
+      );
+    case "thread.network_unavailable":
+      return transition(
+        activity,
+        "warning",
+        `${labelAgent(agent)} lost its network connection`,
+        detailText(payload),
+        "alert",
+      );
+    case "thread.network_waiting":
+      return transition(activity, "warning", "Waiting for the network to come back", null, "clock");
     case "thread.local_fallback_started":
-      return transition(activity, "warning", "Cloud unavailable; switching to local Codex", detail);
+      return transition(
+        activity,
+        "warning",
+        `Cloud unavailable; switching to local ${labelAgent(to)}`,
+        localProviderLabel(payload) ?? detail,
+        "terminal",
+      );
     case "thread.local_fallback_failed":
-      return transition(activity, "danger", "Local fallback failed", detail);
+      return transition(activity, "danger", "Local fallback failed", detail, "alert");
+    case "thread.local_switchback_started":
+      return transition(
+        activity,
+        "info",
+        `Network is back; resuming ${labelAgent(agent)}`,
+        null,
+        "refresh",
+      );
     case "thread.cloud_handoff_started":
-      return transition(activity, "info", `Continuing in ${labelAgent(agent)} Cloud`, detailText(payload));
+      return transition(activity, "info", `Continuing in ${labelAgent(agent)} Cloud`, detailText(payload), "cloud");
     case "thread.cloud_handoff_failed":
-      return transition(activity, "danger", "Cloud handoff failed", detailText(payload));
+      return transition(activity, "danger", "Cloud handoff failed", detailText(payload), "alert");
     case "thread.cloud_reclaimed":
-      return transition(activity, "info", "Cloud run reclaimed", detailText(payload));
+      return transition(activity, "info", "Cloud run reclaimed", detailText(payload), "cloud");
     default:
       return null;
   }
+}
+
+function localProviderLabel(payload: Record<string, unknown>): string | null {
+  const provider = payload.provider;
+  if (provider === "ollama") return "Ollama";
+  if (provider === "lm_studio") return "LM Studio";
+  return null;
 }
 
 function transition(
@@ -325,8 +435,9 @@ function transition(
   tone: "info" | "warning" | "danger",
   text: string,
   detail: string | null,
+  icon?: TransitionIcon,
 ): TransitionItem {
-  return { type: "transition", id: `activity-${activity.id}`, tone, text, detail };
+  return { type: "transition", id: `activity-${activity.id}`, tone, text, detail, icon };
 }
 
 function detailText(payload: Record<string, unknown>): string | null {
@@ -346,6 +457,13 @@ function isLimitActivity(kind: string): boolean {
   );
 }
 
+// Ranks for items that have no useful timestamp of their own. They sit far above
+// any real epoch value, so they always trail the conversation in this order:
+// queued turns, then the message the user just sent, then any notice about it.
+const QUEUED_RANK = 1e15;
+const PENDING_RANK = 2e15;
+const TRAILING_RANK = 3e15;
+
 function itemTs(
   item: TranscriptItem,
   input: {
@@ -355,7 +473,8 @@ function itemTs(
   anchors: Map<string, number>,
 ): number {
   if (item.type === "event") return Date.parse(item.event.ts) || 0;
-  if (item.type === "queued") return Number.MAX_SAFE_INTEGER - 1;
+  if (item.type === "queued") return QUEUED_RANK;
+  if (item.type === "pending") return PENDING_RANK;
   const anchored = anchors.get(item.id);
   if (anchored !== undefined) return anchored;
   const activity = input.activities.find((entry) => `activity-${entry.id}` === item.id);
