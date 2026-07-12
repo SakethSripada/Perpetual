@@ -3329,7 +3329,6 @@ function MonitorSheet(props: {
   );
   const agent = thread?.active_agent ?? thread?.preferred_agent ?? null;
   const activeTurn = props.details?.turns.find((turn) => !turn.ended_at);
-  const recentActivities = (props.details?.activities ?? []).slice(-8).reverse();
   const cloudReady =
     !!agent &&
     props.snapshot.cloudAvailability.some(
@@ -3429,20 +3428,6 @@ function MonitorSheet(props: {
             </div>
           </div>
 
-          <div className="settings-group">
-            <div className="group-title">Recent Signals</div>
-            <div className="monitor-events">
-              {recentActivities.length === 0 && (
-                <div className="menu-empty">No handoff or scheduler activity yet</div>
-              )}
-              {recentActivities.map((activity) => (
-                <div key={activity.id} className="monitor-event">
-                  <span>{humanize(activity.kind)}</span>
-                  <small>{activityDetailText(activity.payload)}</small>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
       </section>
     </div>
@@ -3476,16 +3461,6 @@ function resetSummary(agents: AgentStatus[]): string {
       `${labelAgent(agent.kind)} ${agent.reset_at ? formatResetTime(agent.reset_at) : "unknown"}`,
     )
     .join(", ");
-}
-
-function activityDetailText(payload: unknown): string {
-  const data = asRecord(payload);
-  if (!data) return "";
-  for (const key of ["reason", "detail", "error", "agent", "url", "queue_id"]) {
-    const value = data[key];
-    if (typeof value === "string" && value.trim()) return value.trim();
-  }
-  return "";
 }
 
 function SettingsSheet(props: {

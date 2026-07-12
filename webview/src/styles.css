@@ -1956,29 +1956,6 @@ textarea {
   flex-wrap: wrap;
   gap: 7px;
 }
-.monitor-events {
-  display: grid;
-  gap: 4px;
-}
-.monitor-event {
-  display: grid;
-  gap: 2px;
-  padding: 7px 9px;
-  border: 1px solid var(--am-border-soft);
-  border-radius: var(--am-radius-sm);
-  background: var(--am-surface);
-}
-.monitor-event span,
-.monitor-event small {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.monitor-event small {
-  color: var(--am-muted);
-  font-size: 11px;
-}
 .group-title {
   font-size: 11px;
   font-weight: 600;

@@ -376,14 +376,9 @@ function transitionFromActivity(activity: ActivityEvent): TransitionItem | null 
         null,
         "queue",
       );
-    case "thread.context_handoff":
-      return transition(
-        activity,
-        "info",
-        `Context limit reached; continuing in a fresh ${labelAgent(agent)} session`,
-        null,
-        "refresh",
-      );
+    // thread.context_handoff is not a context limit: it fires at the end of every
+    // turn to roll that turn's progress into the thread's context files. Routine
+    // bookkeeping, never a notice.
     case "thread.network_unavailable":
       return transition(
         activity,
