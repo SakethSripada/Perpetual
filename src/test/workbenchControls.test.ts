@@ -190,3 +190,19 @@ test("POSIX shells keep the plain quoted invocation", async () => {
   assert.equal(isPowerShell("C:\\Program Files\\PowerShell\\7\\pwsh.exe"), true);
   assert.equal(isPowerShell(undefined), false);
 });
+
+test("the visible VS Code workspace is restored as the default repository", () => {
+  const controller = readFileSync(
+    path.resolve(__dirname, "../../src/node/workbenchController.ts"),
+    "utf8",
+  );
+  const app = readFileSync(
+    path.resolve(__dirname, "../../webview/src/App.tsx"),
+    "utf8",
+  );
+  assert.match(controller, /vscode\.workspace\.workspaceFolders/);
+  assert.match(controller, /defaultRepoIds = pickDefaultRepoIds\(repos\)/);
+  assert.match(app, /const repoTouchedRef = useRef\(false\)/);
+  assert.match(app, /const defaultRepoIds = snapshot\?\.defaultRepoIds \?\? \[\]/);
+  assert.match(app, /setRepoIds\(defaultRepoIds\)/);
+});

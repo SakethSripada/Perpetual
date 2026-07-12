@@ -126,7 +126,9 @@ export default function App() {
   }>({ threadId: null, pendingCount: 0 });
   const runControlsKeyRef = useRef<string>("");
   const handoffRef = useRef<Record<string, string>>({});
-  const repoTouchedRef = useRef(!!persisted.repoTouched);
+  // Repository choices are session UI state, not a reason to suppress the
+  // current VS Code workspace defaults after the webview is reopened.
+  const repoTouchedRef = useRef(false);
   const repoInitKeyRef = useRef("");
   const pendingRepoAssignmentRef = useRef<PendingRepoAssignment | null>(null);
 
@@ -372,10 +374,15 @@ export default function App() {
       }
       setRepoIds(nextRepoIds);
     } else if (!selectedThread) {
-      const repoKey = snapshot.repos.map((repo) => repo.id).join("|");
+      const repoKey = [
+        snapshot.repos.map((repo) => repo.id).join("|"),
+        (snapshot.defaultRepoIds ?? []).join("|"),
+      ].join("::");
       if (!repoTouchedRef.current && repoInitKeyRef.current !== repoKey) {
         repoInitKeyRef.current = repoKey;
-        setRepoIds(snapshot.defaultRepoIds ?? []);
+        const nextRepoIds = snapshot.defaultRepoIds ?? [];
+        repoIdsRef.current = nextRepoIds;
+        setRepoIds(nextRepoIds);
       }
     }
   }, [
@@ -781,6 +788,11 @@ export default function App() {
 
   const newSession = () => {
     pendingRepoAssignmentRef.current = null;
+    repoTouchedRef.current = false;
+    repoInitKeyRef.current = "";
+    const defaultRepoIds = snapshot?.defaultRepoIds ?? [];
+    repoIdsRef.current = defaultRepoIds;
+    setRepoIds(defaultRepoIds);
     setHistoryOpen(false);
     setPending([]);
     setWelcomeLeaving(false);

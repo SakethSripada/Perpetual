@@ -1394,19 +1394,35 @@ function pickSelectedThread(
 function pickDefaultRepoIds(
   repos: Array<{ id: string; local_path: string | null }>,
 ): string[] {
-  if (repos.length === 1) return [repos[0].id];
+  const workspacePaths = (vscode.workspace.workspaceFolders ?? []).map((folder) =>
+    comparablePath(folder.uri.fsPath),
+  );
   const activePath = vscode.window.activeTextEditor?.document.uri.fsPath;
-  if (!activePath) return [];
-  const normalizedActive = path.normalize(activePath);
+  const contextPaths = workspacePaths.length
+    ? workspacePaths
+    : activePath
+      ? [comparablePath(activePath)]
+      : [];
+  if (contextPaths.length === 0 && repos.length === 1) return [repos[0].id];
+
   const matches = repos.filter((repo) => {
     if (!repo.local_path) return false;
-    const root = path.normalize(repo.local_path);
-    return (
-      normalizedActive === root ||
-      normalizedActive.startsWith(`${root}${path.sep}`)
+    const root = comparablePath(repo.local_path);
+    return contextPaths.some(
+      (contextPath) =>
+        isWithinPath(root, contextPath) || isWithinPath(contextPath, root),
     );
   });
-  return matches.length === 1 ? [matches[0].id] : [];
+  return matches.map((repo) => repo.id);
+}
+
+function comparablePath(value: string): string {
+  const normalized = path.normalize(value);
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function isWithinPath(parent: string, child: string): boolean {
+  return parent === child || child.startsWith(`${parent}${path.sep}`);
 }
 
 function resolveSubmittedRepoIds(
