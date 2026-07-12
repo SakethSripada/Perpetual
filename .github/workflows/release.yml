@@ -103,9 +103,11 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-    # Point this at a protected environment holding VSCE_PAT so a release needs a
-    # human approval before it reaches the Marketplace.
+      contents: write # create the GitHub release
+      id-token: write # mint the OIDC token Entra federates against
+    # A protected environment gates the release on a human approval, and scopes
+    # the federated credential: the Entra subject below names this environment, so
+    # a workflow run outside it cannot obtain a publishing token.
     environment: marketplace
 
     steps:
@@ -125,15 +127,23 @@ jobs:
           merge-multiple: true
           path: vsix
 
+      # Microsoft Entra ID instead of a Personal Access Token: GitHub mints a
+      # short-lived OIDC token, Entra trades it for an access token, and nothing
+      # long-lived is ever stored in this repository. PATs are retired on
+      # 2026-12-01 anyway. These three values are identifiers, not secrets, but
+      # they live in the environment so the identity can be rotated without a
+      # code change. See PUBLISHING.md for the one-time Azure setup.
+      - name: Sign in to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
       # All six targets go up under one version, so the Marketplace serves each
       # user the build for their platform.
-      # VSCE_PAT is an Azure DevOps token; Microsoft retires PATs on 2026-12-01,
-      # after which this switches to `--azure-credential` with an OIDC federated
-      # identity (see PUBLISHING.md).
       - name: Publish
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: npx vsce publish --packagePath $(ls vsix/*.vsix | tr '\n' ' ')
+        run: npx vsce publish --azure-credential --packagePath $(ls vsix/*.vsix | tr '\n' ' ')
 
       - name: Attach VSIXes to the GitHub release
         uses: softprops/action-gh-release@v2
