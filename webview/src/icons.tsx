@@ -93,10 +93,11 @@ export function BrandMark({ className, size = 24 }: { className?: string; size?:
       aria-hidden="true"
     >
       <path
-        d="M12 5.8V18.2M6.55 16.9 12 12l5.45 4.9M6.55 7.1 12 12l5.45-4.9"
+        d="M12 3.9V18.25M5.1 18.25 12 12l6.9 6.25M6.55 7.1 12 12l5.45-4.9"
         stroke="currentColor"
         strokeWidth="2.1"
         strokeLinecap="round"
+        strokeLinejoin="round"
       />
       <circle cx="12" cy="3.9" r="2.25" fill="currentColor" />
       <circle cx="5.1" cy="18.25" r="2.25" fill="currentColor" />

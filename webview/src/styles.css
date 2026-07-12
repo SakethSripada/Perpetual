@@ -577,7 +577,11 @@ textarea {
   justify-content: center;
   width: clamp(160px, 32vw, 280px);
   height: clamp(160px, 32vw, 280px);
-  color: color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
+  /* Opaque paint + element opacity: the mark's strokes and circles overlap, and a
+     translucent currentColor would composite each one separately and brighten the
+     joints. Element opacity flattens the whole mark first, so it reads as one shape. */
+  color: var(--vscode-foreground);
+  opacity: 0.22;
   background: transparent;
 }
 .empty-mark svg {
