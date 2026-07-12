@@ -128,11 +128,33 @@ fn executable_path(path: &Path) -> Option<PathBuf> {
     if !is_executable_file(path) {
         return None;
     }
-    fs::canonicalize(path).ok().or_else(|| {
-        path.is_absolute()
-            .then(|| path.to_path_buf())
-            .or_else(|| std::env::current_dir().ok().map(|cwd| cwd.join(path)))
-    })
+    fs::canonicalize(path)
+        .ok()
+        .map(strip_verbatim_prefix)
+        .or_else(|| {
+            path.is_absolute()
+                .then(|| path.to_path_buf())
+                .or_else(|| std::env::current_dir().ok().map(|cwd| cwd.join(path)))
+        })
+}
+
+/// On Windows `fs::canonicalize` returns an extended-length path (`\\?\C:\...`).
+/// Neither cmd nor PowerShell will launch one, so reduce it back to its ordinary
+/// form. Everything else passes through untouched.
+fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let Some(rest) = path.to_str().and_then(|raw| raw.strip_prefix(r"\\?\")) else {
+            return path;
+        };
+        return match rest.strip_prefix(r"UNC\") {
+            Some(share) => PathBuf::from(format!(r"\\{share}")),
+            None => PathBuf::from(rest),
+        };
+    }
+
+    #[cfg(not(windows))]
+    path
 }
 
 fn candidate_names(bin: &str) -> Vec<String> {
@@ -143,7 +165,6 @@ fn candidate_names(bin: &str) -> Vec<String> {
             return vec![bin.to_string()];
         }
 
-        let mut names = vec![bin.to_string()];
         let mut extensions = std::env::var_os("PATHEXT")
             .map(|value| {
                 value
@@ -161,9 +182,15 @@ fn candidate_names(bin: &str) -> Vec<String> {
                 extensions.push(ext.to_string());
             }
         }
-        for ext in extensions {
-            names.push(format!("{bin}{ext}"));
-        }
+
+        let mut names: Vec<String> = extensions
+            .into_iter()
+            .map(|ext| format!("{bin}{ext}"))
+            .collect();
+        // Least preferred: npm and friends install a POSIX shell shim under the
+        // bare name (`codex`) beside the Windows launchers (`codex.cmd`). The shim
+        // is a bash script, so it must never win over a real launcher.
+        names.push(bin.to_string());
         return names;
     }
 
@@ -199,22 +226,31 @@ fn find_in_dir(dir: &Path, bin: &str) -> Option<PathBuf> {
         let Ok(entries) = fs::read_dir(dir) else {
             return None;
         };
+        // Directory order is arbitrary, so rank every match by its position in
+        // `names` rather than taking the first one we happen to walk past.
+        let mut best: Option<(usize, PathBuf)> = None;
         for entry in entries.flatten() {
             let path = entry.path();
             let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
                 continue;
             };
-            if names
+            let Some(rank) = names
                 .iter()
-                .any(|candidate| candidate.eq_ignore_ascii_case(name))
-            {
-                if let Some(path) = executable_path(&path) {
-                    return Some(path);
-                }
+                .position(|candidate| candidate.eq_ignore_ascii_case(name))
+            else {
+                continue;
+            };
+            if best.as_ref().is_some_and(|(seen, _)| *seen <= rank) {
+                continue;
+            }
+            if let Some(path) = executable_path(&path) {
+                best = Some((rank, path));
             }
         }
+        return best.map(|(_, path)| path);
     }
 
+    #[cfg(not(windows))]
     None
 }
 
@@ -400,6 +436,13 @@ mod tests {
         fs::write(path, "").unwrap();
     }
 
+    /// The resolved form callers should see: canonical, minus any `\\?\` prefix.
+    fn expected_path(path: &Path) -> PathBuf {
+        fs::canonicalize(path)
+            .map(strip_verbatim_prefix)
+            .unwrap_or_else(|_| path.to_path_buf())
+    }
+
     #[test]
     fn collects_nested_codex_extension_binary() {
         let root = std::env::temp_dir().join(format!("agentmanager-detect-{}", std::process::id()));
@@ -416,7 +459,7 @@ mod tests {
             &mut found,
         );
 
-        assert_eq!(found, vec![fs::canonicalize(&codex).unwrap_or(codex)]);
+        assert_eq!(found, vec![expected_path(&codex)]);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -436,6 +479,37 @@ mod tests {
         assert!(names
             .iter()
             .any(|name| name.eq_ignore_ascii_case("codex.ps1")));
+        // The bare npm shell shim is a last resort, never a first pick.
+        assert_eq!(names.last().map(String::as_str), Some("codex"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_launcher_beats_bare_npm_shim() {
+        let root =
+            std::env::temp_dir().join(format!("agentmanager-detect-shim-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        // Mirrors an npm global install: a bash shim next to the Windows launchers.
+        make_executable(&root.join("codex"));
+        let launcher = root.join("codex.cmd");
+        make_executable(&launcher);
+
+        assert_eq!(find_in_dir(&root, "codex"), Some(expected_path(&launcher)));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn canonical_paths_drop_the_verbatim_prefix() {
+        let root =
+            std::env::temp_dir().join(format!("agentmanager-detect-vb-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let codex = root.join("codex.cmd");
+        make_executable(&codex);
+
+        let resolved = executable_path(&codex).unwrap();
+        assert!(!resolved.to_string_lossy().starts_with(r"\\?\"));
+        let _ = fs::remove_dir_all(root);
     }
 
     #[cfg(windows)]
@@ -450,7 +524,7 @@ mod tests {
         let mut found = Vec::new();
         collect_named_binaries(&root, "codex", 1, &mut found);
 
-        assert_eq!(found, vec![fs::canonicalize(&codex).unwrap_or(codex)]);
+        assert_eq!(found, vec![expected_path(&codex)]);
         let _ = fs::remove_dir_all(root);
     }
 }

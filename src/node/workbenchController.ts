@@ -854,13 +854,8 @@ export class WorkbenchController implements vscode.Disposable {
       return;
     }
     const terminal = vscode.window.createTerminal(`${labelAgent(agent)} Sign In`);
-    const quoted = shellQuote(binary);
-    const command =
-      agent === "codex"
-        ? `${quoted} login`
-        : `${quoted} auth login || ${quoted} login`;
     terminal.show(true);
-    terminal.sendText(command, true);
+    terminal.sendText(signInCommand(agent, binary, vscode.env.shell), true);
     this.notice(reply, `Opened ${labelAgent(agent)} sign-in in a terminal.`);
   }
 
@@ -1699,7 +1694,50 @@ function formatError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function shellQuote(value: string): string {
+export function isPowerShell(shell: string | undefined): boolean {
+  const name = (shell ?? "")
+    .toLowerCase()
+    .replace(/\\/g, "/")
+    .split("/")
+    .pop();
+  return (
+    name === "powershell.exe" ||
+    name === "pwsh.exe" ||
+    name === "powershell" ||
+    name === "pwsh"
+  );
+}
+
+/**
+ * The sign-in command as the terminal's own shell will parse it. The shell is
+ * whatever profile VS Code launches (`vscode.env.shell`), not whatever the
+ * platform implies: a Windows user may well be sitting in git bash.
+ */
+export function signInCommand(
+  agent: AgentKind,
+  binary: string,
+  shell: string | undefined,
+): string {
+  const powershell = isPowerShell(shell);
+  const quoted = shellQuote(binary, powershell);
+  // PowerShell parses a leading quoted string as a string literal, so an
+  // executable path only runs when handed to the call operator.
+  const run = (args: string) =>
+    powershell ? `& ${quoted} ${args}` : `${quoted} ${args}`;
+
+  if (agent === "codex") {
+    return run("login");
+  }
+  // Windows PowerShell 5.1 has no `||` operator, so branch on the exit code.
+  return powershell
+    ? `${run("auth login")}; if ($LASTEXITCODE -ne 0) { ${run("login")} }`
+    : `${run("auth login")} || ${run("login")}`;
+}
+
+function shellQuote(value: string, powershell: boolean): string {
+  if (powershell) {
+    return `'${value.replace(/'/g, "''")}'`;
+  }
   if (process.platform === "win32") {
     return `"${value.replace(/"/g, '\\"')}"`;
   }
