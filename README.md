@@ -129,6 +129,7 @@ The repository is intentionally split into small Rust crates:
 ```text
 src/                 Extension host and daemon client
 webview/              React workbench UI
+landing/              Standalone Perpetual marketing site
 crates/               Rust daemon workspace
 media/                Extension icons and product preview
 scripts/              Build, packaging, and daemon lifecycle helpers
