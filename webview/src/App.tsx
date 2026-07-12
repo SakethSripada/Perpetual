@@ -1,4 +1,5 @@
 import {
+  Fragment,
   memo,
   useEffect,
   useLayoutEffect,
@@ -1220,17 +1221,13 @@ function TranscriptItemView({
     );
   }
   return (
-    <article className={`transition-row ${item.tone}`}>
-      <span className="activity-icon">
+    <div className={`transition-row ${item.tone}`} role="status">
+      <span className="transition-body">
         <Icon name={item.tone === "danger" ? "alert" : item.tone === "warning" ? "clock" : "refresh"} />
+        <span className="transition-text">{item.text}</span>
+        {item.detail && <span className="transition-detail">{item.detail}</span>}
       </span>
-      <div className="activity-main">
-        <div className="activity-title">
-          <span>{item.text}</span>
-        </div>
-        {item.detail && <small>{item.detail}</small>}
-      </div>
-    </article>
+    </div>
   );
 }
 
@@ -1617,7 +1614,12 @@ function Popover(props: {
     reposition();
     window.addEventListener("resize", reposition);
     window.addEventListener("scroll", reposition, true);
+    // Menus whose content swaps (drilling into the model list) change height
+    // after they are placed, so re-anchor instead of letting them grow off-screen.
+    const observer = new ResizeObserver(() => reposition());
+    if (menuRef.current) observer.observe(menuRef.current);
     return () => {
+      observer.disconnect();
       window.removeEventListener("resize", reposition);
       window.removeEventListener("scroll", reposition, true);
     };
@@ -1752,14 +1754,61 @@ function Dropdown(props: {
   );
 }
 
-function ModelPicker(props: {
+function ModelField(props: {
   agent: AgentKind;
   snapshot: WorkbenchSnapshot | null;
   localProvider: LocalModelProvider | null;
   value: string;
-  onChange(value: string): void;
+  onOpen(): void;
 }) {
-  const [open, setOpen] = useState(false);
+  const options = useMemo(
+    () =>
+      modelOptions(
+        props.agent,
+        props.snapshot,
+        props.localProvider,
+        props.value,
+      ),
+    [props.agent, props.snapshot, props.localProvider, props.value],
+  );
+  const selected = options.find((option) =>
+    modelIdsEqual(option.value, props.value),
+  );
+  return (
+    <div className="field">
+      <span>Model</span>
+      <button
+        type="button"
+        className="model-trigger"
+        aria-haspopup="listbox"
+        onClick={props.onOpen}
+      >
+        <span className="model-trigger-main">
+          <span>
+            {selected?.label ??
+              (props.value ? prettyModel(props.value) : "Default model")}
+          </span>
+          <small>{selected?.source ?? "installed CLI default"}</small>
+        </span>
+        <Icon name="caret" />
+      </button>
+    </div>
+  );
+}
+
+/*
+ * The model list is a drill-in, not a disclosure inside the run options: nesting
+ * a scrolling list inside the scrolling popover left it narrow and double-scrolled.
+ * Taking over the whole popover gives the list the full width and a single scroller.
+ */
+function ModelBrowser(props: {
+  agent: AgentKind;
+  snapshot: WorkbenchSnapshot | null;
+  localProvider: LocalModelProvider | null;
+  value: string;
+  onSelect(value: string): void;
+  onBack(): void;
+}) {
   const [query, setQuery] = useState("");
   const options = useMemo(
     () =>
@@ -1772,9 +1821,6 @@ function ModelPicker(props: {
     [props.agent, props.snapshot, props.localProvider, props.value],
   );
   const normalizedQuery = query.trim().toLowerCase();
-  const selected = options.find((option) =>
-    modelIdsEqual(option.value, props.value),
-  );
   const filtered = normalizedQuery
     ? options.filter(
         (option) =>
@@ -1786,57 +1832,57 @@ function ModelPicker(props: {
   const custom = query.trim();
   const canUseCustom =
     !!custom && !options.some((option) => modelIdsEqual(option.value, custom));
-
-  useEffect(() => {
-    if (open) setQuery("");
-  }, [open]);
+  const groups: { source: string; options: PickerModelOption[] }[] = [];
+  for (const option of filtered) {
+    const group = groups.find((entry) => entry.source === option.source);
+    if (group) group.options.push(option);
+    else groups.push({ source: option.source, options: [option] });
+  }
 
   return (
-    <div className="field">
-      <span>
-        Model
-        {props.value.trim() &&
-          prettyModel(props.value) !== props.value.trim() && (
-            <em className="field-value">{prettyModel(props.value)}</em>
-          )}
-      </span>
-      <button
-        type="button"
-        className="model-trigger"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-      >
-        <span>
-          {selected?.label ??
-            (props.value ? prettyModel(props.value) : "Default model")}
-        </span>
-        <Icon name="caret" />
-      </button>
-      {open && (
-        <div className="menu model-menu model-menu-inline" role="listbox">
-          <input
-            className="model-search"
-            autoFocus
-            value={query}
-            placeholder="Search or type a model id"
-            onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && custom) {
-                props.onChange(custom);
-                setOpen(false);
-              }
-            }}
-          />
+    <div className="model-browser">
+      <div className="model-browser-head">
+        <button
+          type="button"
+          className="model-back"
+          aria-label="Back to run options"
+          onClick={props.onBack}
+        >
+          <Icon name="caret" />
+        </button>
+        <strong>Model</strong>
+      </div>
+      <input
+        className="model-search"
+        autoFocus
+        value={query}
+        placeholder="Search or type a model id"
+        onChange={(event) => setQuery(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && custom) props.onSelect(custom);
+        }}
+      />
+      <div className="model-list" role="listbox">
+        {canUseCustom && (
+          <button
+            type="button"
+            className="menu-item"
+            onClick={() => props.onSelect(custom)}
+          >
+            <Icon name="plus" />
+            <span className="history-text">
+              <span>{custom}</span>
+              <small>Use custom model id</small>
+            </span>
+          </button>
+        )}
+        {!normalizedQuery && (
           <button
             type="button"
             role="option"
             aria-selected={!props.value.trim()}
             className={!props.value.trim() ? "menu-item selected" : "menu-item"}
-            onClick={() => {
-              props.onChange("");
-              setOpen(false);
-            }}
+            onClick={() => props.onSelect("")}
           >
             <span className="history-text">
               <span>Default model</span>
@@ -1844,49 +1890,35 @@ function ModelPicker(props: {
             </span>
             {!props.value.trim() && <Icon name="check" />}
           </button>
-          {canUseCustom && (
-            <button
-              type="button"
-              className="menu-item"
-              onClick={() => {
-                props.onChange(custom);
-                setOpen(false);
-              }}
-            >
-              <Icon name="plus" />
-              <span className="history-text">
-                <span>{custom}</span>
-                <small>Use custom model id</small>
-              </span>
-            </button>
-          )}
-          {filtered.map((option) => (
-            <button
-              key={`${option.source}:${option.value}`}
-              type="button"
-              role="option"
-              aria-selected={modelIdsEqual(option.value, props.value)}
-              className={
-                modelIdsEqual(option.value, props.value)
-                  ? "menu-item selected"
-                  : "menu-item"
-              }
-              onClick={() => {
-                props.onChange(option.value);
-                setOpen(false);
-              }}
-            >
-              <span className="history-text">
-                <span>{option.label}</span>
-                <small>{option.source}</small>
-              </span>
-              {modelIdsEqual(option.value, props.value) && (
-                <Icon name="check" />
-              )}
-            </button>
-          ))}
-        </div>
-      )}
+        )}
+        {groups.map((group) => (
+          <Fragment key={group.source}>
+            <div className="menu-head">{group.source}</div>
+            {group.options.map((option) => {
+              const active = modelIdsEqual(option.value, props.value);
+              return (
+                <button
+                  key={`${group.source}:${option.value}`}
+                  type="button"
+                  role="option"
+                  aria-selected={active}
+                  className={active ? "menu-item selected" : "menu-item"}
+                  onClick={() => props.onSelect(option.value)}
+                >
+                  <span className="history-text">
+                    <span>{option.label}</span>
+                    <small>{option.value}</small>
+                  </span>
+                  {active && <Icon name="check" />}
+                </button>
+              );
+            })}
+          </Fragment>
+        ))}
+        {filtered.length === 0 && !canUseCustom && (
+          <div className="menu-empty">No matching models</div>
+        )}
+      </div>
     </div>
   );
 }
@@ -2140,6 +2172,7 @@ type ComposerProps = {
 function Composer(props: ComposerProps) {
   const [reposOpen, setReposOpen] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
+  const [modelOpen, setModelOpen] = useState(false);
   const [permOpen, setPermOpen] = useState(false);
   // The draft lives here, not in App, so each keystroke re-renders only the
   // composer — never the transcript. App receives the text only on submit.
@@ -2502,7 +2535,10 @@ function Composer(props: ComposerProps) {
 
             <Popover
               open={optionsOpen}
-              setOpen={setOptionsOpen}
+              setOpen={(open) => {
+                setOptionsOpen(open);
+                if (!open) setModelOpen(false);
+              }}
               align="right"
               placement="above"
               trigger={({ toggle, ref }) => (
@@ -2519,140 +2555,154 @@ function Composer(props: ComposerProps) {
               )}
             >
               <div className="menu options-menu">
-                <div className="menu-head">Run options</div>
-                <ModelPicker
-                  agent={props.agent}
-                  snapshot={props.snapshot}
-                  localProvider={props.localProvider || null}
-                  value={props.model}
-                  onChange={(nextModel) => {
-                    props.setModel(nextModel);
-                    props.setReasoning(
-                      reasoningAfterModelChange(
-                        props.agent,
-                        props.snapshot,
-                        nextModel,
-                        props.reasoning,
-                      ),
-                    );
-                  }}
-                />
-                <label className="field">
-                  <span>Reasoning effort</span>
-                  <select
-                    value={props.reasoning}
-                    onChange={(event) => props.setReasoning(event.target.value)}
-                  >
-                    {reasoningOptions(
-                      props.agent,
-                      props.snapshot,
-                      props.model,
-                    ).map(
-                      (option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ),
-                    )}
-                  </select>
-                </label>
-                <button
-                  type="button"
-                  className={`sandbox-row${sandboxOn ? " on" : ""}${sandboxAllowed ? "" : " disabled"}`}
-                  disabled={!sandboxAllowed}
-                  aria-pressed={sandboxOn}
-                  title={
-                    sandboxAllowed
-                      ? "Run in an isolated Docker sandbox"
-                      : "Sandbox is available for Codex"
-                  }
-                  onClick={() =>
-                    props.setBackend(sandboxOn ? "host" : "docker_sandbox")
-                  }
-                >
-                  <Icon name={sandboxOn ? "cube" : "cubeOff"} />
-                  <span>Docker sandbox</span>
-                  <span className="sandbox-state">
-                    {sandboxOn ? "On" : "Off"}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  className={`sandbox-row${localOn ? " on" : ""}${localAllowed ? "" : " disabled"}`}
-                  disabled={!localAllowed}
-                  aria-pressed={localOn}
-                  title={
-                    localAllowed
-                      ? "Run Codex against a local Ollama or LM Studio model"
-                      : "Local model runs use Codex"
-                  }
-                  onClick={() => {
-                    if (localOn) {
-                      props.setLocalProvider("");
-                      props.setLocalBaseUrl("");
-                    } else {
-                      const provider =
-                        props.snapshot?.defaults.local_provider ?? "ollama";
-                      props.setLocalProvider(provider);
-                      props.setLocalBaseUrl(
-                        props.snapshot?.defaults.local_base_url ??
-                          defaultLocalBaseUrl(provider),
+                {modelOpen ? (
+                  <ModelBrowser
+                    agent={props.agent}
+                    snapshot={props.snapshot}
+                    localProvider={props.localProvider || null}
+                    value={props.model}
+                    onBack={() => setModelOpen(false)}
+                    onSelect={(nextModel) => {
+                      props.setModel(nextModel);
+                      props.setReasoning(
+                        reasoningAfterModelChange(
+                          props.agent,
+                          props.snapshot,
+                          nextModel,
+                          props.reasoning,
+                        ),
                       );
-                    }
-                  }}
-                >
-                  <Icon name="terminal" />
-                  <span>Local model</span>
-                  <span className="sandbox-state">
-                    {localOn ? labelLocalProvider(props.localProvider) : "Off"}
-                  </span>
-                </button>
-                {localOn && (
+                      setModelOpen(false);
+                    }}
+                  />
+                ) : (
                   <>
+                    <div className="menu-head">Run options</div>
+                    <ModelField
+                      agent={props.agent}
+                      snapshot={props.snapshot}
+                      localProvider={props.localProvider || null}
+                      value={props.model}
+                      onOpen={() => setModelOpen(true)}
+                    />
                     <label className="field">
-                      <span>Local provider</span>
+                      <span>Reasoning effort</span>
                       <select
-                        value={props.localProvider}
-                        onChange={(event) => {
-                          const provider = event.target
-                            .value as LocalModelProvider;
-                          props.setLocalProvider(provider);
-                          props.setLocalBaseUrl(defaultLocalBaseUrl(provider));
-                        }}
+                        value={props.reasoning}
+                        onChange={(event) => props.setReasoning(event.target.value)}
                       >
-                        <option value="ollama">Ollama</option>
-                        <option value="lm_studio">LM Studio</option>
+                        {reasoningOptions(
+                          props.agent,
+                          props.snapshot,
+                          props.model,
+                        ).map(
+                          (option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ),
+                        )}
                       </select>
                     </label>
-                    <label className="field">
-                      <span>Local endpoint</span>
-                      <input
-                        value={props.localBaseUrl}
-                        placeholder={localBaseUrl}
-                        onChange={(event) =>
-                          props.setLocalBaseUrl(event.target.value)
+                    <button
+                      type="button"
+                      className={`sandbox-row${sandboxOn ? " on" : ""}${sandboxAllowed ? "" : " disabled"}`}
+                      disabled={!sandboxAllowed}
+                      aria-pressed={sandboxOn}
+                      title={
+                        sandboxAllowed
+                          ? "Run in an isolated Docker sandbox"
+                          : "Sandbox is available for Codex"
+                      }
+                      onClick={() =>
+                        props.setBackend(sandboxOn ? "host" : "docker_sandbox")
+                      }
+                    >
+                      <Icon name={sandboxOn ? "cube" : "cubeOff"} />
+                      <span>Docker sandbox</span>
+                      <span className="sandbox-state">
+                        {sandboxOn ? "On" : "Off"}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`sandbox-row${localOn ? " on" : ""}${localAllowed ? "" : " disabled"}`}
+                      disabled={!localAllowed}
+                      aria-pressed={localOn}
+                      title={
+                        localAllowed
+                          ? "Run Codex against a local Ollama or LM Studio model"
+                          : "Local model runs use Codex"
+                      }
+                      onClick={() => {
+                        if (localOn) {
+                          props.setLocalProvider("");
+                          props.setLocalBaseUrl("");
+                        } else {
+                          const provider =
+                            props.snapshot?.defaults.local_provider ?? "ollama";
+                          props.setLocalProvider(provider);
+                          props.setLocalBaseUrl(
+                            props.snapshot?.defaults.local_base_url ??
+                              defaultLocalBaseUrl(provider),
+                          );
                         }
-                      />
-                    </label>
+                      }}
+                    >
+                      <Icon name="terminal" />
+                      <span>Local model</span>
+                      <span className="sandbox-state">
+                        {localOn ? labelLocalProvider(props.localProvider) : "Off"}
+                      </span>
+                    </button>
+                    {localOn && (
+                      <>
+                        <label className="field">
+                          <span>Local provider</span>
+                          <select
+                            value={props.localProvider}
+                            onChange={(event) => {
+                              const provider = event.target
+                                .value as LocalModelProvider;
+                              props.setLocalProvider(provider);
+                              props.setLocalBaseUrl(defaultLocalBaseUrl(provider));
+                            }}
+                          >
+                            <option value="ollama">Ollama</option>
+                            <option value="lm_studio">LM Studio</option>
+                          </select>
+                        </label>
+                        <label className="field">
+                          <span>Local endpoint</span>
+                          <input
+                            value={props.localBaseUrl}
+                            placeholder={localBaseUrl}
+                            onChange={(event) =>
+                              props.setLocalBaseUrl(event.target.value)
+                            }
+                          />
+                        </label>
+                      </>
+                    )}
+                    {sandboxOn && sandbox && !sandbox.authenticated && (
+                      <button
+                        type="button"
+                        className="menu-item"
+                        onClick={() => props.onSandboxLogin(false)}
+                      >
+                        Sign in to Sandbox
+                      </button>
+                    )}
+                    {sandboxOn && sandbox && !sandbox.codex_authenticated && (
+                      <button
+                        type="button"
+                        className="menu-item"
+                        onClick={() => props.onSandboxLogin(true)}
+                      >
+                        Sign in to Codex Sandbox
+                      </button>
+                    )}
                   </>
-                )}
-                {sandboxOn && sandbox && !sandbox.authenticated && (
-                  <button
-                    type="button"
-                    className="menu-item"
-                    onClick={() => props.onSandboxLogin(false)}
-                  >
-                    Sign in to Sandbox
-                  </button>
-                )}
-                {sandboxOn && sandbox && !sandbox.codex_authenticated && (
-                  <button
-                    type="button"
-                    className="menu-item"
-                    onClick={() => props.onSandboxLogin(true)}
-                  >
-                    Sign in to Codex Sandbox
-                  </button>
                 )}
               </div>
             </Popover>
