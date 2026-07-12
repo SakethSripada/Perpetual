@@ -88,6 +88,14 @@ export function buildTranscriptItems(input: {
   const items: TranscriptItem[] = [];
   const transitionIds = new Set<string>();
   const noAssistantUserTexts = new Set<string>();
+  const pending = input.pending ?? [];
+  const pendingIds = new Set(pending.map((message) => message.id));
+  // Where each optimistic bubble sits once its persisted twin exists. The view
+  // keeps the bubble and hides the twin (it animates the first turn), so the
+  // bubble has to inherit the twin's place in the conversation — otherwise
+  // anything anchored to that message, like a rate-limit notice, sorts above the
+  // bubble and then jumps below it when the bubble is finally dropped.
+  const sortKeys = new Map<string, number>();
   let suppressedUsageLimit = false;
   let limitTransitionAdded = false;
 
@@ -97,6 +105,11 @@ export function buildTranscriptItems(input: {
       continue;
     }
     if (event.role === "user") {
+      const clientId = eventClientMessageId(event);
+      if (clientId && pendingIds.has(clientId)) {
+        sortKeys.set(clientId, Date.parse(event.ts) || 0);
+        continue;
+      }
       const text = publicUserMessage(event.text ?? "").trim();
       if (text && noAssistantUserTexts.has(text)) continue;
       if (text) noAssistantUserTexts.add(text);
@@ -161,7 +174,7 @@ export function buildTranscriptItems(input: {
     items.push({ type: "queued", id: queued.id, message: queued.message });
   }
 
-  for (const message of input.pending ?? []) {
+  for (const message of pending) {
     items.push({
       type: "pending",
       id: message.id,
@@ -170,9 +183,11 @@ export function buildTranscriptItems(input: {
     });
   }
 
-  const anchors = sendTimeAnchors(input.activities, input.events);
+  for (const [id, key] of sendTimeAnchors(input.activities, input.events)) {
+    sortKeys.set(id, key);
+  }
   return items.sort(
-    (a, b) => itemTs(a, input, anchors) - itemTs(b, input, anchors),
+    (a, b) => itemTs(a, input, sortKeys) - itemTs(b, input, sortKeys),
   );
 }
 
@@ -465,12 +480,14 @@ function itemTs(
     activities: ActivityEvent[];
     cloudRuns: CloudRun[];
   },
-  anchors: Map<string, number>,
+  sortKeys: Map<string, number>,
 ): number {
   if (item.type === "event") return Date.parse(item.event.ts) || 0;
   if (item.type === "queued") return QUEUED_RANK;
-  if (item.type === "pending") return PENDING_RANK;
-  const anchored = anchors.get(item.id);
+  // An optimistic bubble holds its persisted twin's place once that lands, and
+  // trails the transcript until then.
+  if (item.type === "pending") return sortKeys.get(item.id) ?? PENDING_RANK;
+  const anchored = sortKeys.get(item.id);
   if (anchored !== undefined) return anchored;
   const activity = input.activities.find((entry) => `activity-${entry.id}` === item.id);
   if (activity) return Date.parse(activity.ts) || 0;

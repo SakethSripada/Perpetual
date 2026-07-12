@@ -16,7 +16,6 @@ import type {
   AgentThreadEvent,
   ApprovalDecision,
   ApprovalRequest,
-  AvailabilityState,
   CloudPolicy,
   CloudRun,
   ExecutionBackend,
@@ -135,7 +134,6 @@ export default function App() {
     pendingCount: number;
   }>({ threadId: null, pendingCount: 0 });
   const runControlsKeyRef = useRef<string>("");
-  const handoffRef = useRef<Record<string, string>>({});
   // Repository choices are session UI state, not a reason to suppress the
   // current VS Code workspace defaults after the webview is reopened.
   const repoTouchedRef = useRef(false);
@@ -437,38 +435,6 @@ export default function App() {
     setRepoIds(next);
   }, [snapshot?.repos]);
 
-  useEffect(() => {
-    if (!selectedThread) return;
-    const fallback = selectedThread.fallback_agent;
-    const active = selectedThread.active_agent;
-    const original = selectedThread.original_agent;
-    const isFallbackActive =
-      !!fallback &&
-      active === fallback &&
-      (selectedThread.handoff_state === "fallback_active" || !!original);
-    const key = isFallbackActive
-      ? `${selectedThread.id}:${original ?? "agent"}:${fallback}:${selectedThread.model ?? ""}`
-      : `${selectedThread.id}:none`;
-    if (handoffRef.current[selectedThread.id] === key) return;
-    handoffRef.current[selectedThread.id] = key;
-    if (!isFallbackActive) return;
-    const modelNote =
-      selectedThread.original_model !== selectedThread.model
-        ? ` (${formatModelSwitch(selectedThread.original_model, selectedThread.model)})`
-        : "";
-    setNotice(
-      `Rate Limit reached, switched to ${labelAgent(fallback)}${modelNote}.`,
-    );
-  }, [
-    selectedThread?.id,
-    selectedThread?.active_agent,
-    selectedThread?.original_agent,
-    selectedThread?.fallback_agent,
-    selectedThread?.handoff_state,
-    selectedThread?.model,
-    selectedThread?.original_model,
-  ]);
-
   const onTranscriptScroll = () => {
     const el = transcriptRef.current;
     if (!el) return;
@@ -512,32 +478,9 @@ export default function App() {
     reviewOpen?.nonce,
   ]);
 
-  // Surface agent availability changes as a notice instead of an always-on badge.
-  const availabilityRef = useRef<Record<string, AvailabilityState>>({});
-  useEffect(() => {
-    if (!snapshot) return;
-    for (const status of snapshot.agents) {
-      const previous = availabilityRef.current[status.kind];
-      availabilityRef.current[status.kind] = status.availability;
-      if (!previous || previous === status.availability) continue;
-      if (status.availability === "limited") {
-        const activeFallback =
-          selectedThread?.fallback_agent &&
-          selectedThread.active_agent === selectedThread.fallback_agent;
-        if (activeFallback && status.kind === selectedThread?.original_agent)
-          continue;
-        const until = status.reset_at
-          ? ` until ${formatResetTime(status.reset_at)}`
-          : "";
-        setNotice(`${labelAgent(status.kind)} is rate limited${until}.`);
-      } else if (
-        previous === "limited" &&
-        status.availability === "available"
-      ) {
-        setNotice(`${labelAgent(status.kind)} is available again.`);
-      }
-    }
-  }, [snapshot]);
+  // Limits, fallbacks and switch-backs are reported in the transcript, next to the
+  // message they affected. Toasting them as well means the same news twice, in the
+  // place where it has the least context.
 
   const isRunning = selectedThread?.status === "running";
   const details = navigating ? undefined : snapshot?.details;
@@ -566,16 +509,6 @@ export default function App() {
       pending,
     ],
   );
-  const visibleTranscriptItems = useMemo(() => {
-    if (pending.length === 0) return transcriptItems;
-    const pendingIds = new Set(pending.map((item) => item.id));
-    return transcriptItems.filter(
-      (item) =>
-        item.type !== "event" ||
-        item.event.role !== "user" ||
-        !pendingIds.has(clientMessageIdForEvent(item.event) ?? ""),
-    );
-  }, [pending, transcriptItems]);
 
   // The composer owns its own draft text so typing never re-renders the
   // transcript; it hands us the final text here on submit.
@@ -944,7 +877,7 @@ export default function App() {
             />
           )}
           {(selectedThread || pending.length > 0) &&
-            visibleTranscriptItems.map((item) => (
+            transcriptItems.map((item) => (
               <TranscriptItemView
                 key={transcriptItemKey(item)}
                 item={item}
@@ -4579,15 +4512,6 @@ function prettyModel(value: string): string {
       /(^|[\s\-_])([a-z])/g,
       (_match, sep, ch) => sep + ch.toUpperCase(),
     );
-}
-
-function formatModelSwitch(
-  from: string | null | undefined,
-  to: string | null | undefined,
-): string {
-  const fromLabel = from ? prettyModel(from) : "default model";
-  const toLabel = to ? prettyModel(to) : "default model";
-  return `${fromLabel} -> ${toLabel}`;
 }
 
 function labelLocalProvider(provider: LocalModelProvider | ""): string {

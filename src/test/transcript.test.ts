@@ -199,6 +199,50 @@ test("the limit notice trails the optimistic message it belongs to, before the e
   );
 });
 
+test("the notice stays under the optimistic bubble after its twin persists", async () => {
+  const { buildTranscriptItems } = await loadTranscriptModule();
+  // On the first turn the view keeps the optimistic bubble and hides the persisted
+  // twin until assistant output starts. The bubble must hold the twin's place, or
+  // the notice anchors to the hidden event and renders above the bubble, then jumps
+  // below it once the bubble is dropped.
+  const items = buildTranscriptItems({
+    thread: {
+      id: "t1",
+      preferred_agent: "codex",
+      fallback_agent: "claude_code",
+      limit_reset_at: null,
+    },
+    queued: [],
+    cloudRuns: [],
+    pending: [{ id: "c1", text: "Ship the pink theme.", firstTurn: true }],
+    activities: [
+      {
+        id: "a1",
+        kind: "thread.fallback_started",
+        payload: { from: "codex", to: "claude_code", reason: "known_limited" },
+        ts: "2026-07-09T00:00:01Z",
+      },
+    ],
+    events: [
+      {
+        id: "u1",
+        role: "user",
+        kind: "user_message",
+        text: "Ship the pink theme.",
+        client_message_id: "c1",
+        data: { client_message_id: "c1" },
+        ts: "2026-07-09T00:00:02Z",
+      },
+    ],
+  });
+
+  // The persisted twin is not rendered twice, and the notice trails the bubble.
+  assert.deepEqual(
+    items.map((item) => item.type),
+    ["pending", "transition"],
+  );
+});
+
 test("a completed switch-back reports the outcome only", async () => {
   const { buildTranscriptItems } = await loadTranscriptModule();
   const items = buildTranscriptItems({
