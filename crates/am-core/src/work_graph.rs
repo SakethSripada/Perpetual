@@ -2277,7 +2277,7 @@ impl ContextPacketBuilder {
 
     fn finish(self) -> ContextPacket {
         let mut summary = String::new();
-        summary.push_str("AgentManager selected a bounded context packet for this run.\n");
+        summary.push_str("Perpetual selected a bounded context packet for this run.\n");
         summary.push_str(
             "Use these inclusions as orientation; ask or search when more detail is needed.\n",
         );
@@ -2301,7 +2301,7 @@ impl ContextPacketBuilder {
 
 fn render_context_packet_prompt(packet: &ContextPacket) -> String {
     let mut out = String::new();
-    out.push_str("Use this AgentManager context packet. It is intentionally bounded; do not assume omitted files or transcript history are irrelevant if you discover you need them.\n\n");
+    out.push_str("Use this Perpetual context packet. It is intentionally bounded; do not assume omitted files or transcript history are irrelevant if you discover you need them.\n\n");
     let used_tokens: i64 = packet
         .inclusions
         .iter()

@@ -984,7 +984,7 @@ impl AppCore {
         let mut committed = !settings.auto_commit; // treat "no commit requested" as already satisfied for the push gate
         if settings.auto_commit {
             let wt = worktree.clone();
-            let msg = format!("AgentManager: {title}");
+            let msg = format!("Perpetual: {title}");
             // Exclude the orchestrator-rendered context files from the commit.
             match tokio::task::spawn_blocking(move || {
                 am_vcs::commit_all_with_excludes(
@@ -1342,7 +1342,7 @@ fn build_prompt(task: &Task) -> String {
 
 fn build_resume_prompt(task: &Task) -> String {
     format!(
-        "Continue the AgentManager task \"{}\" in this worktree. Read TASK_CONTEXT.md and the agent-specific context file first, then proceed from the recorded progress and next actions.",
+        "Continue the Perpetual task \"{}\" in this worktree. Read TASK_CONTEXT.md and the agent-specific context file first, then proceed from the recorded progress and next actions.",
         task.title
     )
 }

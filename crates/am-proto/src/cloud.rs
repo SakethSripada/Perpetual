@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::AgentKind;
 
 /// Lifecycle of a provider-hosted cloud run (Codex Cloud task or Claude Code
-/// web session) that continues an AgentManager thread while the machine is
+/// web session) that continues an Perpetual thread while the machine is
 /// unavailable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -21,7 +21,7 @@ pub enum CloudRunStatus {
     Failed,
     /// The provider reclaimed the environment (e.g. inactivity expiry).
     Expired,
-    /// AgentManager pulled the results back and closed out the run.
+    /// Perpetual pulled the results back and closed out the run.
     Reclaimed,
 }
 

@@ -80,8 +80,8 @@ export class DaemonManager implements vscode.Disposable {
       cwd: this.context.extensionPath,
       env: {
         ...process.env,
-        AM_DATA_DIR: dataDir,
-        AM_DAEMON_PORT: "0",
+        PERPETUAL_DATA_DIR: dataDir,
+        PERPETUAL_DAEMON_PORT: "0",
       },
       stdio: "pipe",
       windowsHide: true,
@@ -166,7 +166,7 @@ export class DaemonManager implements vscode.Disposable {
 
   private resolveBinary(): string {
     const configured = vscode.workspace
-      .getConfiguration("agentmanager")
+      .getConfiguration("perpetual")
       .get<string>("daemonPath", "")
       .trim();
     if (configured) {
@@ -185,7 +185,7 @@ export class DaemonManager implements vscode.Disposable {
     }
 
     throw new Error(
-      `No bundled am-daemon binary found for ${target}. Run npm run build:daemon -- --target=${target} && npm run copy-daemon -- --target=${target}, or set agentmanager.daemonPath.`
+      `No bundled am-daemon binary found for ${target}. Run npm run build:daemon -- --target=${target} && npm run copy-daemon -- --target=${target}, or set perpetual.daemonPath.`
     );
   }
 }

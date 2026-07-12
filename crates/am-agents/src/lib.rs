@@ -1,4 +1,4 @@
-//! Agent adapter layer — the heart of AgentManager.
+//! Agent adapter layer — the heart of Perpetual.
 //!
 //! Every coding agent (Claude Code, Codex, …) is driven as a subprocess in
 //! headless/streaming mode and normalized into a single [`NormalizedEvent`]

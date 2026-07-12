@@ -338,7 +338,7 @@ impl AppCore {
 
 fn build_gate_evaluator_prompt(context: &str) -> String {
     format!(
-        "You are AgentManager's independent gate evaluator. Inspect the bounded context, \
+        "You are Perpetual's independent gate evaluator. Inspect the bounded context, \
 diffs, transcript snippets, blockers, and milestone requirements. Return only strict JSON \
 with this shape: {{\"verdict\":\"pass|fail|needs_human\",\"confidence\":0.0,\"findings\":[\"...\"],\
 \"required_follow_ups\":[{{\"title\":\"...\",\"description\":\"...\",\"priority\":\"medium\"}}],\

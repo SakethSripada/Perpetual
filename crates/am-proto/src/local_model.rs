@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-/// Local model hosts AgentManager can use for offline fallback.
+/// Local model hosts Perpetual can use for offline fallback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LocalModelProviderKind {

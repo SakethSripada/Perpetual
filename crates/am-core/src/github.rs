@@ -12,15 +12,15 @@ use std::path::{Path, PathBuf};
 
 use crate::{AppCore, CoreError};
 
-const GITHUB_CLIENT_ID_ENV: &str = "AGENTMANAGER_GITHUB_CLIENT_ID";
+const GITHUB_CLIENT_ID_ENV: &str = "PERPETUAL_GITHUB_CLIENT_ID";
 const GITHUB_SCOPES: &str = "repo read:user";
 const GITHUB_API_VERSION: &str = "2026-03-10";
 const GITHUB_DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
 const GITHUB_ACCESS_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
 const GITHUB_API_BASE: &str = "https://api.github.com";
-const KEYRING_SERVICE: &str = "com.agentmanager.app";
+const KEYRING_SERVICE: &str = "com.perpetual.app";
 const KEYRING_GITHUB_TOKEN: &str = "github-oauth-token";
-const USER_AGENT_VALUE: &str = "AgentManager/0.1";
+const USER_AGENT_VALUE: &str = "Perpetual/0.1";
 
 impl AppCore {
     pub async fn github_auth_status(&self) -> Result<GithubAuthStatus, CoreError> {
@@ -341,7 +341,7 @@ impl AppCore {
             .ok_or_else(|| CoreError::Other("task has no base commit yet".into()))?;
         let (owner, repo_name) = github_repo_slug(&repo)?;
         let auth_header = github_basic_auth_header(&token);
-        let commit_title = format!("AgentManager: {}", task.title);
+        let commit_title = format!("Perpetual: {}", task.title);
         let branch_for_git = branch.clone();
         let head_sha = tokio::task::spawn_blocking(move || {
             am_vcs::commit_all_with_excludes(
@@ -443,7 +443,7 @@ impl AppCore {
         let http = github_http()?;
         let head = format!("{owner}:{branch}");
         let body = format!(
-            "Opened by AgentManager for task `{}`.\n\n{}",
+            "Opened by Perpetual for task `{}`.\n\n{}",
             task.id,
             task.description.clone().unwrap_or_default()
         );

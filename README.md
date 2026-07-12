@@ -2,7 +2,7 @@
 
 Perpetual is an open-source VS Code extension for running and coordinating Claude Code and Codex sessions without leaving your editor. It gives each session a persistent workbench, isolated workspace state, model controls, handoffs, approvals, repository context, and a reviewable change set.
 
-![Perpetual workbench preview](media/screenshot-workbench.png)
+![Perpetual workbench preview](media/PerpetualDemoImage.png)
 
 > Perpetual is under active development. Interfaces and provider behavior may change before the first stable release.
 
@@ -36,7 +36,7 @@ Optional capabilities require their own installation and authentication:
 When a release is published, install Perpetual from the VS Code Marketplace or the release `.vsix` file:
 
 ```sh
-code --install-extension ./agentmanager-vscode-<target>-<version>.vsix
+code --install-extension ./perpetual-vscode-<target>-<version>.vsix
 ```
 
 After installation, open the Perpetual icon in the Activity Bar. Select an agent, choose the permission and execution settings, connect a repository if needed, and start a session.
@@ -136,7 +136,7 @@ scripts/              Build, packaging, and daemon lifecycle helpers
 
 ## Troubleshooting
 
-- If the extension cannot find a daemon, run the target-specific build and copy commands above, or set `agentmanager.daemonPath`.
+- If the extension cannot find a daemon, run the target-specific build and copy commands above, or set `perpetual.daemonPath`.
 - If an agent is unavailable, install its CLI and authenticate it in the same environment used by VS Code.
 - Repository and local CLI features require a trusted workspace; Restricted Mode intentionally limits them.
 - Use the `Perpetual` output channel for daemon startup, authentication, and subprocess diagnostics.

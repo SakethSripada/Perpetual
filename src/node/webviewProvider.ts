@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as vscode from "vscode";
 import type { WorkbenchController, WebviewReply } from "./workbenchController";
 
-const VIEW_ID = "agentmanager.workbench";
+const VIEW_ID = "perpetual.workbench";
 
 export class WorkbenchWebviewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   private readonly webviews = new Set<vscode.Webview>();

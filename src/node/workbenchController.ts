@@ -34,7 +34,7 @@ import type {
 } from "./types";
 
 const execFileAsync = promisify(execFile);
-const SELECTED_THREAD_KEY = "agentmanager.selectedThreadId";
+const SELECTED_THREAD_KEY = "perpetual.selectedThreadId";
 
 export type WebviewReply = (message: unknown) => void;
 
@@ -149,7 +149,7 @@ export class WorkbenchController implements vscode.Disposable {
         void this.refresh();
       }),
       vscode.workspace.onDidChangeConfiguration((event) => {
-        if (event.affectsConfiguration("agentmanager")) {
+        if (event.affectsConfiguration("perpetual")) {
           this.lastSyncedSettings = "";
           this.detectionCache = null;
           void this.refresh();
@@ -363,11 +363,11 @@ export class WorkbenchController implements vscode.Disposable {
         case "openSettings":
           await vscode.commands.executeCommand(
             "workbench.action.openSettings",
-            "@ext:agentmanager.agentmanager-vscode",
+            "@ext:perpetual.perpetual-vscode",
           );
           return;
         case "openPanel":
-          await vscode.commands.executeCommand("agentmanager.openWorkbench");
+          await vscode.commands.executeCommand("perpetual.openWorkbench");
           return;
         case "deleteQueuedTurn":
           await this.withClient((client) =>
@@ -1125,7 +1125,7 @@ export class WorkbenchController implements vscode.Disposable {
    * configuration or the next sync would silently revert it.
    */
   private async mirrorCloudPolicyToConfig(policy: CloudPolicy): Promise<void> {
-    const config = vscode.workspace.getConfiguration("agentmanager");
+    const config = vscode.workspace.getConfiguration("perpetual");
     const target = vscode.ConfigurationTarget.Global;
     await Promise.all([
       config.update("cloud.autoCarryover", policy.enabled, target),
@@ -1156,7 +1156,7 @@ export class WorkbenchController implements vscode.Disposable {
   }
 
   private async mirrorLimitPolicyToConfig(policy: LimitPolicy): Promise<void> {
-    const config = vscode.workspace.getConfiguration("agentmanager");
+    const config = vscode.workspace.getConfiguration("perpetual");
     const target = vscode.ConfigurationTarget.Global;
     await Promise.all([
       config.update("autoSwitchOnLimit", policy.auto_switch, target),
@@ -1187,7 +1187,7 @@ export class WorkbenchController implements vscode.Disposable {
   private async mirrorSandboxPolicyToConfig(
     policy: SandboxPolicy,
   ): Promise<void> {
-    const config = vscode.workspace.getConfiguration("agentmanager");
+    const config = vscode.workspace.getConfiguration("perpetual");
     const target = vscode.ConfigurationTarget.Global;
     await Promise.all([
       config.update("defaultExecutionBackend", policy.default_backend, target),
@@ -1205,7 +1205,7 @@ export class WorkbenchController implements vscode.Disposable {
   private async mirrorLocalModelPolicyToConfig(
     policy: LocalModelPolicy,
   ): Promise<void> {
-    const config = vscode.workspace.getConfiguration("agentmanager");
+    const config = vscode.workspace.getConfiguration("perpetual");
     const target = vscode.ConfigurationTarget.Global;
     await Promise.all([
       config.update("local.autoResumeCloud", policy.auto_resume_cloud, target),
@@ -1523,7 +1523,7 @@ function titleFromMessage(message: string): string {
 }
 
 function getDefaults(): WorkbenchDefaults {
-  const config = vscode.workspace.getConfiguration("agentmanager");
+  const config = vscode.workspace.getConfiguration("perpetual");
   return {
     agent: sanitizeAgent(config.get<string>("defaultAgent", "claude_code")),
     permission: config.get<PermissionPolicy>(
@@ -1544,7 +1544,7 @@ function getDefaults(): WorkbenchDefaults {
 }
 
 function getSettingsSnapshot() {
-  const config = vscode.workspace.getConfiguration("agentmanager");
+  const config = vscode.workspace.getConfiguration("perpetual");
   const autoResumeSetting = config.inspect<boolean>("autoResumeOnLimitReset");
   const autoResumeIsExplicit = Boolean(
     autoResumeSetting?.globalValue !== undefined ||

@@ -199,7 +199,7 @@ fn policy_env(spec: &SessionSpec) -> Vec<(String, String)> {
         }
         if !policy.env_allowlist.is_empty() {
             envs.push((
-                "AGENTMANAGER_POLICY_ENV_ALLOWLIST".into(),
+                "PERPETUAL_POLICY_ENV_ALLOWLIST".into(),
                 policy.env_allowlist.join(","),
             ));
         }

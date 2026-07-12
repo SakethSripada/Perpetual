@@ -1,4 +1,4 @@
--- AgentManager foundational schema.
+-- Perpetual foundational schema.
 -- IDs are UUID v4 stored as TEXT. Timestamps are RFC3339 UTC stored as TEXT.
 
 CREATE TABLE projects (

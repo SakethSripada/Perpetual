@@ -253,7 +253,7 @@ pub fn commit_all(repo: &Path, message: &str) -> Result<Option<String>, VcsError
 }
 
 /// Stage and commit all pending worktree changes except the given root-relative
-/// pathspecs. This is used to keep AgentManager-generated context files out of
+/// pathspecs. This is used to keep Perpetual-generated context files out of
 /// pull-request commits.
 pub fn commit_all_with_excludes(
     repo: &Path,
@@ -287,9 +287,9 @@ pub fn commit_all_with_excludes(
         .arg("-C")
         .arg(repo)
         .arg("-c")
-        .arg("user.name=AgentManager")
+        .arg("user.name=Perpetual")
         .arg("-c")
-        .arg("user.email=agentmanager@local")
+        .arg("user.email=perpetual@local")
         .arg("commit")
         .arg("-m")
         .arg(message)
@@ -569,7 +569,7 @@ mod apply_tests {
 
     fn temp_repo(name: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
-            "agentmanager-vcs-{name}-{}-{}",
+            "perpetual-vcs-{name}-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)

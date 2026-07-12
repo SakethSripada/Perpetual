@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Persisted provider discriminator kept for compatibility with task/thread
-/// rows that were created by the larger AgentManager app.
+/// rows that were created by the larger Perpetual app.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ComputeProviderKind {

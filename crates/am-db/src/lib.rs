@@ -1,4 +1,4 @@
-//! SQLite persistence layer for AgentManager (sqlx + runtime queries).
+//! SQLite persistence layer for Perpetual (sqlx + runtime queries).
 //!
 //! Exposes a [`Db`] handle and a set of repository modules. The orchestrator
 //! core depends on these functions rather than embedding SQL.

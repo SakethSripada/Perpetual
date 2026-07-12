@@ -3,8 +3,8 @@ import { DaemonManager } from "./node/daemonManager";
 import { WorkbenchController } from "./node/workbenchController";
 import { WorkbenchWebviewProvider } from "./node/webviewProvider";
 
-const VIEW_ID = "agentmanager.workbench";
-const PANEL_VIEW_ID = "agentmanager.workbench.panel";
+const VIEW_ID = "perpetual.workbench";
+const PANEL_VIEW_ID = "perpetual.workbench.panel";
 let activeDaemon: DaemonManager | null = null;
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -27,20 +27,20 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.registerWebviewViewProvider(PANEL_VIEW_ID, provider, {
       webviewOptions: { retainContextWhenHidden: true },
     }),
-    vscode.commands.registerCommand("agentmanager.openWorkbench", () => {
+    vscode.commands.registerCommand("perpetual.openWorkbench", () => {
       provider.openPanel();
       void controller.refresh();
     }),
-    vscode.commands.registerCommand("agentmanager.newSession", () => controller.newSession()),
-    vscode.commands.registerCommand("agentmanager.refresh", () => controller.refresh()),
-    vscode.commands.registerCommand("agentmanager.connectLocalRepo", () =>
+    vscode.commands.registerCommand("perpetual.newSession", () => controller.newSession()),
+    vscode.commands.registerCommand("perpetual.refresh", () => controller.refresh()),
+    vscode.commands.registerCommand("perpetual.connectLocalRepo", () =>
       controller.connectLocalRepoInteractive()
     ),
-    vscode.commands.registerCommand("agentmanager.connectGithubRepo", () =>
+    vscode.commands.registerCommand("perpetual.connectGithubRepo", () =>
       controller.connectGithubRepoInteractive()
     ),
-    vscode.commands.registerCommand("agentmanager.openSettings", () =>
-      vscode.commands.executeCommand("workbench.action.openSettings", "@ext:agentmanager.agentmanager-vscode")
+    vscode.commands.registerCommand("perpetual.openSettings", () =>
+      vscode.commands.executeCommand("workbench.action.openSettings", "@ext:perpetual.perpetual-vscode")
     )
   );
 }

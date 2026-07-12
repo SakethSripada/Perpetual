@@ -12,7 +12,7 @@ use crate::admission::{AdmissionController, AdmissionPermit};
 use crate::{AppCore, CoreError};
 
 const SANDBOX_POLICY_KEY: &str = "sandbox_policy";
-const SANDBOX_NAME_PREFIX: &str = "agentmanager-";
+const SANDBOX_NAME_PREFIX: &str = "perpetual-";
 const RUNTIME_RUN_CACHE_TTL: Duration = Duration::from_secs(60);
 
 pub(crate) struct SandboxManager {
@@ -461,7 +461,7 @@ impl AppCore {
     }
 }
 
-/// Best-effort removal of every app-owned (`agentmanager-*`) sandbox still
+/// Best-effort removal of every app-owned (`perpetual-*`) sandbox still
 /// present according to `sbx ls`. Used both to clear startup stragglers and to
 /// sweep up after session cancellation on shutdown. Touches only names carrying
 /// our prefix, never user-managed sandboxes. Blocking — run via
@@ -747,9 +747,9 @@ mod tests {
     #[test]
     fn stale_reconciliation_only_targets_owned_names() {
         let names = parse_owned_sandbox_names(
-            b"agentmanager-thread-1\npersonal-sandbox\n agentmanager-task-2 \n",
+            b"perpetual-thread-1\npersonal-sandbox\n perpetual-task-2 \n",
         );
-        assert_eq!(names, vec!["agentmanager-thread-1", "agentmanager-task-2"]);
+        assert_eq!(names, vec!["perpetual-thread-1", "perpetual-task-2"]);
     }
 
     #[test]

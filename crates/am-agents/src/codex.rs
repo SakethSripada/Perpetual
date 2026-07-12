@@ -3,7 +3,7 @@
 //! Drives `codex exec --json` in the task worktree using the user's existing
 //! Codex/ChatGPT login. The Codex exec JSONL stream is already normalized by the
 //! CLI into thread/item lifecycle events; this adapter maps those events into
-//! AgentManager's provider-independent [`NormalizedEvent`] model.
+//! Perpetual's provider-independent [`NormalizedEvent`] model.
 
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -228,7 +228,7 @@ fn build_args(spec: &SessionSpec, resume: Option<&SessionRef>) -> Vec<String> {
 fn push_policy_args(args: &mut Vec<String>, policy: &crate::AgentPolicyRuntime) {
     if !policy.allowed_mcp_servers.is_empty() {
         for server in &policy.allowed_mcp_servers {
-            if server == "agentmanager" {
+            if server == "perpetual" {
                 continue;
             }
             args.push("-c".into());
@@ -279,7 +279,7 @@ fn push_policy_args(args: &mut Vec<String>, policy: &crate::AgentPolicyRuntime) 
             .collect::<Vec<_>>()
             .join(",");
         args.push(format!(
-            "permissions.agentmanager_policy.filesystem.\":workspace_roots\"={{{entries}}}"
+            "permissions.perpetual_policy.filesystem.\":workspace_roots\"={{{entries}}}"
         ));
     }
 }
@@ -304,8 +304,8 @@ fn normalize_model(model: Option<&str>) -> Option<String> {
     Some(value.to_string())
 }
 
-const LOCAL_MODEL_TOKEN_ENV: &str = "AGENTMANAGER_LOCAL_MODEL_TOKEN";
-const LOCAL_PROVIDER_ID: &str = "agentmanager_local";
+const LOCAL_MODEL_TOKEN_ENV: &str = "PERPETUAL_LOCAL_MODEL_TOKEN";
+const LOCAL_PROVIDER_ID: &str = "perpetual_local";
 
 fn push_local_model_args(args: &mut Vec<String>, local: &LocalModelRuntime) {
     if uses_builtin_local_provider(local) {
@@ -321,7 +321,7 @@ fn push_local_model_args(args: &mut Vec<String>, local: &LocalModelRuntime) {
         args.push("-c".into());
         args.push(format!(
             "model_providers.{LOCAL_PROVIDER_ID}.name={}",
-            toml_string("AgentManager Local")
+            toml_string("Perpetual Local")
         ));
         args.push("-c".into());
         args.push(format!(
@@ -390,7 +390,7 @@ pub(crate) fn session_env(spec: &SessionSpec) -> Vec<(String, String)> {
     if let Some(policy) = spec.policy.as_ref() {
         if !policy.env_allowlist.is_empty() {
             envs.push((
-                "AGENTMANAGER_POLICY_ENV_ALLOWLIST".into(),
+                "PERPETUAL_POLICY_ENV_ALLOWLIST".into(),
                 policy.env_allowlist.join(","),
             ));
         }
@@ -887,7 +887,7 @@ mod tests {
             local_model: None,
             permission: PermissionPolicy::WorkspaceWrite,
             runtime: crate::SessionRuntime::DockerSandbox {
-                name: "agentmanager-test".into(),
+                name: "perpetual-test".into(),
                 cpus: 2,
                 memory: "4g".into(),
                 network_preset: "balanced".into(),
@@ -914,7 +914,7 @@ mod tests {
             local_model: None,
             permission: PermissionPolicy::ReadOnly,
             runtime: crate::SessionRuntime::DockerSandbox {
-                name: "agentmanager-test".into(),
+                name: "perpetual-test".into(),
                 cpus: 2,
                 memory: "4g".into(),
                 network_preset: "balanced".into(),
@@ -1091,23 +1091,23 @@ mod tests {
         assert!(!args.iter().any(|arg| arg == "--oss"));
         assert!(args
             .windows(2)
-            .any(|pair| pair == ["-c", "model_provider=\"agentmanager_local\""]));
+            .any(|pair| pair == ["-c", "model_provider=\"perpetual_local\""]));
         assert!(args.windows(2).any(|pair| {
             pair == [
                 "-c",
-                "model_providers.agentmanager_local.base_url=\"http://localhost:4321/v1\"",
+                "model_providers.perpetual_local.base_url=\"http://localhost:4321/v1\"",
             ]
         }));
         assert!(args.windows(2).any(|pair| {
             pair == [
                 "-c",
-                "model_providers.agentmanager_local.env_key=\"AGENTMANAGER_LOCAL_MODEL_TOKEN\"",
+                "model_providers.perpetual_local.env_key=\"PERPETUAL_LOCAL_MODEL_TOKEN\"",
             ]
         }));
         assert_eq!(
             local_model_env(&spec),
             vec![(
-                "AGENTMANAGER_LOCAL_MODEL_TOKEN".to_string(),
+                "PERPETUAL_LOCAL_MODEL_TOKEN".to_string(),
                 "secret-token".to_string()
             )]
         );

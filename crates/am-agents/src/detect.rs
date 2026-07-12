@@ -445,7 +445,7 @@ mod tests {
 
     #[test]
     fn collects_nested_codex_extension_binary() {
-        let root = std::env::temp_dir().join(format!("agentmanager-detect-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("perpetual-detect-{}", std::process::id()));
         let bin_dir = root.join("openai.chatgpt-test/bin/macos-aarch64");
         fs::create_dir_all(&bin_dir).unwrap();
         let codex = bin_dir.join("codex");
@@ -487,7 +487,7 @@ mod tests {
     #[test]
     fn windows_launcher_beats_bare_npm_shim() {
         let root =
-            std::env::temp_dir().join(format!("agentmanager-detect-shim-{}", std::process::id()));
+            std::env::temp_dir().join(format!("perpetual-detect-shim-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         // Mirrors an npm global install: a bash shim next to the Windows launchers.
         make_executable(&root.join("codex"));
@@ -502,7 +502,7 @@ mod tests {
     #[test]
     fn canonical_paths_drop_the_verbatim_prefix() {
         let root =
-            std::env::temp_dir().join(format!("agentmanager-detect-vb-{}", std::process::id()));
+            std::env::temp_dir().join(format!("perpetual-detect-vb-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         let codex = root.join("codex.cmd");
         make_executable(&codex);
@@ -516,7 +516,7 @@ mod tests {
     #[test]
     fn windows_binary_matching_is_case_insensitive() {
         let root =
-            std::env::temp_dir().join(format!("agentmanager-detect-case-{}", std::process::id()));
+            std::env::temp_dir().join(format!("perpetual-detect-case-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         let codex = root.join("CoDeX.EXE");
         make_executable(&codex);

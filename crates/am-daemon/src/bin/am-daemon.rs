@@ -1,11 +1,11 @@
-//! Standalone AgentManager daemon process.
+//! Standalone Perpetual daemon process.
 //!
 //! Hosts `am-core` and serves it over a localhost TCP socket. On startup it
 //! writes `<data_dir>/daemon.json` (`{ "port", "token" }`) so a local client
 //! can discover and authenticate to the running instance. Runs until Ctrl-C,
 //! then shuts the core down so no agent processes leak.
 //!
-//! Config via env: `AM_DATA_DIR` (data/db/worktrees root), `AM_DAEMON_PORT`
+//! Config via env: `PERPETUAL_DATA_DIR` (data/db/worktrees root), `PERPETUAL_DAEMON_PORT`
 //! (defaults to 0 = OS-assigned).
 
 use std::path::PathBuf;
@@ -27,7 +27,7 @@ async fn main() {
         tracing::error!(?data_dir, error = %e, "failed to create data dir");
         std::process::exit(1);
     }
-    let port: u16 = std::env::var("AM_DAEMON_PORT")
+    let port: u16 = std::env::var("PERPETUAL_DAEMON_PORT")
         .ok()
         .and_then(|p| p.parse().ok())
         .unwrap_or(0);
@@ -58,7 +58,7 @@ async fn main() {
     if let Err(e) = std::fs::write(&endpoint, body) {
         tracing::warn!(?endpoint, error = %e, "failed to write endpoint file");
     }
-    tracing::info!(%addr, ?endpoint, "AgentManager daemon listening");
+    tracing::info!(%addr, ?endpoint, "Perpetual daemon listening");
 
     let power = am_daemon::power::spawn(core.clone());
     let serve = tokio::spawn(server.serve());
@@ -80,15 +80,15 @@ async fn main() {
     tracing::info!("daemon stopped");
 }
 
-/// Resolve the data directory: `AM_DATA_DIR`, else `~/.agentmanager`.
+/// Resolve the data directory: `PERPETUAL_DATA_DIR`, else `~/.perpetual`.
 fn data_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("AM_DATA_DIR") {
+    if let Ok(dir) = std::env::var("PERPETUAL_DATA_DIR") {
         return PathBuf::from(dir);
     }
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".agentmanager")
+    PathBuf::from(home).join(".perpetual")
 }
 
 /// Completes only if the serve task ends on its own (a fatal accept error).

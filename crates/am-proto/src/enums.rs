@@ -157,7 +157,7 @@ pub enum RepoKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionBackend {
-    /// Run the provider CLI directly on the host in AgentManager's app-managed
+    /// Run the provider CLI directly on the host in Perpetual's app-managed
     /// workspace. This preserves the existing behavior and is the compatibility
     /// default.
     #[default]

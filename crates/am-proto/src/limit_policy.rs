@@ -29,7 +29,7 @@ pub struct LimitPolicy {
     #[serde(default = "default_unknown_retry")]
     pub unknown_reset_retry_secs: u64,
     /// Compatibility field retained for clients that persist the broader
-    /// AgentManager policy. It does not override the native power lifecycle
+    /// Perpetual policy. It does not override the native power lifecycle
     /// monitor or cloud-continuity settings.
     #[serde(default = "default_true")]
     pub keep_awake: bool,

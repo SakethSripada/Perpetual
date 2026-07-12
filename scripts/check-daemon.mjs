@@ -56,6 +56,10 @@ try {
 
 function requiredDaemonMarkers() {
   return [
+    // The extension hands the daemon its data directory through this variable. A
+    // daemon predating the Perpetual rename reads AM_DATA_DIR, ignores what it is
+    // given, and quietly builds its state under ~/.agentmanager instead.
+    "PERPETUAL_DATA_DIR",
     "LocalModelPolicy",
     "LocalModelTarget",
     "thread.local_fallback_started",

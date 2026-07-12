@@ -1,4 +1,4 @@
-//! Orchestrator core — the UI-agnostic heart of AgentManager.
+//! Orchestrator core — the UI-agnostic heart of Perpetual.
 //!
 //! Holds the database, the event bus, the agent registry, and the session
 //! manager, plus the service methods the Tauri shell (today) or a headless
@@ -118,7 +118,7 @@ impl AppCore {
     /// agent registry and session manager. Worktrees live under `data_dir`.
     pub async fn new(data_dir: &Path) -> Result<Self, CoreError> {
         std::fs::create_dir_all(data_dir).ok();
-        let db = Db::connect(&data_dir.join("agentmanager.db")).await?;
+        let db = Db::connect(&data_dir.join("perpetual.db")).await?;
 
         // Reconcile state left over from a previous process: no agent process
         // survives a restart, so any `running` session/task is stale.
@@ -494,7 +494,7 @@ pub(crate) async fn test_core() -> AppCore {
     AppCore {
         db,
         events: EventBus::new(),
-        data_dir: std::env::temp_dir().join("agentmanager-test"),
+        data_dir: std::env::temp_dir().join("perpetual-test"),
         agents: Arc::new(AgentRegistry::new()),
         sessions: Arc::new(SessionManager::new(MAX_RUNTIME_SESSION_PERMITS)),
         sandboxes: Arc::new(SandboxManager::new(8)),
@@ -589,7 +589,7 @@ mod tests {
             &core.db.pool,
             &project.id,
             "app",
-            "/tmp/agentmanager-app",
+            "/tmp/perpetual-app",
             "main",
         )
         .await

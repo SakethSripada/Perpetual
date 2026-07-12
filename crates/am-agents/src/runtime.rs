@@ -418,7 +418,7 @@ mod tests {
     #[test]
     fn builds_detached_sandbox_create_args() {
         let args = docker_create_args(
-            "agentmanager-task-123",
+            "perpetual-task-123",
             2,
             "4g",
             "codex",
@@ -430,7 +430,7 @@ mod tests {
                 "run",
                 "--detached",
                 "--name",
-                "agentmanager-task-123",
+                "perpetual-task-123",
                 "--cpus",
                 "2",
                 "--memory",
@@ -449,7 +449,7 @@ mod tests {
             "Hello".to_string(),
         ];
         let args = docker_exec_args(
-            "agentmanager-task-123",
+            "perpetual-task-123",
             "codex",
             &host_args,
             Path::new("/tmp/worktree"),
@@ -460,7 +460,7 @@ mod tests {
                 "exec",
                 "--workdir",
                 "/tmp/worktree",
-                "agentmanager-task-123",
+                "perpetual-task-123",
                 "codex",
                 "exec",
                 "--json",

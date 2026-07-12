@@ -5,7 +5,7 @@ use crate::{AppCore, CoreError};
 
 /// Effective launch settings after applying the extension's run preflight.
 ///
-/// The standalone VS Code extension does not ship AgentManager's enterprise
+/// The standalone VS Code extension does not ship Perpetual's enterprise
 /// policy engine. Keeping this small shape lets the run paths share the same
 /// call site while preserving the user's chosen agent, model, backend, and
 /// permission behavior.

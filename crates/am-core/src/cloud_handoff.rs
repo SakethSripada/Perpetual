@@ -871,7 +871,7 @@ fn continuation_prompt(thread: &am_proto::AgentThread, agent: AgentKind) -> Stri
         _ => "",
     };
     let mut prompt = format!(
-        "Continue work that was running locally through AgentManager and has been handed off to \
+        "Continue work that was running locally through Perpetual and has been handed off to \
          this cloud environment.\n\n\
          Read TASK_CONTEXT.md at the repository root first — it is the authoritative record of \
          the objective, decisions, progress so far, and next actions. Work listed there as \

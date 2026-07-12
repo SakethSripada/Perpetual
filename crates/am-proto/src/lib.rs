@@ -1,4 +1,4 @@
-//! Shared domain types for AgentManager.
+//! Shared domain types for Perpetual.
 //!
 //! This crate is intentionally dependency-light (serde only, no DB / no Tauri)
 //! so it can be shared across the orchestrator core, the persistence layer, the

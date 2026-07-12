@@ -1,9 +1,9 @@
 {
-  "name": "agentmanager-vscode",
+  "name": "perpetual-vscode",
   "displayName": "Perpetual",
   "description": "Run Codex and Claude Code sessions from VS Code with model switching, handoffs, GitHub repos, and Docker Sandbox support.",
   "version": "0.1.0",
-  "publisher": "agentmanager",
+  "publisher": "perpetual",
   "license": "SEE LICENSE IN LICENSE",
   "author": {
     "name": "Perpetual"
@@ -44,24 +44,24 @@
   ],
   "main": "./dist/extension.js",
   "activationEvents": [
-    "onView:agentmanager.workbench",
-    "onView:agentmanager.workbench.panel",
-    "onCommand:agentmanager.openWorkbench",
-    "onCommand:agentmanager.newSession",
-    "onCommand:agentmanager.refresh",
-    "onCommand:agentmanager.connectLocalRepo",
-    "onCommand:agentmanager.connectGithubRepo",
-    "onCommand:agentmanager.openSettings"
+    "onView:perpetual.workbench",
+    "onView:perpetual.workbench.panel",
+    "onCommand:perpetual.openWorkbench",
+    "onCommand:perpetual.newSession",
+    "onCommand:perpetual.refresh",
+    "onCommand:perpetual.connectLocalRepo",
+    "onCommand:perpetual.connectGithubRepo",
+    "onCommand:perpetual.openSettings"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
       "description": "Perpetual can show its view in Restricted Mode, but repository access, local CLI execution, and Docker Sandbox runs require a trusted workspace.",
       "restrictedConfigurations": [
-        "agentmanager.defaultAgent",
-        "agentmanager.defaultPermission",
-        "agentmanager.defaultExecutionBackend",
-        "agentmanager.daemonPath"
+        "perpetual.defaultAgent",
+        "perpetual.defaultPermission",
+        "perpetual.defaultExecutionBackend",
+        "perpetual.daemonPath"
       ]
     }
   },
@@ -69,32 +69,32 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "agentmanager",
+          "id": "perpetual",
           "title": "Perpetual",
           "icon": "media/activity.svg"
         }
       ],
       "panel": [
         {
-          "id": "agentmanagerPanel",
+          "id": "perpetualPanel",
           "title": "Perpetual",
           "icon": "media/activity.svg"
         }
       ]
     },
     "views": {
-      "agentmanager": [
+      "perpetual": [
         {
-          "id": "agentmanager.workbench",
+          "id": "perpetual.workbench",
           "name": "Perpetual",
           "icon": "media/activity.svg",
           "contextualTitle": "Perpetual",
           "type": "webview"
         }
       ],
-      "agentmanagerPanel": [
+      "perpetualPanel": [
         {
-          "id": "agentmanager.workbench.panel",
+          "id": "perpetual.workbench.panel",
           "name": "Perpetual",
           "icon": "media/activity.svg",
           "contextualTitle": "Perpetual",
@@ -104,37 +104,37 @@
     },
     "commands": [
       {
-        "command": "agentmanager.openWorkbench",
+        "command": "perpetual.openWorkbench",
         "title": "Open Perpetual Panel",
         "category": "Perpetual",
         "icon": "$(comment-discussion)"
       },
       {
-        "command": "agentmanager.newSession",
+        "command": "perpetual.newSession",
         "title": "New Session",
         "category": "Perpetual",
         "icon": "$(add)"
       },
       {
-        "command": "agentmanager.refresh",
+        "command": "perpetual.refresh",
         "title": "Refresh",
         "category": "Perpetual",
         "icon": "$(refresh)"
       },
       {
-        "command": "agentmanager.connectLocalRepo",
+        "command": "perpetual.connectLocalRepo",
         "title": "Connect Local Repository",
         "category": "Perpetual",
         "icon": "$(repo)"
       },
       {
-        "command": "agentmanager.connectGithubRepo",
+        "command": "perpetual.connectGithubRepo",
         "title": "Connect GitHub Repository",
         "category": "Perpetual",
         "icon": "$(github)"
       },
       {
-        "command": "agentmanager.openSettings",
+        "command": "perpetual.openSettings",
         "title": "Open Settings",
         "category": "Perpetual",
         "icon": "$(settings-gear)"
@@ -143,36 +143,36 @@
     "menus": {
       "view/title": [
         {
-          "command": "agentmanager.openWorkbench",
-          "when": "view == agentmanager.workbench",
+          "command": "perpetual.openWorkbench",
+          "when": "view == perpetual.workbench",
           "group": "navigation@1"
         }
       ],
       "commandPalette": [
         {
-          "command": "agentmanager.openWorkbench"
+          "command": "perpetual.openWorkbench"
         },
         {
-          "command": "agentmanager.newSession"
+          "command": "perpetual.newSession"
         },
         {
-          "command": "agentmanager.refresh"
+          "command": "perpetual.refresh"
         },
         {
-          "command": "agentmanager.connectLocalRepo"
+          "command": "perpetual.connectLocalRepo"
         },
         {
-          "command": "agentmanager.connectGithubRepo"
+          "command": "perpetual.connectGithubRepo"
         },
         {
-          "command": "agentmanager.openSettings"
+          "command": "perpetual.openSettings"
         }
       ]
     },
     "configuration": {
       "title": "Perpetual",
       "properties": {
-        "agentmanager.defaultAgent": {
+        "perpetual.defaultAgent": {
           "type": "string",
           "enum": [
             "claude_code",
@@ -181,7 +181,7 @@
           "default": "claude_code",
           "description": "Default agent for new Perpetual sessions."
         },
-        "agentmanager.defaultPermission": {
+        "perpetual.defaultPermission": {
           "type": "string",
           "enum": [
             "read_only",
@@ -191,7 +191,7 @@
           "default": "workspace_write",
           "description": "Default permission mode for new turns."
         },
-        "agentmanager.defaultExecutionBackend": {
+        "perpetual.defaultExecutionBackend": {
           "type": "string",
           "enum": [
             "host",
@@ -200,17 +200,17 @@
           "default": "host",
           "description": "Default execution backend. Docker Sandbox currently supports Codex only."
         },
-        "agentmanager.defaultModel": {
+        "perpetual.defaultModel": {
           "type": "string",
           "default": "",
           "description": "Optional model override for new sessions. Empty uses the selected agent CLI default."
         },
-        "agentmanager.defaultReasoning": {
+        "perpetual.defaultReasoning": {
           "type": "string",
           "default": "medium",
           "description": "Optional reasoning-effort override for new sessions."
         },
-        "agentmanager.defaultLocalProvider": {
+        "perpetual.defaultLocalProvider": {
           "type": "string",
           "enum": [
             "",
@@ -220,22 +220,22 @@
           "default": "",
           "description": "Optional local model provider for new Codex sessions. Empty uses cloud/default agent behavior."
         },
-        "agentmanager.defaultLocalBaseUrl": {
+        "perpetual.defaultLocalBaseUrl": {
           "type": "string",
           "default": "",
           "description": "Optional base URL for the local model provider. Empty uses http://127.0.0.1:11434 for Ollama or http://127.0.0.1:1234 for LM Studio."
         },
-        "agentmanager.autoSwitchOnLimit": {
+        "perpetual.autoSwitchOnLimit": {
           "type": "boolean",
           "default": true,
           "description": "When the current agent hits a usage limit, continue the task on the other ready agent."
         },
-        "agentmanager.switchBackOnRecovery": {
+        "perpetual.switchBackOnRecovery": {
           "type": "boolean",
           "default": true,
           "description": "After an automatic agent switch, return to the original agent once it recovers."
         },
-        "agentmanager.fallbackPriority": {
+        "perpetual.fallbackPriority": {
           "type": "array",
           "default": [
             "claude_code",
@@ -250,38 +250,38 @@
           },
           "description": "Advanced: provider order used only when more than one fallback agent is available. With Claude/Codex, Perpetual skips the limited current agent and uses the other one."
         },
-        "agentmanager.autoResumeOnLimitReset": {
+        "perpetual.autoResumeOnLimitReset": {
           "type": "boolean",
           "default": true,
           "description": "Automatically resume paused limit-waiting tasks as soon as the relevant rate limit resets."
         },
-        "agentmanager.resumeWithEarliestAgent": {
+        "perpetual.resumeWithEarliestAgent": {
           "type": "boolean",
           "default": true,
           "description": "Legacy name for autoResumeOnLimitReset. Kept for existing installations."
         },
-        "agentmanager.unknownLimitRetrySeconds": {
+        "perpetual.unknownLimitRetrySeconds": {
           "type": "number",
           "default": 600,
           "minimum": 0,
           "description": "Retry interval when an agent reports a usage limit without a reset time. Set 0 to wait indefinitely."
         },
-        "agentmanager.cloud.autoCarryover": {
+        "perpetual.cloud.autoCarryover": {
           "type": "boolean",
           "default": false,
           "description": "Cloud Continuity: automatically carry active tasks over to the provider's cloud (Claude Code on the web / Codex Cloud) so they keep running when this machine can't."
         },
-        "agentmanager.cloud.carryOverOnSleep": {
+        "perpetual.cloud.carryOverOnSleep": {
           "type": "boolean",
           "default": true,
           "description": "Carry running tasks over to the cloud when the machine is about to sleep. Requires auto carryover."
         },
-        "agentmanager.cloud.carryOverOnShutdown": {
+        "perpetual.cloud.carryOverOnShutdown": {
           "type": "boolean",
           "default": true,
           "description": "Carry running tasks over to the cloud on shutdown or when the daemon stops. Requires auto carryover."
         },
-        "agentmanager.cloud.providerStrategy": {
+        "perpetual.cloud.providerStrategy": {
           "type": "string",
           "enum": [
             "same_provider",
@@ -294,7 +294,7 @@
           "default": "same_provider",
           "description": "Which provider's cloud receives a carried-over task."
         },
-        "agentmanager.cloud.providerPriority": {
+        "perpetual.cloud.providerPriority": {
           "type": "array",
           "default": [
             "claude_code",
@@ -309,74 +309,74 @@
           },
           "description": "When cross-provider cloud handoff is enabled and the current provider is not ready, choose this cloud provider first."
         },
-        "agentmanager.cloud.requireApproval": {
+        "perpetual.cloud.requireApproval": {
           "type": "boolean",
           "default": false,
           "description": "Ask for approval before work is handed to Codex Cloud or Claude Code on the web."
         },
-        "agentmanager.cloud.maxConcurrentRuns": {
+        "perpetual.cloud.maxConcurrentRuns": {
           "type": "number",
           "default": 2,
           "minimum": 1,
           "maximum": 8,
           "description": "Maximum number of cloud runs carried over at the same time."
         },
-        "agentmanager.cloud.codexEnvId": {
+        "perpetual.cloud.codexEnvId": {
           "type": "string",
           "default": "",
           "description": "Codex Cloud environment id used for carried-over Codex tasks. Create one at chatgpt.com/codex."
         },
-        "agentmanager.local.autoResumeCloud": {
+        "perpetual.local.autoResumeCloud": {
           "type": "boolean",
           "default": true,
           "description": "Resume cloud agents automatically when network/cloud connectivity returns."
         },
-        "agentmanager.local.useFallback": {
+        "perpetual.local.useFallback": {
           "type": "boolean",
           "default": true,
           "description": "Use selected local models when cloud agents are unavailable."
         },
-        "agentmanager.local.switchBackToCloud": {
+        "perpetual.local.switchBackToCloud": {
           "type": "boolean",
           "default": true,
           "description": "Switch local fallback runs back to cloud agents after connectivity is stable."
         },
-        "agentmanager.local.probeIntervalSeconds": {
+        "perpetual.local.probeIntervalSeconds": {
           "type": "number",
           "default": 30,
           "minimum": 5,
           "description": "How often to probe cloud/local recovery while waiting."
         },
-        "agentmanager.local.ollamaBaseUrl": {
+        "perpetual.local.ollamaBaseUrl": {
           "type": "string",
           "default": "",
           "description": "Ollama base URL for detection and local fallback. Empty uses http://127.0.0.1:11434."
         },
-        "agentmanager.local.lmStudioBaseUrl": {
+        "perpetual.local.lmStudioBaseUrl": {
           "type": "string",
           "default": "",
           "description": "LM Studio base URL for detection and local fallback. Empty uses http://127.0.0.1:1234."
         },
-        "agentmanager.sandbox.maxConcurrent": {
+        "perpetual.sandbox.maxConcurrent": {
           "type": "number",
           "default": 2,
           "minimum": 1,
           "maximum": 8,
           "description": "Maximum concurrent Docker Sandbox sessions."
         },
-        "agentmanager.sandbox.cpus": {
+        "perpetual.sandbox.cpus": {
           "type": "number",
           "default": 2,
           "minimum": 1,
           "maximum": 16,
           "description": "CPU limit for each Docker Sandbox run."
         },
-        "agentmanager.sandbox.memory": {
+        "perpetual.sandbox.memory": {
           "type": "string",
           "default": "4g",
           "description": "Memory limit for each Docker Sandbox run."
         },
-        "agentmanager.sandbox.networkPreset": {
+        "perpetual.sandbox.networkPreset": {
           "type": "string",
           "enum": [
             "balanced",
@@ -386,7 +386,7 @@
           "default": "balanced",
           "description": "Network policy preset for Docker Sandbox runs."
         },
-        "agentmanager.daemonPath": {
+        "perpetual.daemonPath": {
           "type": "string",
           "default": "",
           "description": "Optional path to an am-daemon binary. Empty uses the binary bundled with this extension."

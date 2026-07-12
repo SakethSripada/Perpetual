@@ -214,7 +214,7 @@ async fn run_turn(
     rpc.request(
         "initialize",
         json!({
-            "clientInfo": { "name": "AgentManager", "version": env!("CARGO_PKG_VERSION") }
+            "clientInfo": { "name": "Perpetual", "version": env!("CARGO_PKG_VERSION") }
         }),
     )
     .await?;

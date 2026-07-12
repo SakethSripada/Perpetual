@@ -2609,12 +2609,12 @@ fn build_thread_initial_prompt(
 fn build_thread_resume_prompt(thread: &AgentThread, context_files_available: bool) -> String {
     if context_files_available {
         format!(
-            "Continue the AgentManager session \"{}\". Read TASK_CONTEXT.md and AGENTS.md first, then proceed from the recorded progress and next actions.",
+            "Continue the Perpetual session \"{}\". Read TASK_CONTEXT.md and AGENTS.md first, then proceed from the recorded progress and next actions.",
             thread.title
         )
     } else {
         format!(
-            "Continue the AgentManager session \"{}\" in the current repository working tree, applying edits in place as you work.",
+            "Continue the Perpetual session \"{}\" in the current repository working tree, applying edits in place as you work.",
             thread.title
         )
     }
@@ -2644,7 +2644,7 @@ async fn write_text_if_changed(path: &Path, content: &str) -> Result<(), CoreErr
 
 fn render_thread_context(thread: &AgentThread, repos: &[am_proto::AgentThreadRepo]) -> String {
     let mut out = String::new();
-    out.push_str("# AgentManager Session Context\n\n");
+    out.push_str("# Perpetual Session Context\n\n");
     out.push_str(&format!("Session: {}\n", thread.title));
     out.push_str(&format!("Updated: {}\n\n", now().to_rfc3339()));
     push_section(&mut out, "Objective", &thread.objective);

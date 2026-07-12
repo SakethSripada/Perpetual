@@ -15,7 +15,7 @@ use tokio::process::Command;
 use crate::{AppCore, CoreError};
 
 const LOCAL_MODEL_POLICY_KEY: &str = "local_model_policy";
-const KEYRING_SERVICE: &str = "com.agentmanager.app";
+const KEYRING_SERVICE: &str = "com.perpetual.app";
 const KEYRING_LM_STUDIO_TOKEN: &str = "lm-studio-api-token";
 const LOCAL_PROBE_TIMEOUT: Duration = Duration::from_millis(1500);
 const LOCAL_CLI_TIMEOUT: Duration = Duration::from_secs(60 * 30);

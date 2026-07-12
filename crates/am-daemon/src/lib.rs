@@ -1,4 +1,4 @@
-//! Headless daemon for AgentManager.
+//! Headless daemon for Perpetual.
 //!
 //! Hosts the UI-agnostic [`am_core::AppCore`] in its own process and exposes it
 //! over a localhost TCP socket so a desktop UI — or any client — can drive the

@@ -37,7 +37,7 @@ daemon for its target.
 
 ```bash
 npx vsce ls --tree
-code --install-extension agentmanager-vscode-darwin-arm64-0.1.0.vsix
+code --install-extension perpetual-vscode-darwin-arm64-0.1.0.vsix
 ```
 
 Confirm the file list contains:
@@ -46,7 +46,7 @@ Confirm the file list contains:
 - `dist/webview/assets/index.js`
 - `dist/webview/assets/index.css`
 - `media/icon.png`
-- `media/screenshot-workbench.png`
+- `media/PerpetualDemoImage.png`
 - `bin/<target>/am-daemon` or `bin/<target>/am-daemon.exe` on Windows
 
 Confirm it does not contain:

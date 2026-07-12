@@ -295,7 +295,7 @@ async fn agent_thread_repos_turns_messages_and_queue_roundtrip() {
         AgentKind::Codex,
         "workspace_write",
         ExecutionBackend::DockerSandbox,
-        Some("agentmanager-test"),
+        Some("perpetual-test"),
         Some("gpt-oss:20b"),
         Some("medium"),
         Some(LocalModelProviderKind::Ollama),
@@ -323,7 +323,7 @@ async fn agent_thread_repos_turns_messages_and_queue_roundtrip() {
     assert_eq!(turns[0].agent_session_id.as_deref(), Some("thread-123"));
     assert_eq!(turns[0].state, SessionState::Completed);
     assert_eq!(turns[0].execution_backend, ExecutionBackend::DockerSandbox);
-    assert_eq!(turns[0].sandbox_name.as_deref(), Some("agentmanager-test"));
+    assert_eq!(turns[0].sandbox_name.as_deref(), Some("perpetual-test"));
     assert_eq!(turns[0].model.as_deref(), Some("gpt-oss:20b"));
     assert_eq!(
         turns[0].local_provider,
