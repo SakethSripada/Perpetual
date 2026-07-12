@@ -100,6 +100,14 @@ export class DaemonClient extends EventEmitter implements DaemonApi {
     return responsePayload(await this.requestRaw(variant("list_repos", { project_id: projectId })), "repos");
   }
 
+  async deleteRepo(repoId: string) {
+    expectUnit(await this.requestRaw(variant("delete_repo", { repo_id: repoId })));
+  }
+
+  async clearProjectRepos(projectId: string) {
+    expectUnit(await this.requestRaw(variant("clear_project_repos", { project_id: projectId })));
+  }
+
   async githubAuthStatus(token: string) {
     return responsePayload(await this.requestRaw(variant("github_auth_status", { token })), "github_auth_status");
   }

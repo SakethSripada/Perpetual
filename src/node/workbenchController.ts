@@ -71,6 +71,8 @@ type WebviewMessage =
   | { type: "applyThreadChanges"; threadId: string }
   | { type: "githubList" }
   | { type: "connectGithubRepo"; repo: GithubRepository }
+  | { type: "deleteRepo"; repoId: string }
+  | { type: "clearRepos" }
   | { type: "setLimitPolicy"; policy: LimitPolicy }
   | { type: "setSandboxPolicy"; policy: SandboxPolicy }
   | { type: "setCloudPolicy"; policy: CloudPolicy }
@@ -127,7 +129,8 @@ export class WorkbenchController implements vscode.Disposable {
   private autoAppliedThreads = new Set<string>();
   private repoAssignmentsPending = new Map<string, string[]>();
   private repoAssignmentsInFlight = new Map<string, Promise<void>>();
-  private reposConnected = false;
+  private workspaceReposReady: Promise<void> | null = null;
+  private autoConnectSuspended = false;
 
   readonly onSnapshot = this.snapshots.event;
   readonly onThreadEvent = this.threadEvents.event;
@@ -140,6 +143,11 @@ export class WorkbenchController implements vscode.Disposable {
     context.subscriptions.push(
       daemon.onEvent((event) => this.onDaemonEvent(event)),
       vscode.workspace.onDidGrantWorkspaceTrust(() => void this.refresh()),
+      vscode.workspace.onDidChangeWorkspaceFolders(() => {
+        this.workspaceReposReady = null;
+        this.autoConnectSuspended = false;
+        void this.refresh();
+      }),
       vscode.workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration("agentmanager")) {
           this.lastSyncedSettings = "";
@@ -177,7 +185,7 @@ export class WorkbenchController implements vscode.Disposable {
         case "refresh":
           // Manual refresh should re-probe agents/sandbox, not serve the cache.
           this.detectionCache = null;
-          this.reposConnected = false;
+          this.workspaceReposReady = null;
           await this.refresh();
           return;
         case "ready":
@@ -251,6 +259,12 @@ export class WorkbenchController implements vscode.Disposable {
         case "connectGithubRepo":
           await this.connectGithubRepo(message.repo, reply);
           await this.refresh();
+          return;
+        case "deleteRepo":
+          await this.deleteRepo(message.repoId);
+          return;
+        case "clearRepos":
+          await this.clearRepos();
           return;
         case "setLimitPolicy":
           {
@@ -505,10 +519,7 @@ export class WorkbenchController implements vscode.Disposable {
       const project = await client.ensureWorkbenchProject();
       // Connecting workspace repos shells out to git and rarely changes mid-session;
       // do it once rather than on every event-driven refresh.
-      if (!this.reposConnected) {
-        await this.autoConnectWorkspaceRepos(client, project.id);
-        this.reposConnected = true;
-      }
+      await this.ensureWorkspaceRepos(client, project.id);
 
       // Fast path: threads/repos are cheap DB reads; agent + sandbox detection is
       // expensive (CLI probes) so it comes from a short-lived cache.
@@ -601,10 +612,7 @@ export class WorkbenchController implements vscode.Disposable {
     // the effective values before admitting this turn to the daemon.
     await this.syncSettings(client);
     const project = await client.ensureWorkbenchProject();
-    if (!this.reposConnected) {
-      await this.autoConnectWorkspaceRepos(client, project.id);
-      this.reposConnected = true;
-    }
+    await this.ensureWorkspaceRepos(client, project.id);
     const defaults = getDefaults();
     const agent = message.agent ?? defaults.agent;
     const permission = message.permission ?? defaults.permission;
@@ -736,7 +744,59 @@ export class WorkbenchController implements vscode.Disposable {
     this.assertTrusted();
     const client = await this.daemon.getClient();
     const project = await client.ensureWorkbenchProject();
+    this.autoConnectSuspended = false;
     await this.autoConnectWorkspaceRepos(client, project.id, true);
+  }
+
+  private async deleteRepo(repoId: string): Promise<void> {
+    this.assertTrusted();
+    const client = await this.daemon.getClient();
+    await client.deleteRepo(repoId);
+    // Otherwise the next auto-connect pass would immediately reconnect a
+    // workspace folder the user just disconnected.
+    this.autoConnectSuspended = true;
+    await this.refresh();
+  }
+
+  private async clearRepos(): Promise<void> {
+    this.assertTrusted();
+    const client = await this.daemon.getClient();
+    const project = await client.ensureWorkbenchProject();
+    const repos = await client.listRepos(project.id).catch(() => []);
+    if (repos.length === 0) return;
+    const confirm = await vscode.window.showWarningMessage(
+      `Disconnect all ${repos.length} connected ${repos.length === 1 ? "repository" : "repositories"}?`,
+      {
+        modal: true,
+        detail:
+          "Sessions keep their transcripts but lose their repository assignments. Nothing is deleted from disk.",
+      },
+      "Disconnect All",
+    );
+    if (confirm !== "Disconnect All") return;
+    await client.clearProjectRepos(project.id);
+    this.autoConnectSuspended = true;
+    await this.refresh();
+  }
+
+  // Auto-connect must run at most once per workspace: `refresh()` and `submit()`
+  // can overlap, and two concurrent runs both observe an empty repo list and
+  // connect the same folder twice.
+  private ensureWorkspaceRepos(
+    client: DaemonApi,
+    projectId: string,
+  ): Promise<void> {
+    if (this.autoConnectSuspended) return Promise.resolve();
+    if (!this.workspaceReposReady) {
+      this.workspaceReposReady = this.autoConnectWorkspaceRepos(
+        client,
+        projectId,
+      ).catch((err) => {
+        this.workspaceReposReady = null;
+        throw err;
+      });
+    }
+    return this.workspaceReposReady;
   }
 
   private async autoConnectWorkspaceRepos(

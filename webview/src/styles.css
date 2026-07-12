@@ -1251,6 +1251,57 @@ textarea {
   max-width: 340px;
 }
 
+.repo-menu-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.repo-menu-head .menu-head {
+  padding-right: 0;
+}
+.repo-clear {
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--am-radius-sm);
+  background: transparent;
+  color: var(--am-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.repo-clear:hover {
+  color: var(--vscode-errorForeground, #f85149);
+  background: color-mix(in srgb, var(--vscode-errorForeground, #f85149) 14%, transparent);
+}
+
+.repo-row {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  border-radius: var(--am-radius-sm);
+}
+.repo-row:hover {
+  background: var(--am-hover);
+}
+.repo-row .menu-item {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.repo-row .menu-item:hover:not(:disabled) {
+  background: transparent;
+}
+.repo-row .history-del {
+  opacity: 0;
+}
+.repo-row:hover .history-del,
+.repo-row .history-del:focus-visible {
+  opacity: 1;
+}
+.repo-row .history-del:disabled {
+  opacity: 0;
+  cursor: default;
+}
+
 .repo-lock-note {
   max-width: 280px;
   padding: 7px 9px;

@@ -409,6 +409,16 @@ export default function App() {
     snapshot?.runDefaults,
   ]);
 
+  // A disconnected repo must not linger in the draft selection.
+  useEffect(() => {
+    if (!snapshot) return;
+    const known = new Set(snapshot.repos.map((repo) => repo.id));
+    const next = repoIdsRef.current.filter((id) => known.has(id));
+    if (next.length === repoIdsRef.current.length) return;
+    repoIdsRef.current = next;
+    setRepoIds(next);
+  }, [snapshot?.repos]);
+
   useEffect(() => {
     if (!selectedThread) return;
     const fallback = selectedThread.fallback_agent;
@@ -1014,6 +1024,10 @@ export default function App() {
           vscode.postMessage({ type: "githubList" });
         }}
         onLocalRepo={() => vscode.postMessage({ type: "connectLocalRepo" })}
+        onRemoveRepo={(repoId) =>
+          vscode.postMessage({ type: "deleteRepo", repoId })
+        }
+        onClearRepos={() => vscode.postMessage({ type: "clearRepos" })}
         onSandboxLogin={(codex) =>
           vscode.postMessage({ type: "sandboxLogin", codex })
         }
@@ -1988,6 +2002,8 @@ type ComposerProps = {
   onStop(): void;
   onGithub(): void;
   onLocalRepo(): void;
+  onRemoveRepo(repoId: string): void;
+  onClearRepos(): void;
   onSandboxLogin(codex: boolean): void;
   onNewSession(): void;
   onRefresh(): void;
@@ -2186,7 +2202,21 @@ function Composer(props: ComposerProps) {
               )}
             >
               <div className="menu repo-menu">
-                <div className="menu-head">Connected Repos</div>
+                <div className="repo-menu-head">
+                  <span className="menu-head">Connected Repos</span>
+                  {repos.length > 0 && !props.reposLocked && (
+                    <button
+                      type="button"
+                      className="repo-clear"
+                      onClick={() => {
+                        setReposOpen(false);
+                        props.onClearRepos();
+                      }}
+                    >
+                      Clear all
+                    </button>
+                  )}
+                </div>
                 {repos.length === 0 && (
                   <div className="menu-empty">No repositories connected</div>
                 )}
@@ -2199,35 +2229,52 @@ function Composer(props: ComposerProps) {
                 {repos.map((repo) => {
                   const checked = props.repoIds.includes(repo.id);
                   return (
-                    <label
-                      key={repo.id}
-                      className={
-                        checked ? "menu-item check selected" : "menu-item check"
-                      }
-                      title={
-                        props.reposLocked
-                          ? "Start a new session to change repositories"
-                          : undefined
-                      }
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
+                    <div key={repo.id} className="repo-row">
+                      <label
+                        className={
+                          checked
+                            ? "menu-item check selected"
+                            : "menu-item check"
+                        }
+                        title={
+                          props.reposLocked
+                            ? "Start a new session to change repositories"
+                            : undefined
+                        }
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={props.reposLocked}
+                          onChange={(event) => {
+                            const next = event.target.checked
+                              ? [...props.repoIds, repo.id]
+                              : props.repoIds.filter((id) => id !== repo.id);
+                            props.setRepoIds(next);
+                          }}
+                        />
+                        <span className="history-text">
+                          <span>{repo.name}</span>
+                          <small>
+                            {repo.kind === "github" ? "GitHub" : "Local"}
+                          </small>
+                        </span>
+                      </label>
+                      <button
+                        type="button"
+                        className="history-del"
+                        title={
+                          props.reposLocked
+                            ? "Start a new session to change repositories"
+                            : `Disconnect ${repo.name}`
+                        }
+                        aria-label={`Disconnect ${repo.name}`}
                         disabled={props.reposLocked}
-                        onChange={(event) => {
-                          const next = event.target.checked
-                            ? [...props.repoIds, repo.id]
-                            : props.repoIds.filter((id) => id !== repo.id);
-                          props.setRepoIds(next);
-                        }}
-                      />
-                      <span className="history-text">
-                        <span>{repo.name}</span>
-                        <small>
-                          {repo.kind === "github" ? "GitHub" : "Local"}
-                        </small>
-                      </span>
-                    </label>
+                        onClick={() => props.onRemoveRepo(repo.id)}
+                      >
+                        <Icon name="trash" />
+                      </button>
+                    </div>
                   );
                 })}
                 <div className="menu-sep" />

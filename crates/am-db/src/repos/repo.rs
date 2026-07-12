@@ -144,3 +144,20 @@ pub async fn get(pool: &SqlitePool, id: &str) -> Result<Option<Repo>, DbError> {
         .await?;
     row.map(Repo::try_from).transpose()
 }
+
+/// Remove a connection. Thread/task/work-node links cascade.
+pub async fn delete(pool: &SqlitePool, id: &str) -> Result<bool, DbError> {
+    let result = sqlx::query("DELETE FROM repos WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+pub async fn delete_for_project(pool: &SqlitePool, project_id: &str) -> Result<u64, DbError> {
+    let result = sqlx::query("DELETE FROM repos WHERE project_id = ?")
+        .bind(project_id)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
+}

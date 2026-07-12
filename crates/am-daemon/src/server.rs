@@ -311,6 +311,14 @@ async fn dispatch(core: &AppCore, req: DaemonRequest) -> Result<DaemonResponse, 
 
         Q::ConnectLocalRepo(input) => A::Repo(core.connect_local_repo(input).await.map_err(s)?),
         Q::ListRepos { project_id } => A::Repos(core.list_repos(&project_id).await.map_err(s)?),
+        Q::DeleteRepo { repo_id } => {
+            core.delete_repo(&repo_id).await.map_err(s)?;
+            A::Unit
+        }
+        Q::ClearProjectRepos { project_id } => {
+            core.clear_project_repos(&project_id).await.map_err(s)?;
+            A::Unit
+        }
         Q::GithubAuthStatus { token } => {
             A::GithubAuthStatus(core.github_auth_status_for_token(&token).await.map_err(s)?)
         }

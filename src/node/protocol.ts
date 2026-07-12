@@ -75,6 +75,8 @@ export interface DaemonApi {
   ensureWorkbenchProject(): Promise<Project>;
   connectLocalRepo(input: NewLocalRepo): Promise<Repo>;
   listRepos(projectId: string): Promise<Repo[]>;
+  deleteRepo(repoId: string): Promise<void>;
+  clearProjectRepos(projectId: string): Promise<void>;
   githubAuthStatus(token: string): Promise<GithubAuthStatus>;
   githubListRepositories(token: string): Promise<GithubRepository[]>;
   connectGithubRepo(token: string, input: NewGithubRepo): Promise<Repo>;

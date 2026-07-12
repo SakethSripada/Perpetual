@@ -30,7 +30,9 @@ use crate::{AppCore, ApprovalScope, CoreError};
 impl AppCore {
     // ---- Repositories ---------------------------------------------------
 
-    /// Validate and connect a local git repository to a project.
+    /// Validate and connect a local git repository to a project. Connecting a
+    /// path that is already connected returns the existing repo rather than
+    /// adding a second row for it.
     pub async fn connect_local_repo(&self, input: NewLocalRepo) -> Result<Repo, CoreError> {
         let path = input.path.clone();
         let info = tokio::task::spawn_blocking(move || am_vcs::validate_repo(&path))
@@ -38,11 +40,22 @@ impl AppCore {
             .map_err(|e| CoreError::Other(e.to_string()))?
             .map_err(|e| CoreError::Other(e.to_string()))?;
 
+        let toplevel = info.toplevel.to_string_lossy().to_string();
+        let connected =
+            am_db::repos::repo::list_for_project(&self.db.pool, &input.project_id).await?;
+        if let Some(existing) = connected.into_iter().find(|repo| {
+            repo.local_path
+                .as_deref()
+                .is_some_and(|existing| same_local_path(existing, &toplevel))
+        }) {
+            return Ok(existing);
+        }
+
         let repo = am_db::repos::repo::create_local(
             &self.db.pool,
             &input.project_id,
             &info.name,
-            &info.toplevel.to_string_lossy(),
+            &toplevel,
             &info.default_branch,
         )
         .await?;
@@ -60,6 +73,38 @@ impl AppCore {
 
     pub async fn list_repos(&self, project_id: &str) -> Result<Vec<Repo>, CoreError> {
         Ok(am_db::repos::repo::list_for_project(&self.db.pool, project_id).await?)
+    }
+
+    /// Disconnect a repo from its project. Thread assignments referencing it
+    /// cascade away; managed clones and worktrees on disk are left alone.
+    pub async fn delete_repo(&self, repo_id: &str) -> Result<(), CoreError> {
+        let repo = am_db::repos::repo::get(&self.db.pool, repo_id)
+            .await?
+            .ok_or(CoreError::NotFound)?;
+        am_db::repos::repo::delete(&self.db.pool, repo_id).await?;
+        self.activity(
+            Some(repo.project_id.clone()),
+            None,
+            "repo.disconnected",
+            json!({ "repo_id": repo.id, "name": repo.name }),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Disconnect every repo in a project. Returns how many were removed.
+    pub async fn clear_project_repos(&self, project_id: &str) -> Result<u64, CoreError> {
+        let removed = am_db::repos::repo::delete_for_project(&self.db.pool, project_id).await?;
+        if removed > 0 {
+            self.activity(
+                Some(project_id.to_string()),
+                None,
+                "repo.cleared",
+                json!({ "removed": removed }),
+            )
+            .await?;
+        }
+        Ok(removed)
     }
 
     pub async fn get_task_repo(&self, task_id: &str) -> Result<Option<Repo>, CoreError> {
@@ -1254,6 +1299,28 @@ impl AppCore {
     }
 }
 
+/// Compare two stored repository paths. Git reports `--show-toplevel` with
+/// forward slashes even on Windows, while paths that reach us from the editor
+/// use the platform separator, so compare on a normalized key instead of the
+/// raw strings.
+fn same_local_path(a: &str, b: &str) -> bool {
+    local_path_key(a) == local_path_key(b)
+}
+
+fn local_path_key(path: &str) -> String {
+    let trimmed = path
+        .trim()
+        .trim_start_matches("\\\\?\\")
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_string();
+    if cfg!(windows) {
+        trimmed.to_lowercase()
+    } else {
+        trimmed
+    }
+}
+
 fn normalize_limit_policy(mut policy: am_proto::LimitPolicy) -> am_proto::LimitPolicy {
     policy.unknown_reset_retry_secs = policy.unknown_reset_retry_secs.min(7 * 24 * 60 * 60);
     let mut priority = Vec::new();
@@ -2045,5 +2112,100 @@ mod model_catalog_tests {
         let long = "first line\n".to_string() + &"x".repeat(MAX_EVENT_DETAIL_CHARS + 50);
         assert_eq!(compact_event_detail(&long), "first line");
         assert!(capped_event_detail(&long).contains("[details truncated]"));
+    }
+}
+
+#[cfg(test)]
+mod repo_path_tests {
+    use super::*;
+
+    #[test]
+    fn matches_git_toplevel_against_platform_paths() {
+        assert!(same_local_path("C:/Users/dev/app", "C:/Users/dev/app/"));
+        assert!(same_local_path("/home/dev/app", "/home/dev/app"));
+        assert!(!same_local_path("/home/dev/app", "/home/dev/other"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ignores_separator_and_case_differences_on_windows() {
+        assert!(same_local_path("C:/Users/dev/app", r"c:\users\dev\app"));
+        assert!(same_local_path(r"\\?\C:\Users\dev\app", "C:/Users/dev/app"));
+    }
+}
+
+#[cfg(test)]
+mod repo_connection_tests {
+    use super::*;
+    use crate::test_core;
+
+    /// The checked-out working copy is a real git repo with history, which is
+    /// what `connect_local_repo` validates against.
+    fn workspace_root() -> String {
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        manifest
+            .parent()
+            .and_then(Path::parent)
+            .unwrap()
+            .to_string_lossy()
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn connecting_the_same_path_twice_reuses_the_existing_repo() {
+        let core = test_core().await;
+        let project = core.ensure_workbench_project().await.unwrap();
+        let path = workspace_root();
+
+        let first = core
+            .connect_local_repo(NewLocalRepo {
+                project_id: project.id.clone(),
+                path: path.clone(),
+            })
+            .await
+            .unwrap();
+        let second = core
+            .connect_local_repo(NewLocalRepo {
+                project_id: project.id.clone(),
+                path,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(first.id, second.id);
+        assert_eq!(core.list_repos(&project.id).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn disconnecting_removes_the_repo() {
+        let core = test_core().await;
+        let project = core.ensure_workbench_project().await.unwrap();
+        let repo = core
+            .connect_local_repo(NewLocalRepo {
+                project_id: project.id.clone(),
+                path: workspace_root(),
+            })
+            .await
+            .unwrap();
+
+        core.delete_repo(&repo.id).await.unwrap();
+        assert!(core.list_repos(&project.id).await.unwrap().is_empty());
+        assert!(core.delete_repo(&repo.id).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn clearing_removes_every_repo_in_the_project() {
+        let core = test_core().await;
+        let project = core.ensure_workbench_project().await.unwrap();
+        core.connect_local_repo(NewLocalRepo {
+            project_id: project.id.clone(),
+            path: workspace_root(),
+        })
+        .await
+        .unwrap();
+
+        let removed = core.clear_project_repos(&project.id).await.unwrap();
+        assert_eq!(removed, 1);
+        assert!(core.list_repos(&project.id).await.unwrap().is_empty());
     }
 }

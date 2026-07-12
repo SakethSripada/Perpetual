@@ -142,6 +142,12 @@ pub enum DaemonRequest {
     ListRepos {
         project_id: String,
     },
+    DeleteRepo {
+        repo_id: String,
+    },
+    ClearProjectRepos {
+        project_id: String,
+    },
     GithubAuthStatus {
         token: String,
     },
