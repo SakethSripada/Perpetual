@@ -1,0 +1,142 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify tag matches package version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # A tag that disagrees with package.json publishes a version nobody can
+      # trace back to a commit, so fail before anything is built.
+      - name: Compare tag to package.json version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $pkg" >&2
+            exit 1
+          fi
+          echo "Releasing $pkg"
+
+  package:
+    name: ${{ matrix.target }}
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            os: macos-latest
+          - target: darwin-x64
+            os: macos-latest
+          - target: linux-x64
+            os: ubuntu-latest
+          - target: linux-arm64
+            os: ubuntu-latest
+          - target: win32-x64
+            os: windows-latest
+          - target: win32-arm64
+            os: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Linux ARM cross compiler
+        if: runner.os == 'Linux' && matrix.target == 'linux-arm64'
+        run: sudo apt-get update && sudo apt-get install --yes gcc-aarch64-linux-gnu
+
+      - name: Install Rust target
+        shell: bash
+        run: rustup target add "$(node --input-type=module -e 'import { targetTriple } from "./scripts/daemon-targets.mjs"; console.log(targetTriple(process.argv[1]))' "${{ matrix.target }}")"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Each daemon is compiled from this repo's Rust workspace on a host that can
+      # target it. package:<target> runs check-daemon first, so a VSIX can never
+      # ship a stale or foreign binary.
+      - name: Build daemon
+        shell: bash
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
+        run: npm run build:daemon -- --target=${{ matrix.target }}
+
+      - name: Copy daemon and package VSIX
+        shell: bash
+        run: |
+          npm run copy-daemon -- --target=${{ matrix.target }}
+          npm run package:${{ matrix.target }}
+
+      - name: Upload VSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: vsix-${{ matrix.target }}
+          path: "*.vsix"
+          if-no-files-found: error
+
+  publish:
+    name: Publish to Marketplace
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # Point this at a protected environment holding VSCE_PAT so a release needs a
+    # human approval before it reaches the Marketplace.
+    environment: marketplace
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Download every target's VSIX
+        uses: actions/download-artifact@v4
+        with:
+          pattern: vsix-*
+          merge-multiple: true
+          path: vsix
+
+      # All six targets go up under one version, so the Marketplace serves each
+      # user the build for their platform.
+      # VSCE_PAT is an Azure DevOps token; Microsoft retires PATs on 2026-12-01,
+      # after which this switches to `--azure-credential` with an OIDC federated
+      # identity (see PUBLISHING.md).
+      - name: Publish
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx vsce publish --packagePath $(ls vsix/*.vsix | tr '\n' ' ')
+
+      - name: Attach VSIXes to the GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: vsix/*.vsix
+          generate_release_notes: true

@@ -4,3 +4,8 @@ dist/
 target/
 *.vsix
 .vscode-test/
+
+# Compiled daemons are build output, not source. Release CI builds each target
+# from crates/ on a host that can target it; locally, `npm run build:daemon`
+# followed by `npm run copy-daemon` puts one here.
+bin/

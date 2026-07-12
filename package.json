@@ -4,7 +4,7 @@
   "description": "Run Codex and Claude Code sessions from VS Code with model switching, handoffs, GitHub repos, and Docker Sandbox support.",
   "version": "0.1.0",
   "publisher": "perpetual",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "MIT",
   "author": {
     "name": "Perpetual"
   },
@@ -43,16 +43,6 @@
     "workspace"
   ],
   "main": "./dist/extension.js",
-  "activationEvents": [
-    "onView:perpetual.workbench",
-    "onView:perpetual.workbench.panel",
-    "onCommand:perpetual.openWorkbench",
-    "onCommand:perpetual.newSession",
-    "onCommand:perpetual.refresh",
-    "onCommand:perpetual.connectLocalRepo",
-    "onCommand:perpetual.connectGithubRepo",
-    "onCommand:perpetual.openSettings"
-  ],
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",

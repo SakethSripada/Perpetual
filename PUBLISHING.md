@@ -1,88 +1,91 @@
 # Publishing Perpetual for VS Code
 
-This package is self-contained at VSIX time: the extension host bundle, React
-webview bundle, Marketplace docs, assets, and one platform-specific
-`am-daemon` binary are included in the generated package.
+Perpetual ships as a **platform-specific extension**: the daemon is a compiled
+Rust binary, so each of the six targets gets its own VSIX containing exactly one
+`am-daemon`. The Marketplace serves each user the build for their platform.
 
-## Source Checklist
+Releases are cut by CI. Publishing by hand is the fallback.
 
-- Update `publisher`, repository URLs, support links, and icon ownership in
-  `package.json`.
-- Keep GitHub auth inside VS Code's authentication provider; do not store GitHub
-  OAuth tokens in Perpetual storage.
-- Keep Workspace Trust limited mode enabled because local CLIs, Git, and Docker
-  run on the user's machine.
-- Keep webview resources restricted to `dist/webview` and `media`, with a strict
-  CSP and extension-host message passing only.
-- Keep Claude Code Docker disabled until its auth/runtime path is safe.
+## One-time Marketplace setup
 
-## Build One Platform
+These steps cannot be done from the CLI.
 
-Run these commands from the extension repo on the target platform:
+1. **Create an Azure DevOps organization** (the Marketplace authenticates against
+   it): https://dev.azure.com
+2. **Create a Personal Access Token** scoped to **Marketplace → Manage**, with
+   the organization set to **All accessible organizations**. A token scoped to a
+   single org fails to publish.
+3. **Create the publisher** at https://marketplace.visualstudio.com/manage. The
+   publisher ID is permanent and must match `publisher` in `package.json`
+   (currently `perpetual`). If the ID is taken, pick another and update
+   `package.json` before releasing.
+4. **Store the token** as the `VSCE_PAT` secret in the GitHub repository, inside
+   an environment named `marketplace`. Add a required reviewer to that
+   environment so a release needs a human approval.
 
-```bash
+> **PATs are retired on 2026-12-01.** After that, publishing uses Microsoft Entra
+> ID: federate an identity with this repository and swap the publish step to
+> `npx vsce publish --azure-credential` with `id-token: write` permission. No
+> stored secret is needed then, which is the better setup for a public repo.
+
+## Cutting a release
+
+```sh
+# 1. Bump the version and land it on main.
+npm version 0.2.0 --no-git-tag-version
+# 2. Update CHANGELOG.md, commit, and push.
+# 3. Tag. The tag must match package.json or CI fails the release.
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+`.github/workflows/release.yml` then:
+
+1. verifies the tag matches `package.json`,
+2. builds all six daemons from `crates/` on hosts that can target them,
+3. packages one VSIX per target (`check-daemon` blocks a stale or foreign binary),
+4. waits for approval on the `marketplace` environment,
+5. publishes every target under one version, and
+6. attaches the VSIXes to a GitHub release.
+
+## Publishing by hand
+
+Only when CI is unavailable. Every target must be built on a host that can
+target it; never substitute a binary built for another OS or architecture.
+
+```sh
 npm ci
 npm run build:daemon -- --target=darwin-arm64
 npm run copy-daemon -- --target=darwin-arm64
 npm run package:darwin-arm64
-```
 
-Replace `darwin-arm64` with `darwin-x64`, `linux-x64`, `linux-arm64`,
-`win32-x64`, or `win32-arm64`. The daemon is built from the vendored Rust
-workspace in this repository, not from another application repository. The package
-scripts use a target-specific VSCE ignore file so each VSIX contains only the
-daemon for its target.
-
-## Verify The VSIX
-
-```bash
-npx vsce ls --tree
-code --install-extension perpetual-vscode-darwin-arm64-0.1.0.vsix
-```
-
-Confirm the file list contains:
-
-- `dist/extension.js`
-- `dist/webview/assets/index.js`
-- `dist/webview/assets/index.css`
-- `media/icon.png`
-- `media/PerpetualDemoImage.png`
-- `bin/<target>/am-daemon` or `bin/<target>/am-daemon.exe` on Windows
-
-Confirm it does not contain:
-
-- source maps
-- `node_modules/`
-- raw `src/` or `webview/src/`
-- raw `crates/` or `target/`
-- GitHub OAuth tokens or generated local data
-
-Build each target on a host with its Rust target, linker, and native C
-toolchain installed. A target is not publishable until its
-target-specific `check-daemon` step passes; never substitute a binary built for
-another OS or architecture.
-
-## Publish
-
-Use the final Marketplace publisher ID:
-
-```bash
 npx vsce login <publisher>
-npx vsce publish --target darwin-arm64
+npx vsce publish --packagePath perpetual-vscode-darwin-arm64-<version>.vsix
 ```
 
-For manual upload, package first and upload the generated `.vsix` from the
-Visual Studio Marketplace publisher management page.
+## Verifying a VSIX
+
+```sh
+unzip -l perpetual-vscode-darwin-arm64-<version>.vsix
+```
+
+It must contain `dist/extension.js`, the webview bundle, `media/`, and exactly
+one `bin/<target>/am-daemon`. It must not contain source maps, `node_modules/`,
+raw `src/`, `webview/src/`, `crates/`, `target/`, or any local data or tokens.
+
+## Marketplace asset rules
+
+- The `icon` in `package.json` must be a PNG of at least 128×128. It cannot be an
+  SVG. (`media/activity.svg` is a view-container icon inside the extension, which
+  is unaffected by this rule.)
+- README and CHANGELOG images cannot be SVGs, and must resolve over HTTPS. Relative
+  links are rewritten by `vsce` against the `repository` URL on the default
+  branch, so referenced images must be committed there.
+- Badges, if added, must come from a trusted provider.
+- At most 30 keywords.
 
 ## References
 
-- VS Code webview API and security:
-  https://code.visualstudio.com/api/extension-guides/webview
-- VS Code webview UX guidance:
-  https://code.visualstudio.com/api/ux-guidelines/webviews
-- VS Code view UX guidance:
-  https://code.visualstudio.com/api/ux-guidelines/views
-- VS Code platform-specific VSIX publishing:
-  https://code.visualstudio.com/api/working-with-extensions/publishing-extension
-- VS Code authentication API:
-  https://code.visualstudio.com/api/references/vscode-api#authentication
+- Publishing: https://code.visualstudio.com/api/working-with-extensions/publishing-extension
+- Platform-specific extensions: https://code.visualstudio.com/api/working-with-extensions/publishing-extension#platformspecific-extensions
+- Webview security: https://code.visualstudio.com/api/extension-guides/webview
+- Workspace Trust: https://code.visualstudio.com/api/extension-guides/workspace-trust

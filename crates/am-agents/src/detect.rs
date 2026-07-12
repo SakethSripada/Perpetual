@@ -501,8 +501,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn canonical_paths_drop_the_verbatim_prefix() {
-        let root =
-            std::env::temp_dir().join(format!("perpetual-detect-vb-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("perpetual-detect-vb-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         let codex = root.join("codex.cmd");
         make_executable(&codex);

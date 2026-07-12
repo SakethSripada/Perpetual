@@ -10,12 +10,21 @@ Thanks for helping improve Perpetual. Please open an issue before starting a lar
 4. Run `cargo test --workspace` for the Rust workspace.
 5. Run `npm run build` before packaging or opening a pull request.
 
-The extension launches the daemon binary from `bin/<target>/`. Build a local daemon with `npm run build:daemon -- --target=<target>` and copy it with `npm run copy-daemon -- --target=<target>`. Cross-platform packaging also requires the target's native linker and C toolchain.
+The extension launches the daemon binary from `bin/<target>/`. That directory is build output and is not committed, so build your own before running the extension:
+
+```sh
+npm run build:daemon -- --target=darwin-arm64   # your platform
+npm run copy-daemon -- --target=darwin-arm64
+```
+
+Release CI builds all six targets from `crates/` on hosts that can target them. Building a target other than your own additionally needs that target's native linker and C toolchain.
 
 ## Pull requests
 
+CI runs `npm test` and the extension build on Linux, macOS, and Windows, plus `cargo fmt --check`, `cargo clippy -D warnings`, and `cargo test --workspace`. Run them locally first:
+
 - Keep changes focused and include tests for behavior changes.
-- Do not commit generated `dist/`, `out/`, or `target/` directories.
+- Do not commit generated `bin/`, `dist/`, `out/`, or `target/` directories.
 - Do not add credentials, provider tokens, database files, or private workspace paths.
 - Run `git diff --check`, `npm test`, `cargo test --workspace`, and `npm run build` before submitting.
 - Use a Conventional Commit subject such as `feat(webview): add session history filtering` or `fix(daemon): reject expired client tokens`.

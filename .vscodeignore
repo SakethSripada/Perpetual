@@ -19,6 +19,8 @@ dist/**/*.map
 .claude/**
 .vscode/**
 .github/**
+CONTRIBUTING.md
+PUBLISHING.md
 !README.md
 !CHANGELOG.md
 !LICENSE

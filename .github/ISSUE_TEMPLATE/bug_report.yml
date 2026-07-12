@@ -1,0 +1,40 @@
+name: Bug report
+description: Something in Perpetual behaves incorrectly.
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Which agent
+      options:
+        - Claude Code
+        - Codex
+        - Both
+        - Not agent-specific
+    validations:
+      required: true
+
+  - type: input
+    id: versions
+    attributes:
+      label: Perpetual and VS Code versions
+      placeholder: "Perpetual 0.1.0, VS Code 1.99.0, macOS 14 arm64"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output channel
+      description: >
+        Output → Perpetual. Redact repository paths and anything sensitive; this
+        is a public issue.
+      render: text

@@ -50,7 +50,7 @@ try {
   console.error("Build and copy the daemon from this extension repo:");
   console.error(`  npm run build:daemon -- --target=${target}`);
   console.error(`  npm run copy-daemon -- --target=${target}`);
-  console.error("Then commit the updated bin/ here and retry packaging.");
+  console.error("The daemon is build output and is not committed; bin/ stays local.");
   process.exit(1);
 }
 
