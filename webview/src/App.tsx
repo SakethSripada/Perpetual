@@ -961,15 +961,10 @@ export default function App() {
                 onEdit={
                   item.type === "event" && item.event.role === "user"
                     ? () =>
-                        {
-                          setEditDraft({
-                            text: item.event.text ?? "",
-                            nonce: Date.now(),
-                          });
-                          setNotice(
-                            "Edit the message and send it as a new follow-up. Existing history stays intact.",
-                          );
-                        }
+                        setEditDraft({
+                          text: item.event.text ?? "",
+                          nonce: Date.now(),
+                        })
                     : undefined
                 }
                 questionAnswered={

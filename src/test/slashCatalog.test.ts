@@ -71,8 +71,10 @@ test("plan commands request structured clarification without exposing their prom
 });
 
 test("editing resends safely without rewriting provider history", () => {
+  // Edit loads the text back into the composer and sends a new turn; it must
+  // never rewrite or drop the events already in the thread. The affordance says
+  // so, so the old "history stays intact" notice was only restating the obvious.
   assert.match(appSource, /Edit and resend as a new turn/);
-  assert.match(appSource, /Existing history stays intact/);
   assert.match(appSource, /setEditDraft/);
 });
 
