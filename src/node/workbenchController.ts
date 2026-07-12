@@ -1725,39 +1725,12 @@ function sanitizeLocalProvider(
 }
 
 function sanitizeModelForAgent(
-  agent: AgentKind,
+  _agent: AgentKind,
   model: string | null,
   localProvider: LocalModelProvider | null,
 ): string | null {
   if (!model) return null;
-  if (localProvider) return model;
-  return modelCompatibleWithAgent(agent, model) ? model : null;
-}
-
-function modelCompatibleWithAgent(agent: AgentKind, model: string): boolean {
-  const normalized = baseModelId(model).toLowerCase();
-  if (!normalized) return true;
-  if (agent === "codex") return !isClaudeModel(normalized);
-  if (agent === "claude_code") return !isCodexModel(normalized);
-  return true;
-}
-
-function baseModelId(value: string): string {
-  return value
-    .trim()
-    .replace(/\[[^\]]*\]$/, "")
-    .trim();
-}
-
-function isClaudeModel(model: string): boolean {
-  return (
-    ["opus", "sonnet", "haiku", "fable"].includes(model) ||
-    model.startsWith("claude-")
-  );
-}
-
-function isCodexModel(model: string): boolean {
-  return model.includes("gpt-") || /^o[1-9]/.test(model);
+  return model;
 }
 
 function defaultLocalBaseUrl(provider: LocalModelProvider): string {

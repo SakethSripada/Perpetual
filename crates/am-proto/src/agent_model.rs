@@ -22,6 +22,10 @@ pub struct AgentModelOption {
     pub source: String,
     #[serde(default)]
     pub reasoning: Vec<String>,
+    /// Provider-recommended effort for this model, when the installed CLI
+    /// exposes one. Kept per-model because model families differ.
+    #[serde(default)]
+    pub default_reasoning: Option<String>,
     #[serde(default)]
     pub local_provider: Option<LocalModelProviderKind>,
     #[serde(default)]

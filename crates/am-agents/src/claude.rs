@@ -275,8 +275,7 @@ fn normalize_model(model: Option<&str>) -> Option<String> {
 }
 
 fn normalize_reasoning(reasoning: Option<&str>) -> Option<String> {
-    let value = clean_override(reasoning)?.to_ascii_lowercase();
-    matches!(value.as_str(), "low" | "medium" | "high" | "xhigh" | "max").then_some(value)
+    Some(clean_override(reasoning)?.to_ascii_lowercase())
 }
 
 fn clean_override(value: Option<&str>) -> Option<&str> {
@@ -704,7 +703,7 @@ mod tests {
     }
 
     #[test]
-    fn drops_codex_model_and_effort_for_claude() {
+    fn drops_codex_model_but_forwards_provider_validated_effort_for_claude() {
         let spec = SessionSpec {
             worktree: "/tmp/worktree".into(),
             prompt: "Continue".into(),
@@ -720,7 +719,7 @@ mod tests {
 
         let args = build_args(&spec, None);
         assert!(!args.iter().any(|arg| arg == "--model" || arg == "gpt-5.5"));
-        assert!(!args.iter().any(|arg| arg == "--effort" || arg == "minimal"));
+        assert!(args.windows(2).any(|pair| pair == ["--effort", "minimal"]));
     }
 
     #[test]

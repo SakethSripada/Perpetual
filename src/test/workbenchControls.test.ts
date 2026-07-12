@@ -14,6 +14,17 @@ type WorkbenchControlsModule = {
     localProvider: "ollama" | "lm_studio" | null,
     current: string,
   ): ModelOption[];
+  reasoningOptions(
+    agent: "claude_code" | "codex",
+    snapshot: any,
+    model: string,
+  ): { value: string; label: string }[];
+  reasoningAfterModelChange(
+    agent: "claude_code" | "codex",
+    snapshot: any,
+    model: string,
+    current: string,
+  ): string;
   sameStringSet(a: readonly string[], b: readonly string[]): boolean;
 };
 
@@ -96,6 +107,51 @@ test("detected and local model catalogs remain authoritative", async () => {
   );
 });
 
+test("reasoning choices follow the selected model's discovered capabilities", async () => {
+  const { reasoningOptions, reasoningAfterModelChange } =
+    await loadWorkbenchControls();
+  const snapshot = {
+    modelCatalog: [
+      {
+        agent: "codex",
+        reasoning: ["low", "medium", "high", "xhigh", "max", "ultra"],
+        models: [
+          {
+            id: "gpt-5.6-sol",
+            aliases: [],
+            reasoning: ["low", "medium", "high", "xhigh", "max", "ultra"],
+            default_reasoning: "medium",
+          },
+          {
+            id: "gpt-5.6-luna",
+            aliases: [],
+            reasoning: ["low", "medium", "high", "xhigh", "max"],
+            default_reasoning: "medium",
+          },
+        ],
+      },
+    ],
+    runDefaults: [],
+  };
+
+  assert.deepEqual(
+    reasoningOptions("codex", snapshot, "gpt-5.6-sol").map(
+      (option) => option.value,
+    ),
+    ["", "low", "medium", "high", "xhigh", "max", "ultra"],
+  );
+  assert.deepEqual(
+    reasoningOptions("codex", snapshot, "gpt-5.6-luna").map(
+      (option) => option.value,
+    ),
+    ["", "low", "medium", "high", "xhigh", "max"],
+  );
+  assert.equal(
+    reasoningAfterModelChange("codex", snapshot, "gpt-5.6-luna", "ultra"),
+    "medium",
+  );
+});
+
 test("repo snapshot acknowledgement compares repository sets", async () => {
   const { sameStringSet } = await loadWorkbenchControls();
   assert.equal(sameStringSet(["repo-a", "repo-b"], ["repo-b", "repo-a"]), true);
@@ -147,7 +203,7 @@ function loadSignIn(): Promise<SignInModule> {
       alias: { vscode: stub },
       logLevel: "silent",
     });
-    const loaded = require(pathToFileURL(outfile).pathname.replace(/^\//, "")) as SignInModule;
+    const loaded = require(outfile) as SignInModule;
     rmSync(dir, { recursive: true, force: true });
     return loaded;
   })();

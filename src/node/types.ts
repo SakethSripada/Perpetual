@@ -107,6 +107,7 @@ export interface AgentModelOption {
   available: boolean;
   source: string;
   reasoning: string[];
+  default_reasoning?: string | null;
   local_provider?: LocalModelProvider | null;
   local_base_url?: string | null;
 }

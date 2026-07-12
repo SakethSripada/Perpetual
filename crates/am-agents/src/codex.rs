@@ -434,12 +434,9 @@ fn toml_string(value: &str) -> String {
 }
 
 fn normalize_reasoning(reasoning: Option<&str>) -> Option<String> {
-    let value = clean_override(reasoning)?.to_ascii_lowercase();
-    matches!(
-        value.as_str(),
-        "minimal" | "low" | "medium" | "high" | "xhigh"
-    )
-    .then_some(value)
+    // The installed CLI owns validation. Keeping a hard-coded allow-list here
+    // silently dropped new catalog values such as `max` and `ultra`.
+    Some(clean_override(reasoning)?.to_ascii_lowercase())
 }
 
 fn clean_override(value: Option<&str>) -> Option<&str> {
@@ -1010,7 +1007,7 @@ mod tests {
     }
 
     #[test]
-    fn drops_claude_model_alias_for_codex() {
+    fn drops_claude_model_alias_but_forwards_discovered_effort_for_codex() {
         let spec = SessionSpec {
             worktree: "/tmp/worktree".into(),
             prompt: "Continue".into(),
@@ -1026,7 +1023,7 @@ mod tests {
 
         let args = build_args(&spec, None);
         assert!(!args.iter().any(|arg| arg == "--model" || arg == "opus"));
-        assert!(!args
+        assert!(args
             .iter()
             .any(|arg| arg == "model_reasoning_effort=\"max\""));
     }
@@ -1055,7 +1052,7 @@ mod tests {
     #[test]
     fn accepts_codex_reasoning_efforts() {
         let mut seen = Vec::new();
-        for effort in ["minimal", "low", "medium", "high", "xhigh"] {
+        for effort in ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"] {
             let spec = SessionSpec {
                 worktree: "/tmp/worktree".into(),
                 prompt: "Implement it".into(),
@@ -1084,6 +1081,8 @@ mod tests {
                 "model_reasoning_effort=\"medium\"",
                 "model_reasoning_effort=\"high\"",
                 "model_reasoning_effort=\"xhigh\"",
+                "model_reasoning_effort=\"max\"",
+                "model_reasoning_effort=\"ultra\"",
             ]
         );
     }

@@ -2,6 +2,7 @@
 //! worktrees, stream normalized events, persist the transcript, and compute
 //! diffs. All git/process work runs off the async runtime via `spawn_blocking`.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -1433,6 +1434,7 @@ fn claude_model_catalog(defaults: AgentRunDefaults) -> AgentModelCatalog {
                 available: true,
                 source: "settings".to_string(),
                 reasoning: reasoning.clone(),
+                default_reasoning: defaults.reasoning.clone(),
                 local_provider: None,
                 local_base_url: None,
             },
@@ -1509,6 +1511,7 @@ fn codex_model_catalog(mut defaults: AgentRunDefaults) -> AgentModelCatalog {
                 available: true,
                 source: "settings".to_string(),
                 reasoning: reasoning.clone(),
+                default_reasoning: defaults.reasoning.clone(),
                 local_provider: None,
                 local_base_url: None,
             },
@@ -1609,6 +1612,7 @@ fn parse_codex_debug_models(
                 available: true,
                 source: "codex_debug_models".to_string(),
                 reasoning: model_reasoning,
+                default_reasoning: model.default_reasoning_level,
                 local_provider: None,
                 local_base_url: None,
             },
@@ -1633,6 +1637,7 @@ fn parse_claude_help_models(help: &str) -> Vec<AgentModelOption> {
                     available: true,
                     source: "claude_help".to_string(),
                     reasoning: Vec::new(),
+                    default_reasoning: None,
                     local_provider: None,
                     local_base_url: None,
                 },
@@ -1655,6 +1660,7 @@ fn parse_claude_help_models(help: &str) -> Vec<AgentModelOption> {
                 available: true,
                 source: "claude_help".to_string(),
                 reasoning: Vec::new(),
+                default_reasoning: None,
                 local_provider: None,
                 local_base_url: None,
             },
@@ -1710,22 +1716,50 @@ fn command_output_timeout(
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|err| format!("failed to run {}: {err}", binary.display()))?;
+    // Provider catalogs can be hundreds of KB. Drain both pipes while the
+    // process is running; waiting for exit before reading deadlocks once an OS
+    // pipe buffer fills (the current Codex catalog is already large enough).
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| format!("{} did not expose stdout", binary.display()))?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| format!("{} did not expose stderr", binary.display()))?;
+    let stdout_reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let result = stdout.read_to_end(&mut bytes);
+        (result, bytes)
+    });
+    let stderr_reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let result = stderr.read_to_end(&mut bytes);
+        (result, bytes)
+    });
     let started = Instant::now();
     loop {
         match child.try_wait() {
-            Ok(Some(_)) => {
-                let output = child
-                    .wait_with_output()
-                    .map_err(|err| format!("failed to read {} output: {err}", binary.display()))?;
-                if !output.status.success() {
-                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            Ok(Some(status)) => {
+                let (stdout_result, stdout) = stdout_reader
+                    .join()
+                    .map_err(|_| format!("failed to read {} stdout", binary.display()))?;
+                stdout_result
+                    .map_err(|err| format!("failed to read {} stdout: {err}", binary.display()))?;
+                let (stderr_result, stderr) = stderr_reader
+                    .join()
+                    .map_err(|_| format!("failed to read {} stderr", binary.display()))?;
+                stderr_result
+                    .map_err(|err| format!("failed to read {} stderr: {err}", binary.display()))?;
+                if !status.success() {
+                    let stderr = String::from_utf8_lossy(&stderr).trim().to_string();
                     return Err(if stderr.is_empty() {
-                        format!("{} exited with {}", binary.display(), output.status)
+                        format!("{} exited with {status}", binary.display())
                     } else {
                         stderr
                     });
                 }
-                return Ok(String::from_utf8_lossy(&output.stdout).to_string());
+                return Ok(String::from_utf8_lossy(&stdout).to_string());
             }
             Ok(None) if started.elapsed() < timeout => {
                 std::thread::sleep(Duration::from_millis(25));
@@ -1733,6 +1767,8 @@ fn command_output_timeout(
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
+                let _ = stdout_reader.join();
+                let _ = stderr_reader.join();
                 return Err(format!("{} timed out", binary.display()));
             }
             Err(err) => return Err(format!("failed to poll {}: {err}", binary.display())),
@@ -2079,21 +2115,25 @@ mod model_catalog_tests {
         let raw = r#"{
           "models": [
             {
-              "slug": "gpt-5.5",
-              "display_name": "GPT-5.5",
+              "slug": "gpt-5.6-sol",
+              "display_name": "GPT-5.6-Sol",
               "visibility": "list",
               "base_instructions": "huge text ignored",
               "default_reasoning_level": "medium",
-              "supported_reasoning_levels": [{"effort": "low"}, {"effort": "medium"}, {"effort": "high"}]
+              "supported_reasoning_levels": [{"effort": "low"}, {"effort": "medium"}, {"effort": "high"}, {"effort": "xhigh"}, {"effort": "max"}, {"effort": "ultra"}]
             },
             { "slug": "hidden-model", "visibility": "hidden" }
           ]
         }"#;
-        let (models, reasoning) = parse_codex_debug_models(raw, Some("gpt-5.5")).unwrap();
+        let (models, reasoning) = parse_codex_debug_models(raw, Some("gpt-5.6-sol")).unwrap();
         assert_eq!(models.len(), 1);
-        assert_eq!(models[0].id, "gpt-5.5");
+        assert_eq!(models[0].id, "gpt-5.6-sol");
         assert!(models[0].default);
-        assert_eq!(reasoning, vec!["low", "medium", "high"]);
+        assert_eq!(models[0].default_reasoning.as_deref(), Some("medium"));
+        assert_eq!(
+            reasoning,
+            vec!["low", "medium", "high", "xhigh", "max", "ultra"]
+        );
     }
 
     #[test]
@@ -2105,6 +2145,18 @@ mod model_catalog_tests {
         assert!(models.iter().any(|model| model.id == "opus"));
         assert!(models.iter().any(|model| model.id == "sonnet"));
         assert!(models.iter().any(|model| model.id == "claude-fable-5"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn command_output_timeout_drains_large_catalogs_while_process_runs() {
+        let output = command_output_timeout(
+            Path::new("/bin/sh"),
+            &["-c", "yes x | head -c 300000"],
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        assert_eq!(output.len(), 300_000);
     }
 
     #[test]

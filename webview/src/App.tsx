@@ -409,6 +409,14 @@ export default function App() {
     snapshot?.runDefaults,
   ]);
 
+  // Catalog refreshes may reveal that a persisted effort does not belong to
+  // the selected model. Repair it immediately to the model's advertised
+  // default instead of waiting for a provider-side launch error.
+  useEffect(() => {
+    const next = reasoningAfterModelChange(agent, snapshot, model, reasoning);
+    if (next !== reasoning) setReasoning(next);
+  }, [agent, model, reasoning, snapshot?.modelCatalog]);
+
   // A disconnected repo must not linger in the draft selection.
   useEffect(() => {
     if (!snapshot) return;
@@ -648,11 +656,10 @@ export default function App() {
           setNotice(`Using the ${labelAgent(agent)} default model for future runs.`);
           return;
         }
-        if (!modelCompatibleWithAgent(agent, nextModel)) {
-          setNotice(`${prettyModel(nextModel)} is not available for ${labelAgent(agent)}.`);
-          return;
-        }
         setModel(nextModel);
+        setReasoning(
+          reasoningAfterModelChange(agent, snapshot, nextModel, reasoning),
+        );
         setNotice(`Model set to ${prettyModel(nextModel)} for future ${labelAgent(agent)} runs.`);
         return;
       }
@@ -667,7 +674,7 @@ export default function App() {
           setNotice(`Using the ${labelAgent(agent)} default reasoning effort.`);
           return;
         }
-        const supportedEffort = reasoningOptions(agent, snapshot).find(
+        const supportedEffort = reasoningOptions(agent, snapshot, model).find(
           (option) =>
             option.value.toLowerCase() === requestedEffort.toLowerCase(),
         );
@@ -761,23 +768,19 @@ export default function App() {
 
   const pickAgent = (nextAgent: AgentKind) => {
     setAgent(nextAgent);
-    const compatibleModel = sanitizeModelForAgent(nextAgent, model, null);
     if (nextAgent !== "codex") {
       setBackend("host");
       setLocalProvider("");
       setLocalBaseUrl("");
     }
     if (!snapshot) {
-      if (compatibleModel !== model.trim()) setModel("");
+      setModel("");
+      setReasoning("");
       return;
     }
     const defaults = runDefaults(snapshot, nextAgent);
-    if (compatibleModel !== model.trim()) {
-      setModel(defaults.model ?? "");
-    } else if (!model.trim()) {
-      setModel(defaults.model ?? "");
-    }
-    if (!reasoning.trim()) setReasoning(defaults.reasoning ?? "medium");
+    setModel(defaults.model ?? "");
+    setReasoning(defaults.reasoning ?? "");
   };
 
   const setDraftRepoIds = (next: string[]) => {
@@ -1631,28 +1634,21 @@ function ModelPicker(props: {
             <em className="field-value">{prettyModel(props.value)}</em>
           )}
       </span>
-      <Popover
-        open={open}
-        setOpen={setOpen}
-        placement="above"
-        trigger={({ toggle, ref }) => (
-          <button
-            ref={ref as (el: HTMLButtonElement | null) => void}
-            type="button"
-            className="model-trigger"
-            aria-haspopup="listbox"
-            aria-expanded={open}
-            onClick={toggle}
-          >
-            <span>
-              {selected?.label ??
-                (props.value ? prettyModel(props.value) : "Default model")}
-            </span>
-            <Icon name="caret" />
-          </button>
-        )}
+      <button
+        type="button"
+        className="model-trigger"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
       >
-        <div className="menu model-menu" role="listbox">
+        <span>
+          {selected?.label ??
+            (props.value ? prettyModel(props.value) : "Default model")}
+        </span>
+        <Icon name="caret" />
+      </button>
+      {open && (
+        <div className="menu model-menu model-menu-inline" role="listbox">
           <input
             className="model-search"
             autoFocus
@@ -1724,7 +1720,7 @@ function ModelPicker(props: {
             </button>
           ))}
         </div>
-      </Popover>
+      )}
     </div>
   );
 }
@@ -2387,7 +2383,17 @@ function Composer(props: ComposerProps) {
                   snapshot={props.snapshot}
                   localProvider={props.localProvider || null}
                   value={props.model}
-                  onChange={props.setModel}
+                  onChange={(nextModel) => {
+                    props.setModel(nextModel);
+                    props.setReasoning(
+                      reasoningAfterModelChange(
+                        props.agent,
+                        props.snapshot,
+                        nextModel,
+                        props.reasoning,
+                      ),
+                    );
+                  }}
                 />
                 <label className="field">
                   <span>Reasoning effort</span>
@@ -2395,7 +2401,11 @@ function Composer(props: ComposerProps) {
                     value={props.reasoning}
                     onChange={(event) => props.setReasoning(event.target.value)}
                   >
-                    {reasoningOptions(props.agent, props.snapshot).map(
+                    {reasoningOptions(
+                      props.agent,
+                      props.snapshot,
+                      props.model,
+                    ).map(
                       (option) => (
                         <option key={option.value} value={option.value}>
                           {option.label}
@@ -4150,6 +4160,7 @@ export function modelOptions(
     }
   } else {
     for (const option of catalog?.models ?? []) {
+      if (!option.available) continue;
       pushPickerOption(out, catalogOption(option));
     }
     const detectedModels = (catalog?.models ?? []).some(
@@ -4240,26 +4251,61 @@ function normalizeAgentOrder(value: readonly AgentKind[] | null | undefined): Ag
   return out;
 }
 
-function reasoningOptions(
+export function reasoningOptions(
   agent: AgentKind,
   snapshot: WorkbenchSnapshot | null,
+  model: string,
 ): { value: string; label: string }[] {
   const values = [""];
   const catalog = snapshot?.modelCatalog?.find((item) => item.agent === agent);
-  for (const value of catalog?.reasoning ?? []) pushReasoning(values, value);
+  const selectedModel = catalog?.models.find(
+    (option) =>
+      modelIdsEqual(option.id, model) ||
+      option.aliases?.some((alias) => modelIdsEqual(alias, model)),
+  );
+  const detected = selectedModel?.reasoning?.length
+    ? selectedModel.reasoning
+    : (catalog?.reasoning ?? []);
+  for (const value of detected) pushReasoning(values, value);
   const defaults = snapshot
     ? runDefaults(snapshot, agent)
     : { model: null, reasoning: null };
-  if (defaults.reasoning) pushReasoning(values, defaults.reasoning);
-  for (const fallback of agent === "claude_code"
-    ? ["low", "medium", "high", "xhigh", "max"]
-    : ["low", "medium", "high"]) {
-    pushReasoning(values, fallback);
+  if (!selectedModel?.reasoning?.length && defaults.reasoning) {
+    pushReasoning(values, defaults.reasoning);
+  }
+  // Fall back only when the installed CLI exposed no effort metadata. Once it
+  // does, its values are authoritative and automatically include future names.
+  if (detected.length === 0) {
+    for (const fallback of agent === "claude_code"
+      ? ["low", "medium", "high", "xhigh", "max"]
+      : ["low", "medium", "high"]) {
+      pushReasoning(values, fallback);
+    }
   }
   return values.map((value) => ({
     value,
     label: value ? humanize(value) : "Default",
   }));
+}
+
+export function reasoningAfterModelChange(
+  agent: AgentKind,
+  snapshot: WorkbenchSnapshot | null,
+  model: string,
+  current: string,
+): string {
+  const options = reasoningOptions(agent, snapshot, model);
+  const retained = options.find(
+    (option) => option.value.toLowerCase() === current.trim().toLowerCase(),
+  );
+  if (retained) return retained.value;
+  const catalog = snapshot?.modelCatalog?.find((item) => item.agent === agent);
+  const selectedModel = catalog?.models.find(
+    (option) =>
+      modelIdsEqual(option.id, model) ||
+      option.aliases?.some((alias) => modelIdsEqual(alias, model)),
+  );
+  return selectedModel?.default_reasoning?.trim() ?? "";
 }
 
 function pushReasoning(values: string[], value: string): void {
@@ -4304,33 +4350,13 @@ function baseModelId(value: string): string {
 }
 
 function sanitizeModelForAgent(
-  agent: AgentKind,
+  _agent: AgentKind,
   model: string,
   localProvider: LocalModelProvider | null,
 ): string | null {
   const trimmed = model.trim();
   if (!trimmed) return null;
-  if (localProvider) return trimmed;
-  return modelCompatibleWithAgent(agent, trimmed) ? trimmed : null;
-}
-
-function modelCompatibleWithAgent(agent: AgentKind, model: string): boolean {
-  const normalized = baseModelId(model).toLowerCase();
-  if (!normalized) return true;
-  if (agent === "codex") return !isClaudeModel(normalized);
-  if (agent === "claude_code") return !isCodexModel(normalized);
-  return true;
-}
-
-function isClaudeModel(model: string): boolean {
-  return (
-    ["opus", "sonnet", "haiku", "fable"].includes(model) ||
-    model.startsWith("claude-")
-  );
-}
-
-function isCodexModel(model: string): boolean {
-  return model.includes("gpt-") || /^o[1-9]/.test(model);
+  return trimmed;
 }
 
 // Display-only: turn a raw model id into a properly-capitalized name.
