@@ -24,9 +24,9 @@ use crate::runtime::{
     RuntimeLimits,
 };
 use crate::{
-    AgentAdapter, AgentError, AgentInstallStatus, AgentKind, ChangeKind, LocalModelRuntime,
-    NormalizedEvent, PermissionPolicy, SessionControl, SessionHandle, SessionRef, SessionSpec,
-    SessionStatus,
+    AgentAdapter, AgentError, AgentInstallStatus, AgentKind, ApprovalDecision, ApprovalResponder,
+    ChangeKind, LocalModelRuntime, NormalizedEvent, PermissionPolicy, SessionControl,
+    SessionHandle, SessionRef, SessionSpec, SessionStatus,
 };
 
 const BIN: &str = "codex";
@@ -46,26 +46,21 @@ impl CodexAdapter {
         spec: SessionSpec,
         resume: Option<SessionRef>,
     ) -> Result<SessionHandle, AgentError> {
-        // Ask and Edit (WorkspaceWrite) modes want live approval, which `codex
-        // exec` cannot do. On the host runtime, drive the app-server JSON-RPC
-        // transport instead (Ask prompts for everything; Edit auto-approves
-        // workspace edits and prompts only on escalation). If it fails to start,
-        // fall through to a sandboxed exec run.
-        if matches!(
-            spec.permission,
-            PermissionPolicy::Ask | PermissionPolicy::WorkspaceWrite
-        ) && matches!(spec.runtime, crate::SessionRuntime::Host { .. })
-        {
-            if let Some(approver) = spec.approver.clone() {
-                match crate::codex_app_server::launch(spec.clone(), resume.clone(), approver).await
-                {
-                    Ok(handle) => return Ok(handle),
-                    Err(err) => {
-                        tracing::warn!(
-                            error = %err.into_message(),
-                            "codex app-server live-approval transport failed; falling back to exec"
-                        );
-                    }
+        // Host runs use app-server for both approvals and structured user-input
+        // requests. In read-only/plan mode the fallback responder can only deny
+        // an unexpected action approval, while request_user_input still reaches
+        // the workbench as a first-class question.
+        if matches!(spec.runtime, crate::SessionRuntime::Host { .. }) {
+            let approver = spec.approver.clone().unwrap_or_else(|| {
+                ApprovalResponder::new(|_| Box::pin(async { ApprovalDecision::Deny }))
+            });
+            match crate::codex_app_server::launch(spec.clone(), resume.clone(), approver).await {
+                Ok(handle) => return Ok(handle),
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err.into_message(),
+                        "codex app-server interactive transport failed; falling back to exec"
+                    );
                 }
             }
         }

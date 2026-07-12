@@ -78,9 +78,14 @@ export function buildTranscriptItems(input: {
       continue;
     }
     if (event.role === "user") {
-      const text = (event.text ?? "").trim();
+      const text = publicUserMessage(event.text ?? "").trim();
       if (text && noAssistantUserTexts.has(text)) continue;
       if (text) noAssistantUserTexts.add(text);
+      items.push({
+        type: "event",
+        event: text === event.text ? event : { ...event, text },
+      });
+      continue;
     } else if (event.role === "assistant" || event.role === "tool") {
       noAssistantUserTexts.clear();
     }
@@ -132,6 +137,10 @@ export function buildTranscriptItems(input: {
 }
 
 function isRoutineEvent(event: AgentThreadEvent): boolean {
+  // Provider/system envelopes are operational metadata, never conversation.
+  // Keeping this boundary here prevents a newly introduced system-prompt event
+  // from accidentally becoming visible just because the renderer understands it.
+  if (event.role === "system") return true;
   if (event.kind === "session_started") return true;
   if (event.kind === "token_usage") return true;
   if (event.kind === "usage_limit") return true;
@@ -141,6 +150,30 @@ function isRoutineEvent(event: AgentThreadEvent): boolean {
     return status === "completed" || status === "interrupted" || status === "failed";
   }
   return false;
+}
+
+/**
+ * App-owned slash commands are expanded into provider instructions before they
+ * leave the webview. Persisted transcripts must show what the user typed, not
+ * those internal implementation prompts.
+ */
+export function publicUserMessage(value: string): string {
+  const text = value.trim();
+  const commands: Array<[RegExp, string]> = [
+    [/^Create an implementation plan[\s\S]*?\n\nRequest:\n([\s\S]+)$/i, "plan"],
+    [/^Perform a read-only code review[\s\S]*?\n\nScope:\n([\s\S]+)$/i, "review"],
+    [/^Perform a read-only security review[\s\S]*?\n\nScope:\n([\s\S]+)$/i, "security-review"],
+    [/^Diagnose and fix the concrete problem[\s\S]*?\n\nProblem:\n([\s\S]+)$/i, "debug"],
+  ];
+  for (const [pattern, command] of commands) {
+    const match = pattern.exec(text);
+    if (match) return `/${command} ${match[1].trim()}`;
+  }
+  if (/^Initialize durable agent guidance for /i.test(text)) return "/init";
+  if (/^Simplify [\s\S]+ without changing observable behavior\./i.test(text)) return "/simplify";
+  if (/^Build and launch [\s\S]+, then exercise the relevant behavior/i.test(text)) return "/run";
+  if (/^Verify [\s\S]+ end to end\./i.test(text)) return "/verify";
+  return value;
 }
 
 type TransitionItem = Extract<TranscriptItem, { type: "transition" }>;

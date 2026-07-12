@@ -63,6 +63,19 @@ test("unknown slash commands are rejected instead of passed to a CLI", () => {
   assert.doesNotMatch(appSource, /isNativeSlashCommandText/);
 });
 
+test("plan commands request structured clarification without exposing their prompt", () => {
+  assert.match(appSource, /ask the user a structured question with concise options/);
+  assert.match(appSource, /function publicToolData/);
+  assert.match(appSource, /"system_prompt"/);
+  assert.match(appSource, /if \(!props\.onSend\(draft\)\) return/);
+});
+
+test("editing resends safely without rewriting provider history", () => {
+  assert.match(appSource, /Edit and resend as a new turn/);
+  assert.match(appSource, /Existing history stays intact/);
+  assert.match(appSource, /setEditDraft/);
+});
+
 test("the picker completes only the leading command token", () => {
   assert.match(appSource, /const slashStart = value\.match\(\/\^\\s\*\//);
   assert.match(

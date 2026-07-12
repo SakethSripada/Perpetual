@@ -37,6 +37,11 @@ import {
   type PendingTranscriptMessage,
   type TranscriptItem,
 } from "./transcript";
+import {
+  formatQuestionAnswers,
+  questionsFromEvent,
+  type UserQuestion,
+} from "./userQuestions";
 
 type PendingMessage = PendingTranscriptMessage;
 type PersistedState = {
@@ -109,6 +114,10 @@ export default function App() {
   // Optimistically-rendered user messages: shown the instant the user sends, then
   // dropped once the real event for them arrives in a snapshot.
   const [pending, setPending] = useState<PendingMessage[]>([]);
+  const [editDraft, setEditDraft] = useState<{ text: string; nonce: number } | null>(null);
+  const [answeredQuestionEvents, setAnsweredQuestionEvents] = useState<Set<string>>(
+    () => new Set(),
+  );
   // Optimistic thread navigation: reflect the clicked thread instantly instead of
   // waiting for the round-trip. `undefined` means "no navigation in flight".
   const [navThreadId, setNavThreadId] = useState<string | null | undefined>(
@@ -570,19 +579,19 @@ export default function App() {
 
   // The composer owns its own draft text so typing never re-renders the
   // transcript; it hands us the final text here on submit.
-  const send = (raw: string) => {
+  const send = (raw: string): boolean => {
     const text = raw.trim();
-    if (!text) return;
+    if (!text) return false;
     const command = resolveAppCommand(text, agent);
     if (command?.kind === "unsupported") {
       setNotice(
         `/${command.name} is not supported in Perpetual. Choose a command from the picker.`,
       );
-      return;
+      return false;
     }
     if (command?.kind === "error") {
       setNotice(command.message);
-      return;
+      return false;
     }
     if (command?.kind === "local") {
       switch (command.action) {
@@ -592,7 +601,7 @@ export default function App() {
               .map((item) => `/${item.name}`)
               .join(", ")}`,
           );
-          return;
+          return true;
         case "status": {
           const availability = snapshot?.agents.find(
             (item) => item.kind === agent,
@@ -614,34 +623,34 @@ export default function App() {
               selectedThread ? (isRunning ? "Running" : "Idle") : "New session",
             ].join(" · "),
           );
-          return;
+          return true;
         }
         case "diff":
           if (!selectedThread) {
             setNotice("Start or resume a session before opening its changes.");
-            return;
+            return false;
           }
           reviewChanges();
-          return;
+          return true;
         case "new":
           newSession();
-          return;
+          return true;
         case "resume":
           setHistoryOpen(true);
-          return;
+          return true;
         case "settings":
           setSettingsOpen(true);
-          return;
+          return true;
         case "stop":
           if (!selectedThread || !isRunning) {
             setNotice("There is no active run to stop.");
-            return;
+            return false;
           }
           vscode.postMessage({
             type: "stopThread",
             threadId: selectedThread.id,
           });
-          return;
+          return true;
       }
     }
     if (command?.kind === "setting") {
@@ -649,30 +658,30 @@ export default function App() {
         const nextModel = command.argument.trim();
         if (!nextModel) {
           setNotice("Usage: /model <model-id>, or /model default.");
-          return;
+          return false;
         }
         if (nextModel.toLowerCase() === "default") {
           setModel("");
           setNotice(`Using the ${labelAgent(agent)} default model for future runs.`);
-          return;
+          return true;
         }
         setModel(nextModel);
         setReasoning(
           reasoningAfterModelChange(agent, snapshot, nextModel, reasoning),
         );
         setNotice(`Model set to ${prettyModel(nextModel)} for future ${labelAgent(agent)} runs.`);
-        return;
+        return true;
       }
       if (command.setting === "reasoning") {
         const requestedEffort = command.argument.trim();
         if (!requestedEffort) {
           setNotice("Usage: /effort <level>, or /effort default.");
-          return;
+          return false;
         }
         if (["auto", "default"].includes(requestedEffort.toLowerCase())) {
           setReasoning("");
           setNotice(`Using the ${labelAgent(agent)} default reasoning effort.`);
-          return;
+          return false;
         }
         const supportedEffort = reasoningOptions(agent, snapshot, model).find(
           (option) =>
@@ -682,25 +691,25 @@ export default function App() {
           setNotice(
             `${humanize(requestedEffort)} reasoning is not available for ${labelAgent(agent)}.`,
           );
-          return;
+          return true;
         }
         setReasoning(supportedEffort.value);
         setNotice(
           `Reasoning effort set to ${humanize(supportedEffort.value)} for future ${labelAgent(agent)} runs.`,
         );
-        return;
+        return true;
       }
 
       const nextPermission = permissionFromCommand(command.argument);
       if (!nextPermission) {
         setNotice("Usage: /permissions read-only, write, or full-access.");
-        return;
+        return false;
       }
       setPermission(nextPermission);
       setNotice(`Permission set to ${permissionComposerLabel(nextPermission)} for future runs.`);
-      return;
+      return true;
     }
-    if (!snapshot?.trusted) return;
+    if (!snapshot?.trusted) return false;
     const validRepoIds = snapshot.repos
       .filter((repo) => repoIds.includes(repo.id))
       .map((repo) => repo.id);
@@ -708,14 +717,14 @@ export default function App() {
       setNotice(
         "Select at least one connected repository before starting the agent.",
       );
-      return;
+      return false;
     }
     const run = command?.kind === "run" ? command : null;
     if (run?.requiresWrite && permission === "read_only") {
       setNotice(
         `/${text.split(/\s/, 1)[0].slice(1)} requires write access. Use /permissions write first.`,
       );
-      return;
+      return false;
     }
     const message = run?.message ?? text;
     const runPermission = run?.permission ?? permission;
@@ -764,6 +773,7 @@ export default function App() {
       localProvider: submittedLocalProvider,
       localBaseUrl: submittedLocalProvider ? localBaseUrl.trim() || null : null,
     });
+    return true;
   };
 
   const pickAgent = (nextAgent: AgentKind) => {
@@ -953,6 +963,31 @@ export default function App() {
                     clientMessageIdForEvent(item.event) ?? "",
                   )
                 }
+                onEdit={
+                  item.type === "event" && item.event.role === "user"
+                    ? () =>
+                        {
+                          setEditDraft({
+                            text: item.event.text ?? "",
+                            nonce: Date.now(),
+                          });
+                          setNotice(
+                            "Edit the message and send it as a new follow-up. Existing history stays intact.",
+                          );
+                        }
+                    : undefined
+                }
+                questionAnswered={
+                  item.type === "event" && answeredQuestionEvents.has(item.event.id)
+                }
+                onAnswerQuestions={(eventId, questions, answers) => {
+                  if (!send(formatQuestionAnswers(questions, answers))) return;
+                  setAnsweredQuestionEvents((current) => {
+                    const next = new Set(current);
+                    next.add(eventId);
+                    return next;
+                  });
+                }}
               />
             ))}
           {pending.map((item) => (
@@ -1015,6 +1050,8 @@ export default function App() {
         reposLocked={reposLocked}
         isRunning={isRunning}
         onSend={send}
+        editDraft={editDraft}
+        onEditDraftConsumed={() => setEditDraft(null)}
         onStop={() =>
           selectedThread &&
           vscode.postMessage({
@@ -1149,10 +1186,20 @@ function TranscriptItemView({
   item,
   animateMessage = false,
   firstTurn = false,
+  onEdit,
+  questionAnswered = false,
+  onAnswerQuestions,
 }: {
   item: TranscriptItem;
   animateMessage?: boolean;
   firstTurn?: boolean;
+  onEdit?: () => void;
+  questionAnswered?: boolean;
+  onAnswerQuestions?: (
+    eventId: string,
+    questions: UserQuestion[],
+    answers: Record<string, string[]>,
+  ) => void;
 }) {
   if (item.type === "event") {
     return (
@@ -1160,6 +1207,9 @@ function TranscriptItemView({
         event={item.event}
         animate={animateMessage}
         firstTurn={firstTurn}
+        onEdit={onEdit}
+        questionAnswered={questionAnswered}
+        onAnswerQuestions={onAnswerQuestions}
       />
     );
   }
@@ -1222,11 +1272,32 @@ const MessageView = memo(function MessageView({
   event,
   animate = false,
   firstTurn = false,
+  onEdit,
+  questionAnswered = false,
+  onAnswerQuestions,
 }: {
   event: AgentThreadEvent;
   animate?: boolean;
   firstTurn?: boolean;
+  onEdit?: () => void;
+  questionAnswered?: boolean;
+  onAnswerQuestions?: (
+    eventId: string,
+    questions: UserQuestion[],
+    answers: Record<string, string[]>,
+  ) => void;
 }) {
+  const questions = questionsFromEvent(event);
+  if (questions.length > 0) {
+    return (
+      <UserQuestionCard
+        eventId={event.id}
+        questions={questions}
+        answered={questionAnswered}
+        onSubmit={onAnswerQuestions}
+      />
+    );
+  }
   if (isActivityEvent(event)) {
     const detail = activityDetail(event);
     return (
@@ -1269,9 +1340,112 @@ const MessageView = memo(function MessageView({
           humanize(event.kind)
         )}
       </div>
+      {event.role === "user" && onEdit && (
+        <button
+          type="button"
+          className="message-edit-btn"
+          title="Edit and resend as a new turn"
+          aria-label="Edit and resend message"
+          onClick={onEdit}
+        >
+          Edit
+        </button>
+      )}
     </article>
   );
 });
+
+function UserQuestionCard(props: {
+  eventId: string;
+  questions: UserQuestion[];
+  answered: boolean;
+  onSubmit?: (
+    eventId: string,
+    questions: UserQuestion[],
+    answers: Record<string, string[]>,
+  ) => void;
+}) {
+  const [selected, setSelected] = useState<Record<string, string[]>>({});
+  const [custom, setCustom] = useState<Record<string, string>>({});
+  const complete = props.questions.every(
+    (question) =>
+      (selected[question.id]?.length ?? 0) > 0 || !!custom[question.id]?.trim(),
+  );
+  const choose = (question: UserQuestion, label: string) => {
+    setCustom((current) => ({ ...current, [question.id]: "" }));
+    setSelected((current) => {
+      const existing = current[question.id] ?? [];
+      const values = question.multiSelect
+        ? existing.includes(label)
+          ? existing.filter((item) => item !== label)
+          : [...existing, label]
+        : [label];
+      return { ...current, [question.id]: values };
+    });
+  };
+  return (
+    <article className={`user-question-card${props.answered ? " answered" : ""}`}>
+      {props.questions.map((question) => (
+        <section key={question.id} className="user-question-section">
+          <div className="user-question-header">{question.header}</div>
+          <div className="user-question-text">{question.question}</div>
+          <div className="user-question-options">
+            {question.options.map((option) => {
+              const active = selected[question.id]?.includes(option.label) ?? false;
+              return (
+                <button
+                  key={option.label}
+                  type="button"
+                  className={`user-question-option${active ? " active" : ""}`}
+                  aria-pressed={active}
+                  disabled={props.answered}
+                  onClick={() => choose(question, option.label)}
+                >
+                  <strong>{option.label}</strong>
+                  {option.description && <small>{option.description}</small>}
+                </button>
+              );
+            })}
+          </div>
+          <label className="user-question-other">
+            <span>No — tell the agent what to do differently</span>
+            <textarea
+              rows={2}
+              disabled={props.answered}
+              value={custom[question.id] ?? ""}
+              placeholder="Type your own response"
+              onChange={(event) => {
+                const value = event.target.value;
+                setCustom((current) => ({ ...current, [question.id]: value }));
+                if (value.trim()) {
+                  setSelected((current) => ({ ...current, [question.id]: [] }));
+                }
+              }}
+            />
+          </label>
+        </section>
+      ))}
+      <button
+        type="button"
+        className="primary-btn user-question-submit"
+        disabled={!complete || props.answered || !props.onSubmit}
+        onClick={() => {
+          const answers = Object.fromEntries(
+            props.questions.map((question) => [
+              question.id,
+              custom[question.id]?.trim()
+                ? [custom[question.id].trim()]
+                : selected[question.id] ?? [],
+            ]),
+          );
+          props.onSubmit?.(props.eventId, props.questions, answers);
+        }}
+      >
+        {props.answered ? "Response sent" : "Continue"}
+      </button>
+    </article>
+  );
+}
 
 function StreamingMarkdown({
   text,
@@ -1994,7 +2168,9 @@ type ComposerProps = {
   setRepoIds(value: string[]): void;
   reposLocked: boolean;
   isRunning: boolean;
-  onSend(text: string): void;
+  onSend(text: string): boolean;
+  editDraft: { text: string; nonce: number } | null;
+  onEditDraftConsumed(): void;
   onStop(): void;
   onGithub(): void;
   onLocalRepo(): void;
@@ -2017,6 +2193,19 @@ function Composer(props: ComposerProps) {
   const [draft, setDraft] = useState("");
   const [selectionStart, setSelectionStart] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    if (!props.editDraft) return;
+    setDraft(props.editDraft.text);
+    setSelectionStart(props.editDraft.text.length);
+    props.onEditDraftConsumed();
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+      autoGrow(el);
+    });
+  }, [props.editDraft?.nonce]);
   const localOn = !!props.localProvider;
   const localAllowed = props.agent === "codex";
   const sandboxAllowed = props.agent === "codex";
@@ -2053,7 +2242,7 @@ function Composer(props: ComposerProps) {
   const stopMode = props.isRunning && !draft.trim();
   const submit = () => {
     if (!canSend) return;
-    props.onSend(draft);
+    if (!props.onSend(draft)) return;
     setDraft("");
     const el = textareaRef.current;
     if (el) el.style.height = "auto";
@@ -2897,7 +3086,7 @@ function planPrompt(request: string): string {
   const requestedWork =
     request.trim() ||
     "Plan the next appropriate work for the current task and repository state.";
-  return `Create an implementation plan for the request below. Inspect the repository as needed, but do not modify files, write files, or perform external actions. Return the scope, affected files, ordered implementation steps, verification plan, and risks or assumptions.\n\nRequest:\n${requestedWork}`;
+  return `Create an implementation plan for the request below. Inspect the repository as needed, but do not modify files, write files, or perform external actions. If an implementation choice would materially change scope or behavior, ask the user a structured question with concise options before finalizing the plan. Return the scope, affected files, ordered implementation steps, verification plan, and risks or assumptions.\n\nRequest:\n${requestedWork}`;
 }
 
 function reviewPrompt(scope: string): string {
@@ -4551,10 +4740,29 @@ function activityDetail(event: AgentThreadEvent): string | null {
     typeof data.summary === "string"
       ? data.summary
       : data.input !== undefined
-        ? JSON.stringify(data.input, null, 2)
-        : JSON.stringify(data, null, 2);
+        ? JSON.stringify(publicToolData(data.input), null, 2)
+        : JSON.stringify(publicToolData(data), null, 2);
   if (!detail || detail === "{}") return null;
   return truncateDetail(detail, 1800);
+}
+
+function publicToolData(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(publicToolData);
+  const record = asRecord(value);
+  if (!record) return value;
+  const hidden = new Set([
+    "prompt",
+    "system_prompt",
+    "systemPrompt",
+    "developer_message",
+    "developerMessage",
+    "instructions",
+  ]);
+  return Object.fromEntries(
+    Object.entries(record)
+      .filter(([key]) => !hidden.has(key))
+      .map(([key, child]) => [key, publicToolData(child)]),
+  );
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

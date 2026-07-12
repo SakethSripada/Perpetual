@@ -802,6 +802,99 @@ textarea {
   container-type: inline-size;
 }
 
+.message-edit-btn {
+  align-self: flex-end;
+  min-height: 18px;
+  margin: 2px 5px -5px 0;
+  border: 0;
+  padding: 2px 4px;
+  background: transparent;
+  color: var(--am-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+.msg.user:hover .message-edit-btn,
+.message-edit-btn:focus-visible {
+  opacity: 1;
+}
+.message-edit-btn:hover {
+  color: var(--vscode-foreground);
+}
+
+.user-question-card {
+  width: min(100%, 620px);
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--am-border);
+  border-radius: 14px;
+  background: var(--am-surface);
+}
+.user-question-card.answered {
+  opacity: 0.72;
+}
+.user-question-section {
+  display: grid;
+  gap: 8px;
+}
+.user-question-header {
+  color: var(--am-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.user-question-text {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+.user-question-options {
+  display: grid;
+  gap: 6px;
+}
+.user-question-option {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--am-border-soft);
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.user-question-option:hover:not(:disabled),
+.user-question-option.active {
+  border-color: var(--vscode-focusBorder, var(--am-accent));
+  background: var(--am-hover);
+}
+.user-question-option small {
+  color: var(--am-muted);
+  line-height: 1.35;
+}
+.user-question-other {
+  display: grid;
+  gap: 5px;
+  color: var(--am-muted);
+  font-size: 11px;
+}
+.user-question-other textarea {
+  resize: vertical;
+  min-height: 52px;
+  padding: 8px;
+  border: 1px solid var(--am-border-soft);
+  border-radius: 8px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+}
+.user-question-submit {
+  justify-self: end;
+}
+
 .composer-box {
   position: relative;
   border: 1px solid color-mix(in srgb, var(--vscode-foreground) 16%, transparent);

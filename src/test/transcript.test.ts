@@ -228,3 +228,33 @@ test("first-turn optimistic bubble stays stable until assistant output begins", 
     [],
   );
 });
+
+test("transcript never renders system envelopes and restores slash command text", async () => {
+  const { buildTranscriptItems } = await loadTranscriptModule();
+  const items = buildTranscriptItems({
+    thread: null,
+    activities: [],
+    queued: [],
+    cloudRuns: [],
+    events: [
+      {
+        id: "u1",
+        role: "user",
+        kind: "user_message",
+        text: "Create an implementation plan for this.\n\nRequest:\nAdd login",
+        data: {},
+        ts: "2026-07-12T00:00:00Z",
+      },
+      {
+        id: "s1",
+        role: "system",
+        kind: "provider_prompt",
+        text: "secret system prompt",
+        data: {},
+        ts: "2026-07-12T00:00:01Z",
+      },
+    ],
+  });
+  assert.equal(items.length, 1);
+  assert.equal(items[0].event.text, "/plan Add login");
+});

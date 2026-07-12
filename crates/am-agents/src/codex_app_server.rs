@@ -281,6 +281,7 @@ async fn run_turn(
 fn approval_policy(permission: PermissionPolicy) -> &'static str {
     match permission {
         PermissionPolicy::Ask => "untrusted",
+        PermissionPolicy::ReadOnly => "never",
         _ => "on-request",
     }
 }
@@ -289,7 +290,11 @@ fn thread_start_params(spec: &SessionSpec) -> Value {
     let mut params = json!({
         "cwd": spec.worktree.to_string_lossy(),
         "approvalPolicy": approval_policy(spec.permission),
-        "sandbox": "workspace-write",
+        "sandbox": if spec.permission == PermissionPolicy::ReadOnly {
+            "read-only"
+        } else {
+            "workspace-write"
+        },
     });
     if let Some(model) = spec
         .model
@@ -391,7 +396,7 @@ async fn reader(
             }
             // Server→client request (approvals, etc.).
             (true, Some(method)) => {
-                handle_server_request(method, &value, &approver, &out_tx).await;
+                handle_server_request(method, &value, &approver, &out_tx, &events_tx).await;
             }
             // Notification.
             (false, Some(method)) => {
@@ -417,11 +422,26 @@ async fn handle_server_request(
     value: &Value,
     approver: &ApprovalResponder,
     out_tx: &mpsc::Sender<String>,
+    events_tx: &mpsc::Sender<NormalizedEvent>,
 ) {
     let id = value.get("id").cloned().unwrap_or(Value::Null);
     let params = value.get("params").cloned().unwrap_or(Value::Null);
 
-    if let Some(ask) = approval_ask_for(method, &params) {
+    if method == "item/tool/requestUserInput" {
+        // The app-server keeps the turn blocked until its client responds. Our
+        // conversation transport resumes provider sessions one turn at a time,
+        // so surface the structured question immediately, acknowledge this
+        // request, and let the user's card response become the next resumed
+        // turn. This also keeps options intact for the native webview UI.
+        let _ = events_tx
+            .send(NormalizedEvent::ToolUse {
+                name: "request_user_input".to_string(),
+                input: params.clone(),
+            })
+            .await;
+        let reply = json!({ "id": id, "result": { "answers": {} } });
+        let _ = out_tx.send(reply.to_string()).await;
+    } else if let Some(ask) = approval_ask_for(method, &params) {
         let approver = approver.clone();
         let out_tx = out_tx.clone();
         let method = method.to_string();
@@ -768,6 +788,7 @@ mod tests {
     #[test]
     fn approval_policy_per_permission() {
         assert_eq!(approval_policy(PermissionPolicy::Ask), "untrusted");
+        assert_eq!(approval_policy(PermissionPolicy::ReadOnly), "never");
         assert_eq!(
             approval_policy(PermissionPolicy::WorkspaceWrite),
             "on-request"
@@ -871,6 +892,39 @@ mod tests {
     #[test]
     fn non_approval_request_is_ignored() {
         assert!(approval_ask_for("item/tool/call", &json!({})).is_none());
+    }
+
+    #[tokio::test]
+    async fn user_input_request_is_surfaced_with_options() {
+        let (out_tx, mut out_rx) = mpsc::channel(2);
+        let (events_tx, mut events_rx) = mpsc::channel(2);
+        let approver = ApprovalResponder::new(|_| Box::pin(async { ApprovalDecision::Deny }));
+        handle_server_request(
+            "item/tool/requestUserInput",
+            &json!({
+                "id": 7,
+                "params": {
+                    "questions": [{
+                        "id": "scope",
+                        "header": "Scope",
+                        "question": "Which scope?",
+                        "options": [{ "label": "Focused", "description": "Small" }]
+                    }]
+                }
+            }),
+            &approver,
+            &out_tx,
+            &events_tx,
+        )
+        .await;
+
+        assert!(matches!(
+            events_rx.recv().await,
+            Some(NormalizedEvent::ToolUse { name, input })
+                if name == "request_user_input" && input["questions"][0]["id"] == "scope"
+        ));
+        let response: Value = serde_json::from_str(&out_rx.recv().await.unwrap()).unwrap();
+        assert_eq!(response, json!({ "id": 7, "result": { "answers": {} } }));
     }
 
     #[test]
