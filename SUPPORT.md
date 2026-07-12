@@ -1,6 +1,6 @@
 # Support
 
-For bugs and feature requests, use the AgentManager issue tracker.
+For bugs and feature requests, use the Perpetual issue tracker.
 
 When reporting an issue, include:
 
@@ -8,4 +8,4 @@ When reporting an issue, include:
 - Extension version.
 - Whether the workspace is local, SSH, WSL, Dev Container, or Codespaces.
 - Installed agent CLIs and versions.
-- Relevant AgentManager output from the **AgentManager** output channel.
+- Relevant Perpetual output from the **Perpetual** output channel.

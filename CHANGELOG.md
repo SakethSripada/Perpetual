@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Remove the unused embedded MCP server and bridge from the daemon workspace.
+- Refresh the open-source documentation, contributor guidance, and workbench preview.
+
 ## 0.1.0
 
 - Initial production release.

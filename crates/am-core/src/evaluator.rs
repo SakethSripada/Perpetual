@@ -165,7 +165,6 @@ impl AppCore {
             model: policy.model.clone(),
             reasoning: policy.reasoning.clone(),
             local_model: None,
-            mcp: None,
             permission: PermissionPolicy::ReadOnly,
             runtime: SessionRuntime::default(),
             policy: None,

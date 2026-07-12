@@ -17,6 +17,19 @@ try {
   if (!info.isFile() || info.size === 0) throw new Error("empty");
   const binaryData = await readFile(expected);
   const missing = requiredDaemonMarkers().filter((marker) => !binaryData.includes(Buffer.from(marker)));
+  const removed = removedCapabilityMarkers().filter((marker) => binaryData.includes(Buffer.from(marker)));
+  if (removed.length) {
+    console.error(`Daemon binary for ${target} still contains removed MCP server code: ${expected}`);
+    console.error("");
+    for (const marker of removed) {
+      console.error(`  - ${marker}`);
+    }
+    console.error("");
+    console.error("Build and copy a fresh daemon from this extension repo:");
+    console.error(`  npm run build:daemon -- --target=${target}`);
+    console.error(`  npm run copy-daemon -- --target=${target}`);
+    process.exit(1);
+  }
   if (missing.length) {
     console.error(`Daemon binary for ${target} is missing required capabilities: ${expected}`);
     console.error("");
@@ -59,6 +72,16 @@ function requiredDaemonMarkers() {
     "lm_studio",
     "ThreadDiff",
     "WorkNodeDiff",
-    "/diff",
+  ];
+}
+
+function removedCapabilityMarkers() {
+  return [
+    "MCP stdio bridge failed",
+    "failed to bind MCP listener",
+    "AgentManager MCP HTTP listener stopped",
+    "AGENTMANAGER_MCP_URL",
+    "AGENTMANAGER_MCP_TOKEN",
+    "am_mcp::",
   ];
 }

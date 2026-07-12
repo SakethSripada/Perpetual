@@ -122,8 +122,6 @@ pub struct SessionSpec {
     /// Optional local model target. V1 local execution is Codex OSS only; other
     /// adapters ignore this field.
     pub local_model: Option<LocalModelRuntime>,
-    /// Optional app-owned MCP endpoint injected only into this managed run.
-    pub mcp: Option<AgentMcpConfig>,
     pub permission: PermissionPolicy,
     pub runtime: SessionRuntime,
     /// Effective policy controls derived by `am-core` for this single launch.
@@ -131,8 +129,7 @@ pub struct SessionSpec {
     pub policy: Option<AgentPolicyRuntime>,
     /// Live-approval callback for [`PermissionPolicy::Ask`]. Set by `am-core`;
     /// only adapters with a bidirectional protocol (Codex app-server) use it.
-    /// `None` for runs that route approvals out-of-band (Claude uses a PreToolUse
-    /// hook that calls back into AgentManager's `/approve` endpoint).
+    /// `None` for adapters that do not support live approval callbacks.
     pub approver: Option<ApprovalResponder>,
 }
 
@@ -144,25 +141,9 @@ pub struct AgentPolicyRuntime {
     pub denied_mcp_servers: Vec<String>,
     pub denied_context_globs: Vec<String>,
     pub env_allowlist: Vec<String>,
-    pub strict_mcp_config: bool,
     pub disable_remote_mcp_connectors: bool,
     pub max_budget_usd: Option<f64>,
 }
-
-/// AgentManager MCP config passed to provider CLIs without mutating user config.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentMcpConfig {
-    pub url: String,
-    pub token: String,
-    pub claude_config_path: Option<PathBuf>,
-    /// Per-run Claude settings file wiring a PreToolUse approval hook. Present for
-    /// Claude runs in Ask/Edit mode; `None` otherwise. Headless `claude -p` does
-    /// not honour `--permission-prompt-tool`, so live approval is driven by a hook
-    /// that blocks on AgentManager's `/approve` endpoint.
-    pub claude_settings_path: Option<PathBuf>,
-}
-
-pub const AGENTMANAGER_MCP_TOKEN_ENV: &str = "AGENTMANAGER_MCP_TOKEN";
 
 /// Local provider target passed to adapters that can run against local models.
 #[derive(Debug, Clone, PartialEq, Eq)]

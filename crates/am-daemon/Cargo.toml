@@ -16,7 +16,6 @@ path = "src/bin/am-daemon.rs"
 am-proto = { workspace = true }
 am-core = { workspace = true }
 am-agents = { workspace = true }
-am-mcp = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

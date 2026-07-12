@@ -1,138 +1,151 @@
 # Perpetual for VS Code
 
-Perpetual is a local VS Code workbench for running Claude Code and Codex on
-the same task. It keeps session context, repository attachments, queued turns,
-approvals, and usage-limit handoffs in one place so you can move between agents
-without rebuilding state.
+Perpetual is an open-source VS Code extension for running and coordinating Claude Code and Codex sessions without leaving your editor. It gives each session a persistent workbench, isolated workspace state, model controls, handoffs, approvals, repository context, and a reviewable change set.
 
-![Perpetual workbench](media/screenshot-workbench.png)
+![Perpetual workbench preview](media/screenshot-workbench.png)
 
-## Features
+> Perpetual is under active development. Interfaces and provider behavior may change before the first stable release.
 
-- Chat-first Perpetual workbench in the Activity Bar, with the same view
-  available as a wide VS Code panel.
-- Per-session agent routing for Claude Code and Codex, including permission,
-  model, reasoning, and runtime controls.
-- Automatic handoff when an agent hits a usage limit, with configurable fallback
-  order, recovery behavior, and retry timing.
-- Cloud continuity for configured sleep/shutdown handoff, with native daemon
-  lifecycle monitoring, bounded checkpoints, and local reclaim on return.
-- Codex can be pointed at local Ollama or LM Studio models for local-model
-  fallback/continuation when the bundled daemon supports it.
-- Local repository attachment plus GitHub repository connection through VS Code's
-  built-in GitHub authentication.
-- Managed workspaces for agent edits, with inline changed-file summaries and
-  quick access to generated worktrees.
-- Queued follow-up turns while an agent is running, including queue editing and
-  reordering.
-- Approval prompts for commands, tools, and file changes that need user consent.
-- Codex runs on the host or inside Docker Sandbox through Docker's `sbx` CLI.
+## What it does
+
+- Run Claude Code and Codex sessions side by side from a single workbench.
+- Switch agents when a provider reaches a usage limit while retaining task context.
+- Choose models, reasoning effort, permission posture, and host or Docker Sandbox execution.
+- Connect local repositories or GitHub repositories and review changes in VS Code.
+- Keep longer work organized with sessions, work nodes, plans, handoffs, transcripts, and queued follow-ups.
+- Use Ollama or LM Studio as local Codex model targets when configured.
+- Continue eligible work through provider cloud handoffs and reclaim the result locally.
 
 ## Requirements
 
 - VS Code 1.99 or newer.
-- Claude Code and/or Codex CLI installed and authenticated on the machine where
-  the workspace extension runs.
-- Optional Docker Sandbox support requires Docker plus the `sbx` CLI.
+- Node.js 20 or newer for development and packaging.
+- At least one supported provider CLI, installed and authenticated:
+  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview)
+  - [Codex CLI](https://github.com/openai/codex)
+- A trusted VS Code workspace for repository access and local agent execution.
 
-## Getting Started
+Optional capabilities require their own installation and authentication:
 
-1. Open the Perpetual icon in the Activity Bar.
-2. Attach the current workspace repository, add a local folder, or connect a
-   GitHub repository.
-3. Pick Claude or Codex, then choose the permission mode and optional run
-   settings.
-4. Send a message. If a run is already active, the message is queued as the next
-   turn.
+- Docker Sandbox for isolated Codex runs.
+- Ollama or LM Studio for local model execution.
+- GitHub CLI or a GitHub sign-in for GitHub repository workflows.
 
-Perpetual creates managed workspaces for agent edits so your original working
-tree stays reviewable.
+## Install
 
-Use **Perpetual: Open Perpetual Panel** from the Command Palette when you
-want the workbench in VS Code's bottom panel instead of the side bar.
+When a release is published, install Perpetual from the VS Code Marketplace or the release `.vsix` file:
 
-## Configuration
+```sh
+code --install-extension ./agentmanager-vscode-<target>-<version>.vsix
+```
 
-The extension contributes `agentmanager.*` settings for defaults and runtime
-policy:
+After installation, open the Perpetual icon in the Activity Bar. Select an agent, choose the permission and execution settings, connect a repository if needed, and start a session.
 
-- `defaultAgent`, `defaultPermission`, `defaultExecutionBackend`,
-  `defaultModel`, `defaultReasoning`, `defaultLocalProvider`, and
-  `defaultLocalBaseUrl` control new sessions.
-- `autoSwitchOnLimit`, `switchBackOnRecovery`, `fallbackPriority`,
-  `resumeWithEarliestAgent`, and `unknownLimitRetrySeconds` control handoff
-  behavior.
-- `cloud.*` controls sleep/shutdown continuation, cross-provider handoff,
-  checkpoints, monitoring, and approval requirements. Cloud continuation is
-  opt-in and requires the selected provider's cloud prerequisites.
-- `sandbox.maxConcurrent`, `sandbox.cpus`, `sandbox.memory`, and
-  `sandbox.networkPreset` control Docker Sandbox runs.
-- `daemonPath` can point at a custom `am-daemon` binary. Empty uses the binary
-  bundled with the extension.
+## Permissions and safety
 
-## Privacy and Security
+Perpetual keeps the daemon local to the extension host. The bundled `am-daemon` process owns the SQLite database, agent subprocesses, worktrees, and local authenticated JSON-RPC socket used by the extension. It does not expose a public network service.
 
-Perpetual runs locally. Session data, transcripts, and managed workspaces are
-stored under the extension's VS Code global storage directory. GitHub access uses
-VS Code's built-in GitHub authentication; Perpetual does not store GitHub
-OAuth tokens in its database.
+Permission choices are explicit:
 
-The extension executes local CLIs and repository operations, so Workspace Trust
-is required before running agents or attaching repositories.
+- `Read only` asks the provider to plan or inspect without writing.
+- `Workspace write` allows normal workspace edits while retaining provider safeguards.
+- `Ask` enables live approval for Codex app-server actions.
+- `Autonomous` opts into the provider's full-automation mode.
 
-## Repository layout
+Claude Code's headless CLI does not expose the same interactive approval
+channel, so its normal and ask-style runs use the provider's non-interactive
+permission mode; Codex is the adapter with live in-app approval cards.
 
-This is a standalone repository for the VS Code extension. Its TypeScript,
-webview code, and vendored daemon Rust workspace live here and are edited here
-directly.
-
-The daemon workspace includes `am-daemon`, `am-core`, `am-agents`, `am-mcp`,
-`am-db`, `am-proto`, and `am-vcs`. The bundled
-`am-daemon` binaries under `bin/<target>/` are build artifacts from that local
-workspace. They are committed so the published extension is self-contained and
-installs without a Rust toolchain.
+Treat `Autonomous` and cloud handoff settings as high-trust options. Review the provider's own authentication, billing, and permission documentation before enabling them.
 
 ## Development
 
-```bash
-npm install
-npm run build
+Clone the repository and install the locked dependency set:
+
+```sh
+git clone https://github.com/SakethSripada/AgentManagerVSCodeExtension.git
+cd AgentManagerVSCodeExtension
+npm ci
+```
+
+Run the checks used during development:
+
+```sh
 npm test
+cargo test --workspace
+npm run build
 ```
 
-For iterative work, run `npm run watch:extension` and `npm run watch:webview` in
-separate terminals.
+Build and install a local extension for the current platform:
 
-## Daemon workflow
-
-When daemon-side behavior changes, build and copy the daemon from this extension
-repo:
-
-```bash
-npm run build:daemon -- --target=win32-x64
-npm run copy-daemon -- --target=win32-x64
+```sh
+npm run build:daemon -- --target=darwin-arm64  # choose your target
+npm run copy-daemon -- --target=darwin-arm64
+npm run package:darwin-arm64
 ```
 
-Replace `win32-x64` with `darwin-arm64`, `darwin-x64`, `linux-x64`,
-`linux-arm64`, or `win32-arm64` as needed. The scripts accept both
-`--target=win32-x64` and `--target win32-x64`.
+Or use the development helper, which builds, packages, installs, and reopens the current workspace:
 
-Commit the updated Rust source, `Cargo.lock`, and `bin/<target>/` binary before
-packaging. The AgentManager app repo keeps its own copy of the crates; changes
-do not flow between repos automatically.
-
-## Packaging
-
-`vsce package` builds the extension first (via `vscode:prepublish`) and bundles
-the daemon for the chosen target. The `check-daemon` step fails early with the
-local build command if a target's binary is missing or if it does not include
-local model fallback and diff support.
-
-```bash
-npm install
-npm run build:daemon -- --target=win32-x64
-npm run copy-daemon -- --target=win32-x64
-npm run package:win32-x64
+```sh
+npm run install:local
 ```
 
-See [PUBLISHING.md](PUBLISHING.md) for the full Marketplace checklist.
+The supported daemon targets are `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`, `win32-x64`, and `win32-arm64`. Cross-platform builds need the Rust target, a compatible linker, and the native C toolchain required by dependencies such as `ring`.
+
+The ignored live-agent test uses the real Codex CLI and may consume provider quota:
+
+```sh
+cargo test -p am-daemon --test live_approval -- --ignored --nocapture --test-threads=1
+```
+
+## Architecture
+
+```text
+VS Code extension
+        │ authenticated localhost JSON-RPC
+        ▼
+am-daemon ── am-core ── am-agents ── Claude Code / Codex
+    │          │
+    │          ├── SQLite state and migrations
+    │          ├── worktrees and repository operations
+    │          └── local/cloud/sandbox orchestration
+    ▼
+power and process lifecycle management
+```
+
+The repository is intentionally split into small Rust crates:
+
+| Crate | Responsibility |
+| --- | --- |
+| `am-proto` | Shared wire and domain types |
+| `am-db` | SQLite connection, migrations, and repositories |
+| `am-vcs` | Git worktrees, diffs, commits, and repository helpers |
+| `am-agents` | Claude Code and Codex adapters plus event normalization |
+| `am-core` | Orchestration, scheduling, policy, approvals, and handoffs |
+| `am-daemon` | Headless process and authenticated local transport |
+
+## Repository layout
+
+```text
+src/                 Extension host and daemon client
+webview/              React workbench UI
+crates/               Rust daemon workspace
+media/                Extension icons and product preview
+scripts/              Build, packaging, and daemon lifecycle helpers
+```
+
+## Troubleshooting
+
+- If the extension cannot find a daemon, run the target-specific build and copy commands above, or set `agentmanager.daemonPath`.
+- If an agent is unavailable, install its CLI and authenticate it in the same environment used by VS Code.
+- Repository and local CLI features require a trusted workspace; Restricted Mode intentionally limits them.
+- Use the `Perpetual` output channel for daemon startup, authentication, and subprocess diagnostics.
+- For support questions, see [SUPPORT.md](SUPPORT.md). For security reports, see [SECURITY.md](SECURITY.md).
+
+## Contributing
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Please include a focused description, tests for behavior changes, and any platform-specific packaging notes.
+
+## License
+
+Perpetual is released under the [MIT License](LICENSE). See [NOTICE.md](NOTICE.md) for third-party notices and [PUBLISHING.md](PUBLISHING.md) for release and Marketplace packaging notes.

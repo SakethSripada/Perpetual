@@ -107,8 +107,8 @@ impl AppCore {
 
     pub async fn create_work_node(&self, mut input: NewWorkNode) -> Result<WorkNode, CoreError> {
         let kind = input.kind.unwrap_or(WorkNodeKind::Task);
-        // No explicit coordinates means the caller (typically an MCP agent)
-        // doesn't care about placement: give a provisional slot now and let
+        // No explicit coordinates means the caller doesn't care about
+        // placement: give a provisional slot now and let
         // the debounced auto-layout arrange the burst once it settles.
         let auto_layout = input.position_x.is_none() || input.position_y.is_none();
         if auto_layout {
@@ -631,8 +631,8 @@ impl AppCore {
         Ok(graph)
     }
 
-    /// Debounced automatic layout: bulk node/edge creation (an MCP agent
-    /// decomposing a milestone, an import) triggers one PreserveManual pass
+    /// Debounced automatic layout: bulk node/edge creation (for example,
+    /// decomposing a milestone or importing a graph) triggers one PreserveManual pass
     /// after the burst settles instead of leaving a wall of default positions.
     pub(crate) fn schedule_auto_prettify(&self, project_id: &str) {
         let mut debounce = self.layout_debounce.lock().unwrap();

@@ -29,10 +29,6 @@ use crate::{
 };
 
 const BIN: &str = "claude";
-/// AgentManager's own coordination tools — never a risky action, so they always
-/// skip approval (a managed/orchestrating run can't function if its own `am_*`
-/// calls are gated). Space-separated; the CLI splits the value.
-const MCP_ALLOWED_TOOLS: &str = "mcp__agentmanager__*";
 const CHANNEL_CAPACITY: usize = 256;
 const TERMINATE_GRACE: Duration = Duration::from_secs(3);
 
@@ -50,7 +46,7 @@ impl ClaudeAdapter {
         resume: Option<SessionRef>,
     ) -> Result<SessionHandle, AgentError> {
         let args = build_args(&spec, resume.as_ref());
-        let envs = mcp_env(&spec);
+        let envs = policy_env(&spec);
         tracing::debug!(?args, worktree = ?spec.worktree, "launching claude");
 
         let mut child =
@@ -130,52 +126,22 @@ fn build_args(spec: &SessionSpec, resume: Option<&SessionRef>) -> Vec<String> {
         "--verbose".to_string(),
     ];
 
-    // Live approval is driven by a PreToolUse hook (wired via `--settings`), not
-    // `--permission-prompt-tool`: headless `claude -p` ignores that flag and
-    // auto-runs tools, so it can't gate them (verified against the real CLI). In
-    // `default` mode the hook fires for every tool and blocks on AgentManager's
-    // `/approve` endpoint, which surfaces a card (and, in Edit mode, auto-approves
-    // file edits server-side). The hook is present only when the MCP server is
-    // injected; without it we fall back to the CLI's own permission modes.
-    let settings = spec
-        .mcp
-        .as_ref()
-        .and_then(|mcp| mcp.claude_settings_path.as_ref());
-    let has_mcp = spec.mcp.is_some();
-    let mut allowed: Option<&str> = None;
     match spec.permission {
         PermissionPolicy::ReadOnly => {
             args.push("--permission-mode".into());
             args.push("plan".into());
-            if has_mcp {
-                allowed = Some(MCP_ALLOWED_TOOLS);
-            }
         }
         PermissionPolicy::WorkspaceWrite | PermissionPolicy::Ask => {
             args.push("--permission-mode".into());
-            if settings.is_some() {
-                // Hook gates everything; coordination calls skip it via allow-list.
-                args.push("default".into());
-                allowed = Some(MCP_ALLOWED_TOOLS);
-            } else {
-                // No approval hook available: Edit and Ask both degrade to the
-                // CLI's own auto-edit so the run can still proceed.
-                args.push("acceptEdits".into());
-            }
+            // Headless Claude runs have no interactive approval channel. Keep
+            // the non-interactive behavior explicit and safe for normal edits;
+            // Codex exposes in-app approvals through its app-server transport.
+            args.push("acceptEdits".into());
         }
         PermissionPolicy::Autonomous => {
             args.push("--dangerously-skip-permissions".into());
         }
     }
-    if let Some(allowed) = allowed {
-        args.push("--allowed-tools".into());
-        args.push(allowed.into());
-    }
-    if let Some(settings) = settings {
-        args.push("--settings".into());
-        args.push(settings.to_string_lossy().to_string());
-    }
-
     if let Some(model) = normalize_model(spec.model.as_deref()) {
         args.push("--model".into());
         args.push(model);
@@ -183,21 +149,6 @@ fn build_args(spec: &SessionSpec, resume: Option<&SessionRef>) -> Vec<String> {
     if let Some(effort) = normalize_reasoning(spec.reasoning.as_deref()) {
         args.push("--effort".into());
         args.push(effort);
-    }
-    if let Some(path) = spec
-        .mcp
-        .as_ref()
-        .and_then(|mcp| mcp.claude_config_path.as_ref())
-    {
-        if spec
-            .policy
-            .as_ref()
-            .is_some_and(|policy| policy.strict_mcp_config)
-        {
-            args.push("--strict-mcp-config".into());
-        }
-        args.push("--mcp-config".into());
-        args.push(path.to_string_lossy().to_string());
     }
     if let Some(policy) = spec.policy.as_ref() {
         push_policy_args(&mut args, policy);
@@ -240,17 +191,8 @@ fn push_policy_args(args: &mut Vec<String>, policy: &crate::AgentPolicyRuntime) 
     }
 }
 
-fn mcp_env(spec: &SessionSpec) -> Vec<(String, String)> {
-    let mut envs = spec
-        .mcp
-        .as_ref()
-        .map(|mcp| {
-            vec![(
-                crate::AGENTMANAGER_MCP_TOKEN_ENV.to_string(),
-                mcp.token.clone(),
-            )]
-        })
-        .unwrap_or_default();
+fn policy_env(spec: &SessionSpec) -> Vec<(String, String)> {
+    let mut envs = Vec::new();
     if let Some(policy) = spec.policy.as_ref() {
         if policy.disable_remote_mcp_connectors {
             envs.push(("ENABLE_CLAUDEAI_MCP_SERVERS".into(), "false".into()));
@@ -625,7 +567,6 @@ mod tests {
             model: Some("opus".into()),
             reasoning: Some("max".into()),
             local_model: None,
-            mcp: None,
             permission: PermissionPolicy::WorkspaceWrite,
             runtime: crate::SessionRuntime::default(),
             policy: None,
@@ -659,7 +600,6 @@ mod tests {
             model: Some("claude-opus-4-8".into()),
             reasoning: None,
             local_model: None,
-            mcp: None,
             permission: PermissionPolicy::WorkspaceWrite,
             runtime: crate::SessionRuntime::default(),
             policy: None,
@@ -673,36 +613,6 @@ mod tests {
     }
 
     #[test]
-    fn injects_agentmanager_mcp_config_file_without_user_config() {
-        let spec = SessionSpec {
-            worktree: "/tmp/worktree".into(),
-            prompt: "Implement it".into(),
-            model: None,
-            reasoning: None,
-            local_model: None,
-            mcp: Some(crate::AgentMcpConfig {
-                url: "http://127.0.0.1:7777/mcp".into(),
-                token: "secret".into(),
-                claude_config_path: Some("/tmp/agentmanager-mcp.json".into()),
-                claude_settings_path: None,
-            }),
-            permission: PermissionPolicy::WorkspaceWrite,
-            runtime: crate::SessionRuntime::default(),
-            policy: None,
-            approver: None,
-        };
-
-        let args = build_args(&spec, None);
-        assert!(args
-            .windows(2)
-            .any(|pair| pair == ["--mcp-config", "/tmp/agentmanager-mcp.json"]));
-        assert_eq!(
-            mcp_env(&spec),
-            vec![("AGENTMANAGER_MCP_TOKEN".to_string(), "secret".to_string())]
-        );
-    }
-
-    #[test]
     fn drops_codex_model_but_forwards_provider_validated_effort_for_claude() {
         let spec = SessionSpec {
             worktree: "/tmp/worktree".into(),
@@ -710,7 +620,6 @@ mod tests {
             model: Some("gpt-5.5".into()),
             reasoning: Some("minimal".into()),
             local_model: None,
-            mcp: None,
             permission: PermissionPolicy::WorkspaceWrite,
             runtime: crate::SessionRuntime::default(),
             policy: None,
@@ -723,83 +632,13 @@ mod tests {
     }
 
     #[test]
-    fn injecting_mcp_auto_allows_agentmanager_tools() {
-        let spec = SessionSpec {
-            worktree: "/tmp/worktree".into(),
-            prompt: "Coordinate".into(),
-            model: None,
-            reasoning: None,
-            local_model: None,
-            mcp: Some(crate::AgentMcpConfig {
-                url: "http://127.0.0.1:7777/mcp".into(),
-                token: "secret".into(),
-                claude_config_path: Some("/tmp/cfg.json".into()),
-                claude_settings_path: Some("/tmp/settings.json".into()),
-            }),
-            permission: PermissionPolicy::WorkspaceWrite,
-            runtime: crate::SessionRuntime::default(),
-            policy: None,
-            approver: None,
-        };
-        let args = build_args(&spec, None);
-        let allowed = allowed_tools_value(&args).expect("an --allowed-tools value");
-        assert!(
-            allowed.contains("mcp__agentmanager__*"),
-            "coordination tools should be allow-listed, got {allowed:?}"
-        );
-    }
-
-    /// The value passed after `--allowed-tools`, if any.
-    fn allowed_tools_value(args: &[String]) -> Option<&str> {
-        args.iter()
-            .position(|a| a == "--allowed-tools")
-            .and_then(|i| args.get(i + 1))
-            .map(String::as_str)
-    }
-
-    #[test]
-    fn edit_mode_with_mcp_wires_approval_hook() {
+    fn edit_mode_uses_noninteractive_accept_edits() {
         let spec = SessionSpec {
             worktree: "/tmp/worktree".into(),
             prompt: "Edit".into(),
             model: None,
             reasoning: None,
             local_model: None,
-            mcp: Some(crate::AgentMcpConfig {
-                url: "http://127.0.0.1:7777/mcp".into(),
-                token: "secret".into(),
-                claude_config_path: Some("/tmp/cfg.json".into()),
-                claude_settings_path: Some("/tmp/settings.json".into()),
-            }),
-            permission: PermissionPolicy::WorkspaceWrite,
-            runtime: crate::SessionRuntime::default(),
-            policy: None,
-            approver: None,
-        };
-        let args = build_args(&spec, None);
-        // `default` mode so the PreToolUse hook fires for every tool...
-        assert!(args
-            .windows(2)
-            .any(|p| p == ["--permission-mode", "default"]));
-        // ...wired via the per-run settings file...
-        assert!(args
-            .windows(2)
-            .any(|p| p == ["--settings", "/tmp/settings.json"]));
-        // ...with coordination calls allow-listed, and no dead permission-prompt flag.
-        assert!(!args.iter().any(|a| a == "--permission-prompt-tool"));
-        let allowed = allowed_tools_value(&args).expect("an --allowed-tools value");
-        assert!(allowed.contains("mcp__agentmanager__*"), "{allowed:?}");
-    }
-
-    #[test]
-    fn edit_mode_without_mcp_falls_back_to_accept_edits() {
-        let spec = SessionSpec {
-            worktree: "/tmp/worktree".into(),
-            prompt: "Edit".into(),
-            model: None,
-            reasoning: None,
-            local_model: None,
-            mcp: None,
             permission: PermissionPolicy::WorkspaceWrite,
             runtime: crate::SessionRuntime::default(),
             policy: None,
@@ -810,65 +649,16 @@ mod tests {
             .windows(2)
             .any(|p| p == ["--permission-mode", "acceptEdits"]));
         assert!(!args.iter().any(|a| a == "--settings"));
-        assert!(!args.iter().any(|a| a == "--permission-prompt-tool"));
     }
 
     #[test]
-    fn no_mcp_means_no_allowed_tools() {
-        let spec = SessionSpec {
-            worktree: "/tmp/worktree".into(),
-            prompt: "Solo".into(),
-            model: None,
-            reasoning: None,
-            local_model: None,
-            mcp: None,
-            permission: PermissionPolicy::WorkspaceWrite,
-            runtime: crate::SessionRuntime::default(),
-            policy: None,
-            approver: None,
-        };
-        let args = build_args(&spec, None);
-        assert!(!args.iter().any(|a| a == "--allowed-tools"));
-    }
-
-    #[test]
-    fn ask_mode_wires_approval_hook() {
+    fn ask_mode_uses_noninteractive_accept_edits() {
         let spec = SessionSpec {
             worktree: "/tmp/worktree".into(),
             prompt: "Do it".into(),
             model: None,
             reasoning: None,
             local_model: None,
-            mcp: Some(crate::AgentMcpConfig {
-                url: "http://127.0.0.1:7777/mcp".into(),
-                token: "secret".into(),
-                claude_config_path: Some("/tmp/cfg.json".into()),
-                claude_settings_path: Some("/tmp/settings.json".into()),
-            }),
-            permission: PermissionPolicy::Ask,
-            runtime: crate::SessionRuntime::default(),
-            policy: None,
-            approver: None,
-        };
-        let args = build_args(&spec, None);
-        assert!(args
-            .windows(2)
-            .any(|p| p == ["--permission-mode", "default"]));
-        assert!(args
-            .windows(2)
-            .any(|p| p == ["--settings", "/tmp/settings.json"]));
-        assert!(!args.iter().any(|a| a == "--permission-prompt-tool"));
-    }
-
-    #[test]
-    fn ask_mode_without_mcp_falls_back_to_accept_edits() {
-        let spec = SessionSpec {
-            worktree: "/tmp/worktree".into(),
-            prompt: "Do it".into(),
-            model: None,
-            reasoning: None,
-            local_model: None,
-            mcp: None,
             permission: PermissionPolicy::Ask,
             runtime: crate::SessionRuntime::default(),
             policy: None,
@@ -878,7 +668,6 @@ mod tests {
         assert!(args
             .windows(2)
             .any(|p| p == ["--permission-mode", "acceptEdits"]));
-        assert!(!args.iter().any(|a| a == "--permission-prompt-tool"));
     }
 
     #[test]
@@ -889,7 +678,6 @@ mod tests {
             model: None,
             reasoning: None,
             local_model: None,
-            mcp: None,
             permission: PermissionPolicy::ReadOnly,
             runtime: crate::SessionRuntime::default(),
             policy: None,
@@ -934,7 +722,6 @@ mod tests {
             model: None,
             reasoning: None,
             local_model: None,
-            mcp: None,
             permission: PermissionPolicy::ReadOnly,
             runtime: crate::SessionRuntime::default(),
             policy: None,

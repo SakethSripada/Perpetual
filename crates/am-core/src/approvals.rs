@@ -48,8 +48,7 @@ pub(crate) fn new_registry() -> ApprovalRegistry {
 
 impl AppCore {
     /// Build the per-run approval callback for an adapter-driven agent (Codex).
-    /// Claude routes approvals through its MCP `--permission-prompt-tool` instead,
-    /// so it gets `None` here. Both `Ask` (prompt for everything) and
+    /// Both `Ask` (prompt for everything) and
     /// `WorkspaceWrite`/Edit (auto-approve edits, prompt on escalation) want live
     /// approval; `ReadOnly` and `Autonomous` never prompt.
     pub(crate) fn approver_for(
@@ -175,69 +174,6 @@ impl AppCore {
         )
         .await;
         Ok(())
-    }
-
-    /// Request approval from the Claude MCP permission-prompt path, which only
-    /// carries a run id (the task session id or thread turn id). Resolves the
-    /// full scope from the DB so the prompt routes to the right place.
-    pub async fn request_approval_for_run(
-        &self,
-        run_id: Option<&str>,
-        agent: AgentKind,
-        ask: ApprovalAsk,
-    ) -> ApprovalDecision {
-        let scope = match run_id {
-            Some(id) => self.approval_scope_for_run(id).await,
-            None => ApprovalScope::default(),
-        };
-        self.request_approval(scope, agent, ask).await
-    }
-
-    async fn approval_scope_for_run(&self, run_id: &str) -> ApprovalScope {
-        if let Ok(Some(session)) = am_db::repos::session::get(&self.db.pool, run_id).await {
-            let project_id = am_db::repos::task::get(&self.db.pool, &session.task_id)
-                .await
-                .ok()
-                .flatten()
-                .map(|task| task.project_id);
-            let work_node_id =
-                am_db::repos::work_graph::get_node_for_task(&self.db.pool, &session.task_id)
-                    .await
-                    .ok()
-                    .flatten()
-                    .map(|node| node.id);
-            return ApprovalScope {
-                project_id,
-                work_node_id,
-                task_id: Some(session.task_id),
-                thread_id: None,
-                session_id: Some(run_id.to_string()),
-            };
-        }
-        if let Ok(Some(turn)) = am_db::repos::agent_turn::get(&self.db.pool, run_id).await {
-            let project_id = am_db::repos::agent_thread::get(&self.db.pool, &turn.thread_id)
-                .await
-                .ok()
-                .flatten()
-                .and_then(|thread| thread.project_id);
-            let work_node_id =
-                am_db::repos::work_graph::get_node_for_thread(&self.db.pool, &turn.thread_id)
-                    .await
-                    .ok()
-                    .flatten()
-                    .map(|node| node.id);
-            return ApprovalScope {
-                project_id,
-                work_node_id,
-                task_id: None,
-                thread_id: Some(turn.thread_id),
-                session_id: Some(run_id.to_string()),
-            };
-        }
-        ApprovalScope {
-            session_id: Some(run_id.to_string()),
-            ..Default::default()
-        }
     }
 
     /// All in-flight approvals, for a freshly connected UI to render.

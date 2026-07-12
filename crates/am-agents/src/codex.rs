@@ -210,10 +210,6 @@ fn build_args(spec: &SessionSpec, resume: Option<&SessionRef>) -> Vec<String> {
         args.push(format!("model_reasoning_effort=\"{effort}\""));
     }
 
-    if let Some(mcp) = spec.mcp.as_ref() {
-        push_mcp_args(&mut args, mcp);
-    }
-
     if let Some(policy) = spec.policy.as_ref() {
         push_policy_args(&mut args, policy);
     }
@@ -227,21 +223,6 @@ fn build_args(spec: &SessionSpec, resume: Option<&SessionRef>) -> Vec<String> {
     }
 
     args
-}
-
-fn push_mcp_args(args: &mut Vec<String>, mcp: &crate::AgentMcpConfig) {
-    args.push("-c".into());
-    args.push(format!(
-        "mcp_servers.agentmanager.url={}",
-        toml_string(&mcp.url)
-    ));
-    args.push("-c".into());
-    args.push(format!(
-        "mcp_servers.agentmanager.bearer_token_env_var={}",
-        toml_string(crate::AGENTMANAGER_MCP_TOKEN_ENV)
-    ));
-    args.push("-c".into());
-    args.push("mcp_servers.agentmanager.tool_timeout_sec=120".into());
 }
 
 fn push_policy_args(args: &mut Vec<String>, policy: &crate::AgentPolicyRuntime) {
@@ -406,12 +387,6 @@ fn local_model_env(spec: &SessionSpec) -> Vec<(String, String)> {
 
 pub(crate) fn session_env(spec: &SessionSpec) -> Vec<(String, String)> {
     let mut envs = local_model_env(spec);
-    if let Some(mcp) = spec.mcp.as_ref() {
-        envs.push((
-            crate::AGENTMANAGER_MCP_TOKEN_ENV.to_string(),
-            mcp.token.clone(),
-        ));
-    }
     if let Some(policy) = spec.policy.as_ref() {
         if !policy.env_allowlist.is_empty() {
             envs.push((
@@ -857,7 +832,6 @@ mod tests {
             model: Some("gpt-5.1-codex".into()),
             reasoning: None,
             local_model: None,
-            mcp: None,
             permission: PermissionPolicy::WorkspaceWrite,
             runtime: crate::SessionRuntime::default(),
             policy: None,
@@ -889,7 +863,6 @@ mod tests {
             model: None,
             reasoning: Some("high".into()),
             local_model: None,
-            mcp: None,
             permission: PermissionPolicy::WorkspaceWrite,
             runtime: crate::SessionRuntime::default(),
             policy: None,
@@ -905,45 +878,6 @@ mod tests {
     }
 
     #[test]
-    fn injects_agentmanager_mcp_config_without_user_config() {
-        let spec = SessionSpec {
-            worktree: "/tmp/worktree".into(),
-            prompt: "Implement it".into(),
-            model: None,
-            reasoning: None,
-            local_model: None,
-            mcp: Some(crate::AgentMcpConfig {
-                url: "http://127.0.0.1:7777/mcp".into(),
-                token: "secret".into(),
-                claude_config_path: None,
-                claude_settings_path: None,
-            }),
-            permission: PermissionPolicy::WorkspaceWrite,
-            runtime: crate::SessionRuntime::default(),
-            policy: None,
-            approver: None,
-        };
-
-        let args = build_args(&spec, None);
-        assert!(args.windows(2).any(|pair| {
-            pair == [
-                "-c",
-                "mcp_servers.agentmanager.url=\"http://127.0.0.1:7777/mcp\"",
-            ]
-        }));
-        assert!(args.windows(2).any(|pair| {
-            pair == [
-                "-c",
-                "mcp_servers.agentmanager.bearer_token_env_var=\"AGENTMANAGER_MCP_TOKEN\"",
-            ]
-        }));
-        assert_eq!(
-            session_env(&spec),
-            vec![("AGENTMANAGER_MCP_TOKEN".to_string(), "secret".to_string())]
-        );
-    }
-
-    #[test]
     fn docker_workspace_write_bypasses_internal_codex_approvals() {
         let spec = SessionSpec {
             worktree: "/tmp/worktree".into(),
@@ -951,7 +885,6 @@ mod tests {
             model: None,
             reasoning: None,
             local_model: None,
-            mcp: None,
             permission: PermissionPolicy::WorkspaceWrite,
             runtime: crate::SessionRuntime::DockerSandbox {
                 name: "agentmanager-test".into(),
@@ -979,7 +912,6 @@ mod tests {
             model: None,
             reasoning: None,
             local_model: None,
-            mcp: None,
             permission: PermissionPolicy::ReadOnly,
             runtime: crate::SessionRuntime::DockerSandbox {
                 name: "agentmanager-test".into(),
@@ -1009,7 +941,6 @@ mod tests {
             model: Some("opus".into()),
             reasoning: Some("max".into()),
             local_model: None,
-            mcp: None,
             permission: PermissionPolicy::WorkspaceWrite,
             runtime: crate::SessionRuntime::default(),
             policy: None,
@@ -1031,7 +962,6 @@ mod tests {
             model: Some("claude-opus-4-8".into()),
             reasoning: None,
             local_model: None,
-            mcp: None,
             permission: PermissionPolicy::WorkspaceWrite,
             runtime: crate::SessionRuntime::default(),
             policy: None,
@@ -1054,7 +984,6 @@ mod tests {
                 model: None,
                 reasoning: Some(effort.into()),
                 local_model: None,
-                mcp: None,
                 permission: PermissionPolicy::WorkspaceWrite,
                 runtime: crate::SessionRuntime::default(),
                 policy: None,
@@ -1095,7 +1024,6 @@ mod tests {
                 base_url: None,
                 api_token: None,
             }),
-            mcp: None,
             permission: PermissionPolicy::WorkspaceWrite,
             runtime: crate::SessionRuntime::default(),
             policy: None,
@@ -1124,7 +1052,6 @@ mod tests {
                 base_url: Some("http://127.0.0.1:1234/".into()),
                 api_token: None,
             }),
-            mcp: None,
             permission: PermissionPolicy::WorkspaceWrite,
             runtime: crate::SessionRuntime::default(),
             policy: None,
@@ -1154,7 +1081,6 @@ mod tests {
                 base_url: Some("http://localhost:4321".into()),
                 api_token: Some("secret-token".into()),
             }),
-            mcp: None,
             permission: PermissionPolicy::WorkspaceWrite,
             runtime: crate::SessionRuntime::default(),
             policy: None,
@@ -1195,7 +1121,6 @@ mod tests {
             model: None,
             reasoning: None,
             local_model: None,
-            mcp: None,
             permission: PermissionPolicy::ReadOnly,
             runtime: crate::SessionRuntime::default(),
             policy: None,

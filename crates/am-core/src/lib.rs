@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use am_agents::{AgentMcpConfig, PermissionPolicy};
+use am_agents::PermissionPolicy;
 use am_db::Db;
 use am_proto::{
     ActivityEvent, AgentKind, AppEvent, KnowledgeDoc, KnowledgeDocUpdate, MemoryNote,
@@ -29,14 +29,6 @@ pub(crate) struct QueuedMessage {
 }
 
 type MessageQueues = Arc<Mutex<HashMap<String, VecDeque<QueuedMessage>>>>;
-
-#[derive(Debug, Clone)]
-struct McpRuntimeEndpoint {
-    url: String,
-    token: String,
-}
-
-type McpEndpointState = Arc<Mutex<Option<McpRuntimeEndpoint>>>;
 
 mod admission;
 mod agent_thread;
@@ -96,7 +88,6 @@ pub struct AppCore {
     sandboxes: Arc<SandboxManager>,
     scheduler: Arc<Scheduler>,
     messages: MessageQueues,
-    mcp_endpoint: McpEndpointState,
     approvals: ApprovalRegistry,
     /// Short-TTL cache of CPU/memory readings (session-start hot path).
     capacity_cache: Arc<std::sync::Mutex<Option<(Instant, capacity::LocalSystemCapacity)>>>,
@@ -153,7 +144,6 @@ impl AppCore {
             sandboxes: Arc::new(SandboxManager::new(8)),
             scheduler: Arc::new(Scheduler::new()),
             messages: Arc::new(Mutex::new(HashMap::new())),
-            mcp_endpoint: Arc::new(Mutex::new(None)),
             approvals: new_registry(),
             capacity_cache: Arc::new(std::sync::Mutex::new(None)),
             scheduler_wake: Arc::new(tokio::sync::Notify::new()),
@@ -188,7 +178,6 @@ impl AppCore {
             sandboxes: self.sandboxes.clone(),
             scheduler: Arc::new(Scheduler::new()),
             messages: self.messages.clone(),
-            mcp_endpoint: self.mcp_endpoint.clone(),
             approvals: self.approvals.clone(),
             capacity_cache: self.capacity_cache.clone(),
             scheduler_wake: self.scheduler_wake.clone(),
@@ -221,154 +210,6 @@ impl AppCore {
         .await?;
         self.events.publish(AppEvent::Activity(event));
         Ok(())
-    }
-
-    /// Record an MCP tool invocation without persisting raw tool arguments.
-    pub async fn record_mcp_tool_call(
-        &self,
-        project_id: Option<String>,
-        work_node_id: Option<String>,
-        tool: &str,
-        ok: bool,
-    ) -> Result<(), CoreError> {
-        self.activity(
-            project_id,
-            None,
-            "mcp.tool_called",
-            json!({
-                "tool": tool,
-                "ok": ok,
-                "work_node_id": work_node_id,
-            }),
-        )
-        .await
-    }
-
-    /// Register the MCP endpoint owned by this `AppCore` process.
-    pub async fn set_mcp_endpoint(&self, url: String, token: String) {
-        let mut endpoint = self.mcp_endpoint.lock().await;
-        *endpoint = Some(McpRuntimeEndpoint { url, token });
-    }
-
-    /// Clear the active MCP endpoint, usually during process shutdown.
-    pub async fn clear_mcp_endpoint(&self) {
-        let mut endpoint = self.mcp_endpoint.lock().await;
-        *endpoint = None;
-    }
-
-    async fn agent_mcp_config(
-        &self,
-        agent: AgentKind,
-        backend: am_proto::ExecutionBackend,
-        project_id: Option<String>,
-        work_node_id: Option<String>,
-        run_id: &str,
-        permission: PermissionPolicy,
-    ) -> Result<Option<AgentMcpConfig>, CoreError> {
-        let endpoint = self.mcp_endpoint.lock().await.clone();
-        let Some(endpoint) = endpoint else {
-            return Ok(None);
-        };
-        if backend == am_proto::ExecutionBackend::DockerSandbox {
-            self.activity(
-                project_id,
-                None,
-                "mcp.unavailable",
-                json!({
-                    "work_node_id": work_node_id,
-                    "reason": "AgentManager MCP is currently bound to localhost for the owning process; Docker sandbox preflight skipped injection.",
-                }),
-            )
-            .await?;
-            return Ok(None);
-        }
-
-        let (claude_config_path, claude_settings_path) = if agent == AgentKind::ClaudeCode {
-            let config = self.write_claude_mcp_config(&endpoint.url, run_id)?;
-            // Live approval for Claude runs (Ask = prompt for everything; Edit =
-            // auto-approve edits, prompt the rest) is driven by a PreToolUse hook,
-            // since headless `claude -p` ignores `--permission-prompt-tool`.
-            let settings = match permission {
-                PermissionPolicy::Ask => {
-                    Some(self.write_claude_approval_settings(&endpoint.url, run_id, "ask")?)
-                }
-                PermissionPolicy::WorkspaceWrite => {
-                    Some(self.write_claude_approval_settings(&endpoint.url, run_id, "edit")?)
-                }
-                PermissionPolicy::ReadOnly | PermissionPolicy::Autonomous => None,
-            };
-            (Some(config), settings)
-        } else {
-            (None, None)
-        };
-
-        Ok(Some(AgentMcpConfig {
-            url: endpoint.url,
-            token: endpoint.token,
-            claude_config_path,
-            claude_settings_path,
-        }))
-    }
-
-    fn write_claude_mcp_config(&self, url: &str, run_id: &str) -> Result<PathBuf, CoreError> {
-        let dir = self.data_dir.join("mcp");
-        std::fs::create_dir_all(&dir).map_err(|err| CoreError::Other(err.to_string()))?;
-        // Per-run file + `X-AM-Run-Id` header so concurrent Claude runs don't
-        // clobber each other and the approval tool can attribute each prompt.
-        let path = dir.join(format!("claude-agentmanager-mcp-{run_id}.json"));
-        let body = json!({
-            "mcpServers": {
-                "agentmanager": {
-                    "type": "http",
-                    "url": url,
-                    "headers": {
-                        "Authorization": format!("Bearer ${{{}}}", am_agents::AGENTMANAGER_MCP_TOKEN_ENV),
-                        "X-AM-Run-Id": run_id,
-                    }
-                }
-            }
-        });
-        std::fs::write(&path, body.to_string()).map_err(|err| CoreError::Other(err.to_string()))?;
-        Ok(path)
-    }
-
-    /// Write a per-run Claude settings file with a PreToolUse hook that routes
-    /// every tool call to AgentManager's `/approve` endpoint, which surfaces a
-    /// live card and blocks on the user's decision. `mode` is `ask` (prompt for
-    /// everything) or `edit` (the endpoint auto-approves file edits). The bearer
-    /// token is read from the agent's env at hook time, not baked into the file.
-    fn write_claude_approval_settings(
-        &self,
-        url: &str,
-        run_id: &str,
-        mode: &str,
-    ) -> Result<PathBuf, CoreError> {
-        let dir = self.data_dir.join("mcp");
-        std::fs::create_dir_all(&dir).map_err(|err| CoreError::Other(err.to_string()))?;
-        // `url` ends in the MCP path (`…/mcp`); the approval endpoint is a sibling.
-        let base = url.strip_suffix("/mcp").unwrap_or(url);
-        let approve_url = format!("{base}/approve?run_id={run_id}&mode={mode}");
-        // The hook receives the tool call JSON on stdin and must print the hook
-        // decision JSON on stdout; curl streams the request body through and
-        // returns the endpoint's response verbatim. `-m 0` disables curl's own
-        // timeout so a long human deliberation isn't cut short.
-        let command = format!(
-            "curl -sS -m 0 -X POST '{approve_url}' \
-             -H \"Authorization: Bearer ${{{}}}\" \
-             -H 'Content-Type: application/json' --data-binary @-",
-            am_agents::AGENTMANAGER_MCP_TOKEN_ENV
-        );
-        let body = json!({
-            "hooks": {
-                "PreToolUse": [{
-                    "matcher": "*",
-                    "hooks": [{ "type": "command", "command": command }]
-                }]
-            }
-        });
-        let path = dir.join(format!("claude-agentmanager-settings-{run_id}.json"));
-        std::fs::write(&path, body.to_string()).map_err(|err| CoreError::Other(err.to_string()))?;
-        Ok(path)
     }
 
     // ---- Projects -------------------------------------------------------
@@ -659,7 +500,6 @@ pub(crate) async fn test_core() -> AppCore {
         sandboxes: Arc::new(SandboxManager::new(8)),
         scheduler: Arc::new(Scheduler::new()),
         messages: Arc::new(Mutex::new(HashMap::new())),
-        mcp_endpoint: Arc::new(Mutex::new(None)),
         approvals: new_registry(),
         capacity_cache: Arc::new(std::sync::Mutex::new(None)),
         scheduler_wake: Arc::new(tokio::sync::Notify::new()),
@@ -894,7 +734,7 @@ mod tests {
         assert_ne!(
             (a.position_x, a.position_y),
             (b.position_x, b.position_y),
-            "MCP-style nodes without coordinates should not stack"
+            "nodes without coordinates should not stack"
         );
 
         let c = core

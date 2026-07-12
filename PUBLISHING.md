@@ -1,4 +1,4 @@
-# Publishing AgentManager for VS Code
+# Publishing Perpetual for VS Code
 
 This package is self-contained at VSIX time: the extension host bundle, React
 webview bundle, Marketplace docs, assets, and one platform-specific
@@ -9,7 +9,7 @@ webview bundle, Marketplace docs, assets, and one platform-specific
 - Update `publisher`, repository URLs, support links, and icon ownership in
   `package.json`.
 - Keep GitHub auth inside VS Code's authentication provider; do not store GitHub
-  OAuth tokens in AgentManager storage.
+  OAuth tokens in Perpetual storage.
 - Keep Workspace Trust limited mode enabled because local CLIs, Git, and Docker
   run on the user's machine.
 - Keep webview resources restricted to `dist/webview` and `media`, with a strict
@@ -18,11 +18,10 @@ webview bundle, Marketplace docs, assets, and one platform-specific
 
 ## Build One Platform
 
-Run these commands from the extension repo on the target platform (or use the
-`Package production VSIXes` workflow for a tagged release):
+Run these commands from the extension repo on the target platform:
 
 ```bash
-npm install
+npm ci
 npm run build:daemon -- --target=darwin-arm64
 npm run copy-daemon -- --target=darwin-arm64
 npm run package:darwin-arm64
@@ -30,7 +29,7 @@ npm run package:darwin-arm64
 
 Replace `darwin-arm64` with `darwin-x64`, `linux-x64`, `linux-arm64`,
 `win32-x64`, or `win32-arm64`. The daemon is built from the vendored Rust
-workspace in this repository, not from the AgentManager app repo. The package
+workspace in this repository, not from another application repository. The package
 scripts use a target-specific VSCE ignore file so each VSIX contains only the
 daemon for its target.
 
@@ -58,9 +57,10 @@ Confirm it does not contain:
 - raw `crates/` or `target/`
 - GitHub OAuth tokens or generated local data
 
-The release workflow builds all six target binaries and packages each VSIX in
-an isolated job. A target is not publishable until its job's `check-daemon`
-step passes; never substitute a binary built for another OS or architecture.
+Build each target on a host with its Rust target, linker, and native C
+toolchain installed. A target is not publishable until its
+target-specific `check-daemon` step passes; never substitute a binary built for
+another OS or architecture.
 
 ## Publish
 

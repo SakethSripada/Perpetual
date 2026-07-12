@@ -1,12 +1,10 @@
 //! End-to-end live-approval tests against the REAL `claude` / `codex` CLIs.
 //!
-//! These drive the full approval round-trip: a real agent runs in Edit/Ask mode
-//! wired to the live AgentManager MCP server (Claude) or the Codex app-server
-//! transport (Codex); gated actions publish `AppEvent::ApprovalRequested`; a
-//! background approver resolves each one; and we assert the run proceeds to a
-//! terminal state. This exercises `claude.rs` `--permission-prompt-tool` /
-//! `--allowed-tools`, the MCP `approval_prompt` tool, the in-memory approval
-//! registry, and the Codex app-server `approvalPolicy` selection.
+//! These drive the full approval round-trip: a real Codex agent runs in Ask or
+//! Edit mode over the app-server transport; gated actions publish
+//! `AppEvent::ApprovalRequested`; a background approver resolves each one; and
+//! we assert the run proceeds to a terminal state. This exercises the in-memory
+//! approval registry and the Codex app-server `approvalPolicy` selection.
 //!
 //! `#[ignore]`d by default (real CLIs, auth, network, subscription cost). Run:
 //!
@@ -117,15 +115,6 @@ async fn run_live_approval(agent: AgentKind, permission: PermissionPolicy, expec
         }
     }
 
-    // Live MCP server wired to this core (Claude's approval path needs it; Codex
-    // uses the app-server transport but the server is harmless to run).
-    let token = format!("tok-{}", nanos());
-    let mcp = am_mcp::serve_http(core.clone(), token.clone(), am_mcp::McpPolicy::default(), 0)
-        .await
-        .unwrap();
-    core.set_mcp_endpoint(mcp.endpoint.url.clone(), mcp.endpoint.token.clone())
-        .await;
-
     let repo_path = dummy_repo();
     let project = core
         .create_project(NewProject {
@@ -217,7 +206,6 @@ async fn run_live_approval(agent: AgentKind, permission: PermissionPolicy, expec
     // A usage limit is an acceptable outcome (it still exercised the pipeline).
     if status == TaskStatus::WaitingForLimit {
         eprintln!("OK {} {permission:?}: usage-limited", agent.label());
-        mcp.shutdown().await;
         let _ = std::fs::remove_dir_all(&repo_path);
         return;
     }
@@ -237,26 +225,7 @@ async fn run_live_approval(agent: AgentKind, permission: PermissionPolicy, expec
     }
 
     eprintln!("OK {} {permission:?}", agent.label());
-    mcp.shutdown().await;
     let _ = std::fs::remove_dir_all(&repo_path);
-}
-
-#[tokio::test]
-#[ignore = "requires the real claude CLI; run with --ignored"]
-async fn claude_edit_mode_prompts_for_bash() {
-    // acceptEdits auto-approves edits, but a Bash command must surface a prompt.
-    run_live_approval(
-        AgentKind::ClaudeCode,
-        PermissionPolicy::WorkspaceWrite,
-        true,
-    )
-    .await;
-}
-
-#[tokio::test]
-#[ignore = "requires the real claude CLI; run with --ignored"]
-async fn claude_ask_mode_prompts() {
-    run_live_approval(AgentKind::ClaudeCode, PermissionPolicy::Ask, true).await;
 }
 
 #[tokio::test]

@@ -540,10 +540,6 @@ impl AppCore {
         let (runtime, sandbox_lease) = self
             .session_runtime(agent, backend, sandbox_name.clone())
             .await?;
-        let work_node_id = am_db::repos::work_graph::get_node_for_thread(&self.db.pool, thread_id)
-            .await?
-            .map(|node| node.id);
-
         let turn = am_db::repos::agent_turn::create(
             &self.db.pool,
             thread_id,
@@ -564,18 +560,6 @@ impl AppCore {
             policy.envelope_id.as_deref(),
         )
         .await?;
-        // MCP config (and its per-run approval header) needs the turn id.
-        let mcp = self
-            .agent_mcp_config(
-                agent,
-                backend,
-                thread.project_id.clone(),
-                work_node_id,
-                &turn.id,
-                permission,
-            )
-            .await?;
-
         let user_message = match (&message, prior.is_some()) {
             (Some(msg), _) if msg.echo_user_message => Some(msg.text.trim()),
             (Some(_), _) => None,
@@ -634,7 +618,6 @@ impl AppCore {
             model: thread.model.clone(),
             reasoning: thread.reasoning.clone(),
             local_model,
-            mcp,
             permission,
             runtime,
             policy: Some(policy.runtime_policy.clone()),

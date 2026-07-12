@@ -803,7 +803,6 @@ mod tests {
             model: None,
             reasoning: None,
             local_model: None,
-            mcp: None,
             permission: PermissionPolicy::Ask,
             runtime: crate::SessionRuntime::default(),
             policy: None,

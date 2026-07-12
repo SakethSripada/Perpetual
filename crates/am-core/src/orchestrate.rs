@@ -326,17 +326,6 @@ impl AppCore {
             policy.envelope_id.as_deref(),
         )
         .await?;
-        // MCP config (and its per-run approval header) needs the session id.
-        let mcp = self
-            .agent_mcp_config(
-                agent,
-                backend,
-                Some(task.project_id.clone()),
-                work_node_id.clone(),
-                &session.id,
-                permission,
-            )
-            .await?;
         let task = am_db::repos::task::update(
             &self.db.pool,
             task_id,
@@ -371,7 +360,6 @@ impl AppCore {
             model,
             reasoning: None,
             local_model,
-            mcp,
             permission,
             runtime,
             policy: Some(policy.runtime_policy.clone()),
