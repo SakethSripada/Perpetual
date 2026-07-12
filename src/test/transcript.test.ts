@@ -104,6 +104,102 @@ test("transcript builder collapses noisy rate-limit lifecycle rows", async () =>
   );
 });
 
+test("a limit and the switch it caused read as one notice, after the message that hit it", async () => {
+  const { buildTranscriptItems } = await loadTranscriptModule();
+  const items = buildTranscriptItems({
+    thread: {
+      id: "t1",
+      preferred_agent: "codex",
+      original_agent: "codex",
+      fallback_agent: "claude_code",
+      limit_reset_at: null,
+    },
+    queued: [],
+    cloudRuns: [],
+    // The daemon runs its preflight limit check while starting the turn, so both
+    // activities are stamped before the user message they belong to.
+    activities: [
+      {
+        id: "a1",
+        kind: "thread.agent_limited",
+        payload: { agent: "codex", reason: "preflight", reset_at: "2026-07-09T16:26:00Z" },
+        ts: "2026-07-09T00:00:00Z",
+      },
+      {
+        id: "a2",
+        kind: "thread.fallback_started",
+        payload: {
+          from: "codex",
+          to: "claude_code",
+          reason: "known_limited",
+          reset_at: "2026-07-09T16:26:00Z",
+        },
+        ts: "2026-07-09T00:00:01Z",
+      },
+    ],
+    events: [
+      {
+        id: "u1",
+        role: "user",
+        kind: "user_message",
+        text: "Ship the pink theme.",
+        data: {},
+        ts: "2026-07-09T00:00:02Z",
+      },
+      {
+        id: "a1r",
+        role: "assistant",
+        kind: "message",
+        text: "On it.",
+        data: {},
+        ts: "2026-07-09T00:00:09Z",
+      },
+    ],
+  });
+
+  const transitions = items.filter((item) => item.type === "transition");
+  assert.equal(transitions.length, 1);
+  assert.equal(transitions[0].text, "Codex rate-limited; switching to Claude");
+
+  const order = items.map((item) =>
+    item.type === "transition" ? "transition" : item.event.role,
+  );
+  assert.deepEqual(order, ["user", "transition", "assistant"]);
+});
+
+test("a limit with no follow-up still reports itself", async () => {
+  const { buildTranscriptItems } = await loadTranscriptModule();
+  const items = buildTranscriptItems({
+    thread: { id: "t1", preferred_agent: "codex", limit_reset_at: null },
+    queued: [],
+    cloudRuns: [],
+    activities: [
+      {
+        id: "a1",
+        kind: "thread.agent_limited",
+        payload: { agent: "codex", reset_at: "2026-07-09T16:26:00Z" },
+        ts: "2026-07-09T00:00:05Z",
+      },
+    ],
+    events: [
+      {
+        id: "u1",
+        role: "user",
+        kind: "user_message",
+        text: "Ship the pink theme.",
+        data: {},
+        ts: "2026-07-09T00:00:00Z",
+      },
+    ],
+  });
+
+  const transitions = items.filter((item) => item.type === "transition");
+  assert.equal(transitions.length, 1);
+  assert.equal(transitions[0].text, "Codex rate-limited");
+  // Rendered in the viewer's timezone, so only assert the shape.
+  assert.match(transitions[0].detail, /^Reset \d{1,2}:\d{2}/);
+});
+
 test("transcript builder shows queued public turns and hides silent carryover", async () => {
   const { buildTranscriptItems } = await loadTranscriptModule();
   const items = buildTranscriptItems({

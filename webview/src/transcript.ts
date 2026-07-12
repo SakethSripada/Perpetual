@@ -92,7 +92,12 @@ export function buildTranscriptItems(input: {
     items.push({ type: "event", event });
   }
 
+  const superseded = supersededLimitActivities(input.activities);
   for (const activity of input.activities) {
+    if (superseded.has(activity.id)) {
+      limitTransitionAdded = true;
+      continue;
+    }
     const transition = transitionFromActivity(activity);
     if (!transition) continue;
     if (isLimitActivity(activity.kind)) limitTransitionAdded = true;
@@ -133,7 +138,99 @@ export function buildTranscriptItems(input: {
     items.push({ type: "queued", id: queued.id, message: queued.message });
   }
 
-  return items.sort((a, b) => itemTs(a, input) - itemTs(b, input));
+  const anchors = sendTimeAnchors(input.activities, input.events);
+  return items.sort(
+    (a, b) => itemTs(a, input, anchors) - itemTs(b, input, anchors),
+  );
+}
+
+/**
+ * A limit that resolves into a switch, a wait, or a hard stop is reported by the
+ * follow-up activity, which already names the rate limit ("Codex rate-limited;
+ * switching to Claude"). Rendering the bare "Codex rate-limited" beside it says
+ * the same thing twice, so keep only the follow-up. A limit with no follow-up is
+ * still shown on its own.
+ */
+function supersededLimitActivities(activities: ActivityEvent[]): Set<string> {
+  const ordered = [...activities].sort(
+    (a, b) => (Date.parse(a.ts) || 0) - (Date.parse(b.ts) || 0),
+  );
+  const superseded = new Set<string>();
+  ordered.forEach((activity, index) => {
+    if (activity.kind !== "thread.agent_limited") return;
+    const agent = parseAgent(asRecord(activity.payload).agent);
+    for (const later of ordered.slice(index + 1)) {
+      // A fresh limit for the same agent opens a new episode: stop looking, so an
+      // earlier unresolved limit is never cancelled by a later one's follow-up.
+      if (
+        later.kind === "thread.agent_limited" &&
+        parseAgent(asRecord(later.payload).agent) === agent
+      ) {
+        break;
+      }
+      if (!resolvesLimitFor(later, agent)) continue;
+      superseded.add(activity.id);
+      break;
+    }
+  });
+  return superseded;
+}
+
+function resolvesLimitFor(
+  activity: ActivityEvent,
+  agent: AgentKind | null,
+): boolean {
+  const payload = asRecord(activity.payload);
+  switch (activity.kind) {
+    case "thread.fallback_started":
+      return parseAgent(payload.from) === agent;
+    case "thread.fallback_waiting":
+    case "thread.fallback_disabled":
+      return parseAgent(payload.agent) === agent;
+    default:
+      return false;
+  }
+}
+
+/**
+ * The daemon checks limits while starting a turn, which happens before the
+ * user's message is persisted, so those activities carry an earlier timestamp
+ * than the message that triggered them. Anchoring them to that message keeps the
+ * transcript in the order the user experienced it: they ask, the workbench says
+ * the agent is limited and what it is switching to, then the answer arrives.
+ * Only send-time checks carry one of these reasons; a limit hit mid-run is
+ * already in the right place.
+ */
+const SEND_TIME_LIMIT_REASONS = new Set([
+  "preflight",
+  "known_limited",
+  "no_ready_fallback",
+  "auto_switch_disabled",
+]);
+
+function sendTimeAnchors(
+  activities: ActivityEvent[],
+  events: AgentThreadEvent[],
+): Map<string, number> {
+  const userTimes = events
+    .filter((event) => event.role === "user" && !isRoutineEvent(event))
+    .map((event) => Date.parse(event.ts) || 0)
+    .sort((a, b) => a - b);
+  const anchors = new Map<string, number>();
+  if (userTimes.length === 0) return anchors;
+  for (const activity of activities) {
+    if (!isLimitActivity(activity.kind)) continue;
+    const reason = asRecord(activity.payload).reason;
+    if (typeof reason !== "string" || !SEND_TIME_LIMIT_REASONS.has(reason)) {
+      continue;
+    }
+    const ts = Date.parse(activity.ts) || 0;
+    const trigger = userTimes.find((time) => time >= ts);
+    if (trigger === undefined) continue;
+    // Half a millisecond lands it after the message but before any reply.
+    anchors.set(`activity-${activity.id}`, trigger + 0.5);
+  }
+  return anchors;
 }
 
 function isRoutineEvent(event: AgentThreadEvent): boolean {
@@ -196,7 +293,12 @@ function transitionFromActivity(activity: ActivityEvent): TransitionItem | null 
         detail,
       );
     case "thread.fallback_waiting":
-      return transition(activity, "danger", `Waiting for ${labelAgent(agent)} reset`, detail);
+      return transition(
+        activity,
+        "danger",
+        `${labelAgent(agent)} rate-limited; waiting for reset`,
+        detail,
+      );
     case "thread.fallback_disabled":
       return transition(activity, "danger", `${labelAgent(agent)} rate-limited; switching is off`, detail);
     case "thread.switchback_started":
@@ -244,12 +346,18 @@ function isLimitActivity(kind: string): boolean {
   );
 }
 
-function itemTs(item: TranscriptItem, input: {
-  activities: ActivityEvent[];
-  cloudRuns: CloudRun[];
-}): number {
+function itemTs(
+  item: TranscriptItem,
+  input: {
+    activities: ActivityEvent[];
+    cloudRuns: CloudRun[];
+  },
+  anchors: Map<string, number>,
+): number {
   if (item.type === "event") return Date.parse(item.event.ts) || 0;
   if (item.type === "queued") return Number.MAX_SAFE_INTEGER - 1;
+  const anchored = anchors.get(item.id);
+  if (anchored !== undefined) return anchored;
   const activity = input.activities.find((entry) => `activity-${entry.id}` === item.id);
   if (activity) return Date.parse(activity.ts) || 0;
   const cloud = input.cloudRuns.find((run) => `cloud-active-${run.id}` === item.id);
