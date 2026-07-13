@@ -107,7 +107,7 @@ jobs:
 
     steps:
       - name: Download every target's VSIX
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: vsix-*
           merge-multiple: true
@@ -139,7 +139,7 @@ jobs:
         run: npm ci
 
       - name: Download platform VSIXes
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: vsix-*
           merge-multiple: true
