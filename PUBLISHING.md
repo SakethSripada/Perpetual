@@ -19,7 +19,7 @@ These steps cannot be done from the CLI.
    against: https://dev.azure.com
 2. **Create the publisher** at https://marketplace.visualstudio.com/manage. The
    publisher ID is permanent and must match `publisher` in `package.json`
-   (currently `perpetual`). If the ID is taken, pick another and update
+   (currently `SakethSripada`). If the ID is taken, pick another and update
    `package.json` before releasing.
 3. **Register an application** in Entra ID (Azure portal → *Microsoft Entra ID* →
    *App registrations* → *New registration*). Note its **Application (client) ID**
