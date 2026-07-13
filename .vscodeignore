@@ -5,6 +5,7 @@ webview/tsconfig.json
 webview/vite.config.ts
 scripts/**
 crates/**
+landing/**
 target/**
 out/**
 node_modules/**
