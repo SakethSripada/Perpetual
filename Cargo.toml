@@ -50,7 +50,7 @@ sqlx = { version = "0.8", default-features = false, features = [
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
-sysinfo = "0.33"
+sysinfo = "0.39"
 
 [profile.dev]
 opt-level = 0
