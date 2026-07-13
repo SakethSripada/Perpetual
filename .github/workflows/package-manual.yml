@@ -1,0 +1,73 @@
+name: Package VSIXes for manual upload
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            os: macos-latest
+          - target: darwin-x64
+            os: macos-latest
+          - target: linux-x64
+            os: ubuntu-latest
+          - target: linux-arm64
+            os: ubuntu-latest
+          - target: win32-x64
+            os: windows-latest
+          - target: win32-arm64
+            os: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Linux ARM cross compiler
+        if: runner.os == 'Linux' && matrix.target == 'linux-arm64'
+        run: sudo apt-get update && sudo apt-get install --yes gcc-aarch64-linux-gnu
+
+      - name: Install Rust target
+        shell: bash
+        run: rustup target add "$(node --input-type=module -e 'import { targetTriple } from "./scripts/daemon-targets.mjs"; console.log(targetTriple(process.argv[1]))' "${{ matrix.target }}")"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: manual-${{ matrix.target }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build daemon
+        shell: bash
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
+        run: npm run build:daemon -- --target=${{ matrix.target }}
+
+      - name: Copy daemon and package VSIX
+        shell: bash
+        run: |
+          npm run copy-daemon -- --target=${{ matrix.target }}
+          npm run package:${{ matrix.target }}
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: manual-vsix-${{ matrix.target }}
+          path: "*.vsix"
+          if-no-files-found: error
+          retention-days: 14
