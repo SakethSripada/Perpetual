@@ -20,6 +20,7 @@ dist/**/*.map
 .claude/**
 .vscode/**
 .github/**
+azure-pipelines.yml
 CONTRIBUTING.md
 PUBLISHING.md
 !README.md

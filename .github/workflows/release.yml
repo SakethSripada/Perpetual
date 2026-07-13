@@ -118,3 +118,47 @@ jobs:
         with:
           files: vsix/*.vsix
           generate_release_notes: true
+
+  marketplace:
+    name: Publish to Visual Studio Marketplace
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install publishing tools
+        run: npm ci
+
+      - name: Download platform VSIXes
+        uses: actions/download-artifact@v4
+        with:
+          pattern: vsix-*
+          merge-multiple: true
+          path: vsix
+
+      - name: Publish all platform VSIXes
+        shell: bash
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if [ -z "$VSCE_PAT" ]; then
+            echo "Missing the VSCE_PAT GitHub Actions secret." >&2
+            exit 1
+          fi
+
+          mapfile -t packages < <(find vsix -type f -name '*.vsix' | sort)
+          if [ "${#packages[@]}" -ne 6 ]; then
+            echo "Expected 6 platform VSIXes, found ${#packages[@]}." >&2
+            exit 1
+          fi
+
+          npx --no-install vsce publish --packagePath "${packages[@]}"
