@@ -8,43 +8,35 @@ Releases are cut by CI. Publishing by hand is the fallback.
 
 ## One-time Marketplace setup
 
-CI publishes with **Microsoft Entra ID**, not a Personal Access Token. GitHub
-mints a short-lived OIDC token for the release job, Entra trades it for an
-access token, and this repository stores no long-lived publishing secret.
-(Microsoft retires PATs on 2026-12-01 regardless.)
+Marketplace publishing uses **Microsoft Entra ID workload identity federation**
+through Azure Pipelines. No client secret or PAT is stored in this repository.
 
-These steps cannot be done from the CLI.
-
-1. **Create an Azure DevOps organization**, which the Marketplace authenticates
-   against: https://dev.azure.com
-2. **Create the publisher** at https://marketplace.visualstudio.com/manage. The
+1. **Create the publisher** at https://marketplace.visualstudio.com/manage. The
    publisher ID is permanent and must match `publisher` in `package.json`
-   (currently `SakethSripada`). If the ID is taken, pick another and update
-   `package.json` before releasing.
-3. **Register an application** in Entra ID (Azure portal → *Microsoft Entra ID* →
-   *App registrations* → *New registration*). Note its **Application (client) ID**
-   and **Directory (tenant) ID**. No client secret is needed — that is the point.
-4. **Add a federated credential** to that app (*Certificates & secrets* →
-   *Federated credentials* → *GitHub Actions deploying Azure resources*):
+   (currently `SakethSripada`).
+2. **Create a user-assigned managed identity** in Azure named
+   `Perpetual-marketplace-publisher`, in the `perpetual-publishing` resource
+   group. Assign it the **Reader** role on that resource group.
+3. **Create the Azure DevOps service connection** in project settings:
+   - Service type: **Azure Resource Manager**
+   - Identity type: **App registration or managed identity (manual)**
+   - Credential: **Workload identity federation**
+   - Name: `Perpetual-Marketplace-Publisher-Managed`
+4. Azure DevOps generates an **Issuer** and **Subject identifier** for the
+   service connection. Add those exact values to the managed identity under
+   **Settings → Federated credentials → Add credential → Other issuer**. Keep
+   the audience as `api://AzureADTokenExchange`.
+5. Verify the service connection. The Azure DevOps connection must show that its
+   configuration is complete before a pipeline can use it.
+6. Run `azure-pipelines.yml` once on `main`. Its **Marketplace identity** stage
+   prints the managed identity **resource ID** without publishing. In the
+   Marketplace publisher page, open **Members**, add that resource ID, and assign
+   the **Contributor** role. Use the resource ID here—not the client ID or object
+   ID.
 
-   | Field | Value |
-   | --- | --- |
-   | Organization | `SakethSripada` |
-   | Repository | `Perpetual` |
-   | Entity type | **Environment** |
-   | Environment name | `marketplace` |
-
-   This binds publishing to the `marketplace` environment of this repository. A
-   fork, a branch, or any other workflow cannot obtain a token.
-5. **Authorize the identity on the publisher**: Marketplace publisher page →
-   *Members* → add the app registration with the **Contributor** role.
-6. **Create the `marketplace` environment** in GitHub (*Settings* →
-   *Environments*), add a **required reviewer** so releases need approval, and
-   set two environment **variables** (not secrets — they are identifiers):
-
-   - `AZURE_CLIENT_ID` — the app's Application (client) ID
-   - `AZURE_TENANT_ID` — the Directory (tenant) ID
-
+The Azure DevOps service connection authenticates the pipeline to Azure. The
+Marketplace publisher membership authorizes that identity to publish extensions;
+both pieces are required.
 
 ## Cutting a release
 
@@ -60,10 +52,13 @@ git tag v0.2.0 && git push origin v0.2.0
 
 1. verifies the tag matches `package.json`,
 2. builds all six daemons from `crates/` on hosts that can target them,
-3. packages one VSIX per target (`check-daemon` blocks a stale or foreign binary),
-4. waits for approval on the `marketplace` environment,
-5. publishes every target under one version, and
-6. attaches the VSIXes to a GitHub release.
+3. packages one VSIX per target (`check-daemon` blocks a stale or foreign binary), and
+4. attaches the VSIXes to a GitHub release.
+
+`azure-pipelines.yml` performs the same six-target packaging and publishes all
+six VSIXes to the Marketplace using the verified managed identity service
+connection. Its tag trigger means a pushed `v*` tag automatically starts the
+Marketplace release pipeline.
 
 ## Publishing by hand
 
@@ -76,15 +71,13 @@ npm run build:daemon -- --target=darwin-arm64
 npm run copy-daemon -- --target=darwin-arm64
 npm run package:darwin-arm64
 
-# vsce reads the Azure CLI's credentials, so sign in as an identity that is a
-# member of the publisher.
+# vsce reads the Azure CLI's credentials. The managed identity must already
+# be a Contributor member of the Marketplace publisher.
 az login
 npx vsce publish --azure-credential --packagePath perpetual-vscode-darwin-arm64-<version>.vsix
 ```
 
-Entra publishing needs `vsce >= 2.26.1`; this repo pins `^3.6.0`. Until
-2026-12-01 a PAT scoped to **Marketplace → Manage** with **All accessible
-organizations** still works as a fallback, via `npx vsce login <publisher>`.
+Entra publishing needs `vsce >= 2.26.1`; this repo pins `^3.6.0`.
 
 ## Verifying a VSIX
 
@@ -98,12 +91,12 @@ raw `src/`, `webview/src/`, `crates/`, `target/`, or any local data or tokens.
 
 ## Marketplace asset rules
 
-- The `icon` in `package.json` must be a PNG of at least 128×128. It cannot be an
-  SVG. (`media/activity.svg` is a view-container icon inside the extension, which
-  is unaffected by this rule.)
-- README and CHANGELOG images cannot be SVGs, and must resolve over HTTPS. Relative
-  links are rewritten by `vsce` against the `repository` URL on the default
-  branch, so referenced images must be committed there.
+- The `icon` in `package.json` must be a PNG of at least 128x128. It cannot be an
+  SVG. (`media/activity.svg` is a view-container icon inside the extension,
+  which is unaffected by this rule.)
+- README and CHANGELOG images cannot be SVGs, and must resolve over HTTPS.
+  Relative links are rewritten by `vsce` against the `repository` URL on the
+  default branch, so referenced images must be committed there.
 - Badges, if added, must come from a trusted provider.
 - At most 30 keywords.
 
@@ -111,5 +104,6 @@ raw `src/`, `webview/src/`, `crates/`, `target/`, or any local data or tokens.
 
 - Publishing: https://code.visualstudio.com/api/working-with-extensions/publishing-extension
 - Platform-specific extensions: https://code.visualstudio.com/api/working-with-extensions/publishing-extension#platformspecific-extensions
+- Azure Pipelines workload identity: https://learn.microsoft.com/en-us/azure/devops/pipelines/release/configure-workload-identity?view=azure-devops
 - Webview security: https://code.visualstudio.com/api/extension-guides/webview
 - Workspace Trust: https://code.visualstudio.com/api/extension-guides/workspace-trust

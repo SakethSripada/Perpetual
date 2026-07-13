@@ -1,0 +1,167 @@
+trigger:
+  tags:
+    include:
+      - v*
+
+pr: none
+
+variables:
+  nodeVersion: '20.x'
+  marketplaceServiceConnection: 'Perpetual-Marketplace-Publisher-Managed'
+
+stages:
+  - stage: Package
+    displayName: Package platform VSIXes
+    jobs:
+      - job: package
+        displayName: Package $(target)
+        pool:
+          vmImage: $(imageName)
+        strategy:
+          failFast: false
+          matrix:
+            darwin_arm64:
+              imageName: macOS-latest
+              target: darwin-arm64
+            darwin_x64:
+              imageName: macOS-latest
+              target: darwin-x64
+            linux_x64:
+              imageName: ubuntu-latest
+              target: linux-x64
+            linux_arm64:
+              imageName: ubuntu-latest
+              target: linux-arm64
+            win32_x64:
+              imageName: windows-latest
+              target: win32-x64
+            win32_arm64:
+              imageName: windows-latest
+              target: win32-arm64
+
+        steps:
+          - checkout: self
+
+          - task: NodeTool@0
+            displayName: Use Node.js $(nodeVersion)
+            inputs:
+              versionSpec: $(nodeVersion)
+
+          - bash: |
+              if [ "$(Agent.OS)" = "Linux" ] && [ "$(target)" = "linux-arm64" ]; then
+                sudo apt-get update
+                sudo apt-get install --yes gcc-aarch64-linux-gnu
+              fi
+            displayName: Install Linux ARM cross compiler
+
+          - bash: |
+              triple="$(node --input-type=module -e 'import { targetTriple } from "./scripts/daemon-targets.mjs"; console.log(targetTriple(process.argv[1]))' "$(target)")"
+              rustup target add "$triple"
+            displayName: Install Rust target
+
+          - bash: npm ci
+            displayName: Install dependencies
+
+          - bash: npm run build:daemon -- --target=$(target)
+            displayName: Build daemon
+            env:
+              CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+              CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+              AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
+
+          - bash: |
+              npm run copy-daemon -- --target=$(target)
+              npm run package:$(target)
+            displayName: Copy daemon and package VSIX
+
+          - task: CopyFiles@2
+            displayName: Stage VSIX
+            inputs:
+              SourceFolder: $(Build.SourcesDirectory)
+              Contents: '*.vsix'
+              TargetFolder: $(Build.ArtifactStagingDirectory)
+
+          - task: PublishPipelineArtifact@1
+            displayName: Publish VSIX artifact
+            inputs:
+              targetPath: $(Build.ArtifactStagingDirectory)
+              artifact: vsix-$(target)
+
+  - stage: MarketplaceIdentity
+    displayName: Show Marketplace identity resource ID
+    dependsOn: Package
+    condition: succeeded()
+    jobs:
+      - job: identity
+        displayName: Resolve managed identity resource ID
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: AzureCLI@2
+            displayName: Resolve managed identity resource ID
+            inputs:
+              azureSubscription: $(marketplaceServiceConnection)
+              scriptType: pscore
+              scriptLocation: inlineScript
+              inlineScript: |
+                $profile = az rest --method get `
+                  --url https://app.vssps.visualstudio.com/_apis/profile/profiles/me `
+                  --resource 499b84ac-1321-427f-aa17-267ca6975798 | ConvertFrom-Json
+
+                if (-not $profile.id) {
+                  throw 'Azure DevOps did not return the managed identity resource ID.'
+                }
+
+                Write-Host "Managed identity resource ID: $($profile.id)"
+
+  - stage: Publish
+    displayName: Publish to Visual Studio Marketplace
+    dependsOn:
+      - Package
+      - MarketplaceIdentity
+    condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
+    jobs:
+      - job: publish
+        displayName: Publish all platform VSIXes
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+
+          - task: NodeTool@0
+            displayName: Use Node.js $(nodeVersion)
+            inputs:
+              versionSpec: $(nodeVersion)
+
+          - bash: npm ci
+            displayName: Install publishing dependencies
+
+          - download: current
+            artifact: vsix-darwin-arm64
+          - download: current
+            artifact: vsix-darwin-x64
+          - download: current
+            artifact: vsix-linux-x64
+          - download: current
+            artifact: vsix-linux-arm64
+          - download: current
+            artifact: vsix-win32-x64
+          - download: current
+            artifact: vsix-win32-arm64
+
+          - task: AzureCLI@2
+            displayName: Publish with managed identity
+            inputs:
+              azureSubscription: $(marketplaceServiceConnection)
+              scriptType: pscore
+              scriptLocation: inlineScript
+              inlineScript: |
+                $vsixFiles = @(Get-ChildItem -Path "$(Pipeline.Workspace)" -Recurse -Filter *.vsix | Sort-Object FullName)
+                if ($vsixFiles.Count -ne 6) {
+                  throw "Expected 6 VSIX files, found $($vsixFiles.Count)."
+                }
+
+                & npx vsce publish --azure-credential --packagePath $vsixFiles.FullName
+                if ($LASTEXITCODE -ne 0) {
+                  exit $LASTEXITCODE
+                }
