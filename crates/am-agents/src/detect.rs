@@ -147,10 +147,10 @@ fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
         let Some(rest) = path.to_str().and_then(|raw| raw.strip_prefix(r"\\?\")) else {
             return path;
         };
-        return match rest.strip_prefix(r"UNC\") {
+        match rest.strip_prefix(r"UNC\") {
             Some(share) => PathBuf::from(format!(r"\\{share}")),
             None => PathBuf::from(rest),
-        };
+        }
     }
 
     #[cfg(not(windows))]
@@ -191,7 +191,7 @@ fn candidate_names(bin: &str) -> Vec<String> {
         // bare name (`codex`) beside the Windows launchers (`codex.cmd`). The shim
         // is a bash script, so it must never win over a real launcher.
         names.push(bin.to_string());
-        return names;
+        names
     }
 
     #[cfg(not(windows))]
@@ -247,7 +247,7 @@ fn find_in_dir(dir: &Path, bin: &str) -> Option<PathBuf> {
                 best = Some((rank, path));
             }
         }
-        return best.map(|(_, path)| path);
+        best.map(|(_, path)| path)
     }
 
     #[cfg(not(windows))]

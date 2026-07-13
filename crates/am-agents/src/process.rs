@@ -170,10 +170,7 @@ fn create_kill_on_close_job(child: &Child) -> io::Result<OwnedHandle> {
 
     unsafe {
         let Some(child_handle) = child.raw_handle() else {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "child process handle is unavailable",
-            ));
+            return Err(io::Error::other("child process handle is unavailable"));
         };
         let raw = CreateJobObjectW(std::ptr::null(), std::ptr::null());
         if raw.is_null() {
