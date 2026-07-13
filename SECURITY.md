@@ -1,15 +1,37 @@
 # Security Policy
 
-Perpetual executes local coding-agent CLIs and Git commands in managed
-workspaces. Only run agent sessions in repositories you trust.
+Perpetual runs coding-agent CLIs, Git commands, and a local daemon against the
+workspace you select. That is intentional local execution, so only use it with
+repositories and agent instructions you trust. Review a workspace's trust
+status before starting a session, and do not give an agent access to a
+repository that contains credentials or other data it should not read.
 
-To report a vulnerability, open a private security advisory or email the
-maintainers listed by the Perpetual project. Do not publish exploit details
-until a fix is available.
+## Reporting a vulnerability
 
-GitHub tokens are requested through VS Code's built-in authentication provider
-and are passed to the daemon only for the active operation. They are not stored
-in Perpetual's SQLite database.
+Please do not open a public issue for a suspected security vulnerability. Use
+GitHub's private vulnerability reporting or a private contact with the
+repository owner. Include:
+
+- The affected Perpetual version or commit.
+- Your operating system, VS Code version, and workspace type.
+- A minimal reproduction and the security impact.
+- Relevant logs with tokens, credentials, private source, and personal data
+  removed.
+
+Do not include access tokens, API keys, private repositories, or unredacted
+agent transcripts in a report. Please allow time for the issue to be
+investigated before publishing exploit details.
+
+If you believe a token or credential was exposed, revoke it with the provider
+immediately, then report the incident with the smallest useful reproduction.
+
+## Data and credentials
+
+Perpetual keeps its daemon state in VS Code's extension storage. Provider
+authentication is handled through the configured agent or VS Code's
+authentication facilities; do not paste credentials into prompts, issues, or
+logs. The daemon's local transport is authenticated, but it is not a security
+boundary against other software already running as the same user.
 
 ## Release audit
 
