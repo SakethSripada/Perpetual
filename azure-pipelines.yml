@@ -1,3 +1,9 @@
+parameters:
+  - name: buildPackages
+    displayName: Build and package VSIX targets
+    type: boolean
+    default: true
+
 trigger:
   tags:
     include:
@@ -12,6 +18,7 @@ variables:
 stages:
   - stage: Package
     displayName: Package platform VSIXes
+    condition: and(succeeded(), ${{ eq(parameters.buildPackages, true) }})
     jobs:
       - job: package
         displayName: Package $(target)
@@ -88,7 +95,7 @@ stages:
 
   - stage: MarketplaceIdentity
     displayName: Show Marketplace identity resource ID
-    dependsOn: Package
+    dependsOn: []
     condition: succeeded()
     jobs:
       - job: identity

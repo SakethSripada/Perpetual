@@ -28,11 +28,12 @@ through Azure Pipelines. No client secret or PAT is stored in this repository.
    the audience as `api://AzureADTokenExchange`.
 5. Verify the service connection. The Azure DevOps connection must show that its
    configuration is complete before a pipeline can use it.
-6. Run `azure-pipelines.yml` once on `main`. Its **Marketplace identity** stage
-   prints the managed identity **resource ID** without publishing. In the
-   Marketplace publisher page, open **Members**, add that resource ID, and assign
-   the **Contributor** role. Use the resource ID here—not the client ID or object
-   ID.
+6. Run `azure-pipelines.yml` once on `main` with **Build and package VSIX
+   targets** set to `false`. Its **Marketplace identity** stage prints the
+   managed identity **resource ID** without building or publishing. In the
+   Marketplace publisher page, open **Members**, add that resource ID, and
+   assign the **Contributor** role. Use the resource ID here—not the client ID
+   or object ID.
 
 The Azure DevOps service connection authenticates the pipeline to Azure. The
 Marketplace publisher membership authorizes that identity to publish extensions;
