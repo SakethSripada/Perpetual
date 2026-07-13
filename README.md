@@ -4,8 +4,6 @@ Perpetual is an open-source VS Code extension for running and coordinating Claud
 
 ![Perpetual workbench preview](media/PerpetualDemoImage.png)
 
-> Perpetual is under active development. Interfaces and provider behavior may change before the first stable release.
-
 ## What it does
 
 - Run Claude Code and Codex sessions side by side from a single workbench.
