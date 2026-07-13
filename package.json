@@ -8,13 +8,13 @@
   "author": {
     "name": "Perpetual"
   },
-  "homepage": "https://github.com/SakethSripada/AgentManagerVSCodeExtension",
+  "homepage": "https://github.com/SakethSripada/Perpetual",
   "repository": {
     "type": "git",
-    "url": "https://github.com/SakethSripada/AgentManagerVSCodeExtension.git"
+    "url": "https://github.com/SakethSripada/Perpetual.git"
   },
   "bugs": {
-    "url": "https://github.com/SakethSripada/AgentManagerVSCodeExtension/issues"
+    "url": "https://github.com/SakethSripada/Perpetual/issues"
   },
   "categories": [
     "Machine Learning",

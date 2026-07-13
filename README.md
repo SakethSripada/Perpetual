@@ -63,8 +63,8 @@ Treat `Autonomous` and cloud handoff settings as high-trust options. Review the 
 Clone the repository and install the locked dependency set:
 
 ```sh
-git clone https://github.com/SakethSripada/AgentManagerVSCodeExtension.git
-cd AgentManagerVSCodeExtension
+git clone https://github.com/SakethSripada/Perpetual.git
+cd Perpetual
 npm ci
 ```
 

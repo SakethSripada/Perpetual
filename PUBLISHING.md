@@ -30,7 +30,7 @@ These steps cannot be done from the CLI.
    | Field | Value |
    | --- | --- |
    | Organization | `SakethSripada` |
-   | Repository | `AgentManagerVSCodeExtension` |
+   | Repository | `Perpetual` |
    | Entity type | **Environment** |
    | Environment name | `marketplace` |
 
