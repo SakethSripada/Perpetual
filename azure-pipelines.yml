@@ -18,7 +18,6 @@ stages:
         pool:
           vmImage: $(imageName)
         strategy:
-          failFast: false
           matrix:
             darwin_arm64:
               imageName: macOS-latest
