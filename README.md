@@ -7,6 +7,28 @@ reviewable changes, durable transcripts, and optional cloud continuity.
 
 ![Perpetual workbench preview](media/PerpetualDemoImage.png)
 
+## Keep your work moving
+
+Perpetual is built for the moment when an agent stops being available but the
+work is not finished. Keep one task moving across local agents, limit resets,
+and optional cloud runs without copying prompts or rebuilding context by hand.
+
+- **Switch between Claude Code and Codex when limits hit.** When the active
+  provider reaches a usage limit, Perpetual can pause the run and continue the
+  same task on the other ready agent with its context, repository state, and
+  transcript intact.
+- **Wait for recovery and resume automatically.** If no fallback agent is
+  ready, Perpetual can wait for the provider's reset, resume the task when it is
+  available again, and switch back to the original provider when configured.
+- **Hand work to the cloud when local execution cannot continue.** Carry an
+  eligible task to Claude Code on the web or Codex Cloud during sleep, shutdown,
+  connectivity loss, or another configured handoff event. Perpetual monitors the
+  cloud run and brings the result back into the local managed worktree for
+  review.
+- **Keep every transition reviewable.** Durable transcripts, queued turns,
+  checkpoints, managed worktrees, diffs, and approval state stay attached to
+  the same task as it moves between agents and execution environments.
+
 ## What Perpetual provides
 
 ### One workbench for Claude Code and Codex
