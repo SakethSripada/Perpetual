@@ -70,7 +70,7 @@ raw `src/`, `webview/src/`, `crates/`, `target/`, or any local data or tokens.
 - The `icon` in `package.json` must be a PNG of at least 128x128. It cannot be an
   SVG. (`media/activity.svg` is a view-container icon inside the extension,
   which is unaffected by this rule.)
-- README and CHANGELOG images cannot be SVGs, and must resolve over HTTPS.
+- README.marketplace.md and CHANGELOG images cannot be SVGs, and must resolve over HTTPS.
   Relative links are rewritten by `vsce` against the `repository` URL on the
   default branch, so referenced images must be committed there.
 - Badges, if added, must come from a trusted provider.

@@ -23,7 +23,8 @@ dist/**/*.map
 azure-pipelines.yml
 CONTRIBUTING.md
 PUBLISHING.md
-!README.md
+README.marketplace.md
+README.md
 !CHANGELOG.md
 !LICENSE
 !SUPPORT.md

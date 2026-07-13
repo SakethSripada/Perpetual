@@ -1,0 +1,68 @@
+# Perpetual for VS Code
+
+Keep coding when your AI agent hits a limit.
+
+Perpetual is a VS Code workbench for Claude Code and Codex that keeps tasks
+moving across providers, limit resets, and optional cloud execution. Your
+transcript, repository context, approvals, and worktree stay attached to the
+same task instead of getting lost in a new chat or a copied prompt.
+
+![Perpetual workbench preview](media/PerpetualDemoImage.png)
+
+## Why install Perpetual?
+
+### Switch providers when limits hit
+
+When Claude Code or Codex reaches a usage limit, Perpetual can pause the active
+run and continue the same task on the other ready provider. The task keeps its
+context, repository state, queued turns, and transcript.
+
+### Resume automatically when access returns
+
+If neither provider is ready, Perpetual can wait for the relevant limit reset
+and resume the task automatically. When the original provider recovers, it can
+switch back according to your settings.
+
+### Continue work in the cloud
+
+When local execution cannot continue, optional Cloud Continuity can hand an
+eligible task to Claude Code on the web or Codex Cloud. Perpetual can carry work
+over during sleep or shutdown, monitor the cloud run, and bring the result back
+into the local managed worktree for review.
+
+### Keep transitions reviewable
+
+Every task has durable transcripts, checkpoints, managed worktrees, diffs, and
+approval state. Changes return as a reviewable local result instead of silently
+replacing your checkout.
+
+## More than a provider switcher
+
+- One workbench for Claude Code and Codex.
+- Persistent sessions with queued follow-up turns and resumable history.
+- Isolated Git worktrees for safer repository-aware agent runs.
+- Read-only, workspace-write, autonomous, and Codex approval modes.
+- Local model fallback through Ollama or LM Studio.
+- Optional Docker Sandbox execution for Codex.
+- GitHub repository sign-in, selection, cloning, diffs, and change review.
+
+## Get started
+
+Install Perpetual from the Marketplace, then open the Perpetual view in VS
+Code. Install and authenticate at least one supported provider:
+
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview)
+- [Codex](https://github.com/openai/codex)
+
+To use provider switching, install and authenticate both. Cloud Continuity,
+Docker Sandbox, GitHub repositories, and local models require their respective
+accounts or local services.
+
+Perpetual is designed for trusted workspaces. Review the permission and cloud
+handoff settings before enabling autonomous or remote execution.
+
+## Learn more
+
+See the [full documentation and development guide](https://github.com/SakethSripada/Perpetual/blob/main/README.md), or visit the
+[security policy](https://github.com/SakethSripada/Perpetual/blob/main/SECURITY.md)
+and [support guide](https://github.com/SakethSripada/Perpetual/blob/main/SUPPORT.md).

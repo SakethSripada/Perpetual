@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.1.3
+
+- Add a focused Marketplace README highlighting agent switching, automatic
+  limit-reset resume, and cloud continuity.
+- Use the Marketplace README when packaging every platform-specific VSIX.
+- Satisfy current stable Clippy lints in the agent detection and process helpers.
+
 - Remove the unused embedded MCP server and bridge from the daemon workspace.
 - Refresh the open-source documentation, contributor guidance, and workbench preview.
 

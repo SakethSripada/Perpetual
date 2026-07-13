@@ -37,6 +37,8 @@ ${ignoredTargetFolders}
     "package",
     "--target",
     target,
+    "--readme-path",
+    "README.marketplace.md",
     "--ignoreFile",
     ignoreFile,
   ]);
