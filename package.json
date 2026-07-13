@@ -408,7 +408,7 @@
     "package:linux-arm64": "node scripts/package-target.mjs linux-arm64",
     "package:win32-x64": "node scripts/package-target.mjs win32-x64",
     "package:win32-arm64": "node scripts/package-target.mjs win32-arm64",
-    "test:unit": "npm run compile && node --test out/test/*.test.js",
+    "test:unit": "npm run compile && node scripts/run-unit-tests.mjs",
     "test:vscode": "vscode-test --config vscode-test.mjs",
     "test": "npm run test:unit && npm run typecheck:webview"
   },
