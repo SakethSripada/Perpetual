@@ -40,7 +40,7 @@ export function activate(context: vscode.ExtensionContext): void {
       controller.connectGithubRepoInteractive()
     ),
     vscode.commands.registerCommand("perpetual.openSettings", () =>
-      vscode.commands.executeCommand("workbench.action.openSettings", "@ext:perpetual.perpetual-vscode")
+      vscode.commands.executeCommand("workbench.action.openSettings", "@ext:SakethSripada.perpetual-for-vscode")
     )
   );
 }

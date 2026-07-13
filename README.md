@@ -165,7 +165,7 @@ When a release is published, install Perpetual from the VS Code Marketplace or
 from a release `.vsix` file:
 
 ```sh
-code --install-extension ./perpetual-vscode-<target>-<version>.vsix
+code --install-extension ./perpetual-for-vscode-<target>-<version>.vsix
 ```
 
 After installation, open the Perpetual icon in the Activity Bar or run

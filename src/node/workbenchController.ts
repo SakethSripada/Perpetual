@@ -363,7 +363,7 @@ export class WorkbenchController implements vscode.Disposable {
         case "openSettings":
           await vscode.commands.executeCommand(
             "workbench.action.openSettings",
-            "@ext:perpetual.perpetual-vscode",
+            "@ext:SakethSripada.perpetual-for-vscode",
           );
           return;
         case "openPanel":

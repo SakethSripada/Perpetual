@@ -51,14 +51,14 @@ npm run copy-daemon -- --target=win32-x64
 npm run package:win32-x64
 
 $env:VSCE_PAT = "<paste locally; never commit or send this value>"
-npx @vscode/vsce publish --packagePath perpetual-vscode-win32-x64-<version>.vsix
+npx @vscode/vsce publish --packagePath perpetual-for-vscode-win32-x64-<version>.vsix
 Remove-Item Env:VSCE_PAT
 ```
 
 ## Verifying a VSIX
 
 ```sh
-unzip -l perpetual-vscode-win32-x64-<version>.vsix
+unzip -l perpetual-for-vscode-win32-x64-<version>.vsix
 ```
 
 It must contain `dist/extension.js`, the webview bundle, `media/`, and exactly

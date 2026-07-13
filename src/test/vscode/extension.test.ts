@@ -6,7 +6,7 @@ import * as vscode from "vscode";
 suite("Perpetual extension", () => {
   test("activates and registers every public command", async () => {
     const extension = vscode.extensions.getExtension(
-      "perpetual.perpetual-vscode",
+      "SakethSripada.perpetual-for-vscode",
     );
     assert.ok(extension, "the packaged extension must be discoverable");
 
