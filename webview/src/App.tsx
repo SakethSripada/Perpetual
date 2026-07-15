@@ -1505,48 +1505,44 @@ function Popover(props: {
         (placement === "auto" && spaceBelow < 220 && spaceAbove > spaceBelow);
       const availableHeight = openUp ? spaceAbove : spaceBelow;
       const maxHeight = Math.max(120, Math.min(360, availableHeight));
-      const maxWidth = vw - margin * 2;
-      const menuWidth = Math.min(
-        menuRef.current?.offsetWidth ?? rect.width,
-        maxWidth,
-      );
-      const menuHeight = Math.min(
-        menuRef.current?.offsetHeight ?? maxHeight,
-        maxHeight,
-      );
-      // Anchor by preferred edge, then clamp fully inside the viewport so menus never clip.
-      const preferredLeft =
-        align === "center"
-          ? rect.left + rect.width / 2 - menuWidth / 2
-          : align === "right"
-            ? rect.right - menuWidth
-            : rect.left;
-      const left = Math.max(
-        margin,
-        Math.min(preferredLeft, vw - menuWidth - margin),
-      );
-      const preferredTop = openUp
-        ? rect.top - menuHeight - margin
-        : rect.bottom + margin;
-      const top = Math.max(
-        margin,
-        Math.min(preferredTop, vh - menuHeight - margin),
-      );
-      const originX =
-        rect.left + rect.width / 2 < left + menuWidth / 3
-          ? "left"
-          : rect.left + rect.width / 2 > left + (menuWidth * 2) / 3
-            ? "right"
-            : "center";
       const next: CSSProperties = {
         position: "fixed",
         maxHeight,
-        maxWidth,
-        minWidth: Math.min(rect.width, maxWidth),
-        left,
-        top,
-        transformOrigin: `${originX} ${openUp ? "bottom" : "top"}`,
+        minWidth: Math.min(rect.width, vw - margin * 2),
+        transformOrigin: `${align === "right" ? "right" : align === "center" ? "center" : "left"} ${openUp ? "bottom" : "top"}`,
       };
+
+      // Anchor the edges that must stay glued to the trigger instead of
+      // computing left/top from a measured size. Measuring the menu on its
+      // first frame (fonts still loading, async content) under-reported its
+      // width and left the menu drifting away from the trigger; a fixed
+      // right/bottom anchor keeps it flush no matter how the content grows.
+      if (align === "right") {
+        next.right = Math.max(margin, vw - rect.right);
+        next.maxWidth = Math.max(160, rect.right - margin);
+      } else if (align === "center") {
+        const menuWidth = Math.min(
+          menuRef.current?.offsetWidth ?? rect.width,
+          vw - margin * 2,
+        );
+        next.left = Math.max(
+          margin,
+          Math.min(
+            rect.left + rect.width / 2 - menuWidth / 2,
+            vw - menuWidth - margin,
+          ),
+        );
+        next.maxWidth = vw - margin * 2;
+      } else {
+        next.left = Math.max(margin, Math.min(rect.left, vw - margin - 160));
+        next.maxWidth = Math.max(160, vw - margin - (next.left as number));
+      }
+
+      if (openUp) {
+        next.bottom = Math.max(margin, vh - rect.top + margin);
+      } else {
+        next.top = Math.max(margin, Math.min(rect.bottom + margin, vh - margin - 120));
+      }
       setMenuStyle(next);
     };
     reposition();
@@ -4300,11 +4296,28 @@ export function modelOptions(
   return out;
 }
 
+// Only shown when the installed CLI could not be queried at all; the live
+// catalog from the daemon is otherwise authoritative.
 function fallbackModelOptions(agent: AgentKind): PickerModelOption[] {
   const models =
     agent === "claude_code"
-      ? ["opus", "sonnet", "haiku"]
-      : ["gpt-5-codex", "gpt-5", "gpt-4.1", "o3", "o4-mini"];
+      ? [
+          "claude-fable-5",
+          "claude-opus-4-8",
+          "claude-opus-4-7",
+          "claude-sonnet-5",
+          "claude-sonnet-4-6",
+          "claude-haiku-4-5",
+        ]
+      : [
+          "gpt-5.4",
+          "gpt-5.4-mini",
+          "gpt-5.3-codex",
+          "gpt-5.2-codex",
+          "gpt-5.2",
+          "gpt-5.1-codex-max",
+          "gpt-5.1-codex-mini",
+        ];
   return models.map((value) => ({
     value,
     label: prettyModel(value),
@@ -4368,22 +4381,27 @@ export function reasoningOptions(
       modelIdsEqual(option.id, model) ||
       option.aliases?.some((alias) => modelIdsEqual(alias, model)),
   );
-  const detected = selectedModel?.reasoning?.length
-    ? selectedModel.reasoning
+  // A model found in the catalog owns its effort list — even an empty one
+  // (e.g. Haiku 4.5, which accepts no effort level and only offers Default).
+  // The catalog-level list and fallbacks only apply to unknown/custom ids.
+  const knownModel = !!selectedModel && Array.isArray(selectedModel.reasoning);
+  const detected = knownModel
+    ? (selectedModel.reasoning ?? [])
     : (catalog?.reasoning ?? []);
   for (const value of detected) pushReasoning(values, value);
   const defaults = snapshot
     ? runDefaults(snapshot, agent)
     : { model: null, reasoning: null };
-  if (!selectedModel?.reasoning?.length && defaults.reasoning) {
+  if (!knownModel && defaults.reasoning) {
     pushReasoning(values, defaults.reasoning);
   }
-  // Fall back only when the installed CLI exposed no effort metadata. Once it
-  // does, its values are authoritative and automatically include future names.
-  if (detected.length === 0) {
+  // Fall back only when nothing was detected for an unknown model. Once the
+  // installed CLI exposes effort metadata, its values are authoritative and
+  // automatically include future names.
+  if (!knownModel && detected.length === 0) {
     for (const fallback of agent === "claude_code"
       ? ["low", "medium", "high", "xhigh", "max"]
-      : ["low", "medium", "high"]) {
+      : ["low", "medium", "high", "xhigh"]) {
       pushReasoning(values, fallback);
     }
   }
@@ -4422,8 +4440,10 @@ function pushReasoning(values: string[], value: string): void {
 
 function sourceLabel(source: string): string {
   switch (source) {
+    case "codex_app_server":
     case "codex_debug_models":
       return "Codex";
+    case "claude_code":
     case "claude_help":
       return "Claude";
     case "settings":
@@ -4469,15 +4489,24 @@ function prettyModel(value: string): string {
   const v = baseModelId(value);
   if (!v) return "";
   const known: Record<string, string> = {
-    opus: "Opus",
-    sonnet: "Sonnet",
-    haiku: "Haiku",
-    fable: "Fable",
+    opus: "Opus (latest)",
+    sonnet: "Sonnet (latest)",
+    haiku: "Haiku (latest)",
+    fable: "Fable (latest)",
     "claude-fable-5": "Claude Fable 5",
     "claude-opus-4-8": "Claude Opus 4.8",
+    "claude-opus-4-7": "Claude Opus 4.7",
+    "claude-opus-4-6": "Claude Opus 4.6",
     "claude-sonnet-5": "Claude Sonnet 5",
     "claude-sonnet-4-6": "Claude Sonnet 4.6",
     "claude-haiku-4-5": "Claude Haiku 4.5",
+    "gpt-5.4": "GPT-5.4",
+    "gpt-5.4-mini": "GPT-5.4 Mini",
+    "gpt-5.3-codex": "GPT-5.3 Codex",
+    "gpt-5.2-codex": "GPT-5.2 Codex",
+    "gpt-5.2": "GPT-5.2",
+    "gpt-5.1-codex-max": "GPT-5.1 Codex Max",
+    "gpt-5.1-codex-mini": "GPT-5.1 Codex Mini",
     "gpt-5": "GPT-5",
     "gpt-5.5": "GPT-5.5",
     "gpt-5-codex": "GPT-5 Codex",

@@ -61,11 +61,73 @@ test("model picker restores cloud fallbacks when CLI detection is empty", async 
   const { modelOptions } = await loadWorkbenchControls();
   assert.deepEqual(
     modelOptions("claude_code", null, null, "").map((option) => option.value),
-    ["opus", "sonnet", "haiku"],
+    [
+      "claude-fable-5",
+      "claude-opus-4-8",
+      "claude-opus-4-7",
+      "claude-sonnet-5",
+      "claude-sonnet-4-6",
+      "claude-haiku-4-5",
+    ],
   );
   assert.deepEqual(
     modelOptions("codex", null, null, "").map((option) => option.value),
-    ["gpt-5-codex", "gpt-5", "gpt-4.1", "o3", "o4-mini"],
+    [
+      "gpt-5.4",
+      "gpt-5.4-mini",
+      "gpt-5.3-codex",
+      "gpt-5.2-codex",
+      "gpt-5.2",
+      "gpt-5.1-codex-max",
+      "gpt-5.1-codex-mini",
+    ],
+  );
+});
+
+test("a catalog model with no effort support only offers Default", async () => {
+  const { reasoningOptions } = await loadWorkbenchControls();
+  const snapshot = {
+    modelCatalog: [
+      {
+        agent: "claude_code",
+        reasoning: ["low", "medium", "high", "xhigh", "max"],
+        models: [
+          {
+            id: "claude-haiku-4-5",
+            aliases: ["haiku"],
+            reasoning: [],
+            default_reasoning: null,
+          },
+          {
+            id: "claude-opus-4-8",
+            aliases: ["opus"],
+            reasoning: ["low", "medium", "high", "xhigh", "max"],
+            default_reasoning: null,
+          },
+        ],
+      },
+    ],
+    runDefaults: [],
+  };
+  assert.deepEqual(
+    reasoningOptions("claude_code", snapshot, "claude-haiku-4-5").map(
+      (option) => option.value,
+    ),
+    [""],
+  );
+  // Alias selection resolves to the same catalog entry.
+  assert.deepEqual(
+    reasoningOptions("claude_code", snapshot, "opus").map(
+      (option) => option.value,
+    ),
+    ["", "low", "medium", "high", "xhigh", "max"],
+  );
+  // Unknown custom ids keep the catalog-wide list.
+  assert.deepEqual(
+    reasoningOptions("claude_code", snapshot, "claude-mystery-9").map(
+      (option) => option.value,
+    ),
+    ["", "low", "medium", "high", "xhigh", "max"],
   );
 });
 

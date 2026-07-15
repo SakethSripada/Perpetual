@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 0.1.4
+
+- Detect the Codex model catalog live from the installed CLI over the
+  app-server `model/list` RPC (the removed `codex debug models` subcommand is
+  kept only as a fallback for older CLIs), so new models and their per-model
+  reasoning efforts appear without an extension update.
+- Show the Claude lineup with proper versioned names (Claude Fable 5, Claude
+  Opus 4.8/4.7/4.6, Claude Sonnet 5, Claude Sonnet 4.6, Claude Haiku 4.5) and
+  fold the CLI's `fable`/`opus`/`sonnet`/`haiku` aliases into those entries.
+- Offer only the reasoning efforts each model actually supports (e.g. no
+  `xhigh` on the 4.6 generation, Default-only for Haiku 4.5) and read the
+  supported effort levels from `claude --help` so future levels are picked up
+  automatically.
+- Refresh the built-in fallback model lists shown when no CLI is installed.
+- Keep custom model ids typed into the picker flowing through to both CLIs
+  unchanged.
+- Anchor popover menus (including Run options) to the trigger's fixed edge so
+  they no longer open slightly offset to the left.
+
 ## 0.1.3
 
 - Add a focused Marketplace README highlighting agent switching, automatic

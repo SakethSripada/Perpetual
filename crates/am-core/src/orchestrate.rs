@@ -1386,28 +1386,126 @@ fn build_agent_model_catalog() -> Vec<AgentModelCatalog> {
     vec![claude_model_catalog(claude), codex_model_catalog(codex)]
 }
 
+/// Claude effort levels for models that support the full range (Fable 5,
+/// Opus 4.7+, Sonnet 5).
+const CLAUDE_EFFORT_FULL: &[&str] = &["low", "medium", "high", "xhigh", "max"];
+/// Claude effort levels for the 4.6-generation models (no `xhigh`).
+const CLAUDE_EFFORT_46: &[&str] = &["low", "medium", "high", "max"];
+
+/// The known Claude Code model lineup with versioned ids, display names, the
+/// alias each versioned id currently resolves from, and per-model effort
+/// support. The installed CLI stays authoritative where it exposes data: the
+/// effort list is intersected with the levels advertised by `claude --help`,
+/// and any additional aliases/full ids found in the help text are merged in,
+/// so newer CLIs surface new models and levels without an extension update.
+fn curated_claude_models(cli_levels: Option<&[String]>) -> Vec<AgentModelOption> {
+    let entries: &[(&str, &str, &[&str], &[&str])] = &[
+        (
+            "claude-fable-5",
+            "Claude Fable 5",
+            &["fable"],
+            CLAUDE_EFFORT_FULL,
+        ),
+        (
+            "claude-opus-4-8",
+            "Claude Opus 4.8",
+            &["opus"],
+            CLAUDE_EFFORT_FULL,
+        ),
+        (
+            "claude-opus-4-7",
+            "Claude Opus 4.7",
+            &[],
+            CLAUDE_EFFORT_FULL,
+        ),
+        ("claude-opus-4-6", "Claude Opus 4.6", &[], CLAUDE_EFFORT_46),
+        (
+            "claude-sonnet-5",
+            "Claude Sonnet 5",
+            &["sonnet"],
+            CLAUDE_EFFORT_FULL,
+        ),
+        (
+            "claude-sonnet-4-6",
+            "Claude Sonnet 4.6",
+            &[],
+            CLAUDE_EFFORT_46,
+        ),
+        // Haiku 4.5 does not accept an effort level; only "Default" applies.
+        ("claude-haiku-4-5", "Claude Haiku 4.5", &["haiku"], &[]),
+    ];
+    entries
+        .iter()
+        .map(|(id, label, aliases, efforts)| AgentModelOption {
+            id: id.to_string(),
+            label: label.to_string(),
+            aliases: aliases.iter().map(|alias| alias.to_string()).collect(),
+            family: model_family(id),
+            default: false,
+            available: true,
+            source: "claude_code".to_string(),
+            reasoning: efforts
+                .iter()
+                .filter(|effort| {
+                    cli_levels
+                        .map(|levels| {
+                            levels
+                                .iter()
+                                .any(|level| level.eq_ignore_ascii_case(effort))
+                        })
+                        .unwrap_or(true)
+                })
+                .map(|effort| effort.to_string())
+                .collect(),
+            default_reasoning: None,
+            local_provider: None,
+            local_base_url: None,
+        })
+        .collect()
+}
+
 fn claude_model_catalog(defaults: AgentRunDefaults) -> AgentModelCatalog {
     let binary = find_binary("claude");
     let binary_path = binary
         .as_ref()
         .map(|path| path.to_string_lossy().to_string());
     let version = binary.as_ref().and_then(|path| binary_version(path));
-    let mut source = "settings".to_string();
+    let mut source = "claude_code".to_string();
     let mut error = None;
-    let mut models = Vec::new();
-    let mut reasoning = Vec::new();
+    let mut cli_levels: Option<Vec<String>> = None;
+    let mut help_models = Vec::new();
 
     if let Some(binary) = binary.as_ref() {
-        match command_output_timeout(binary, &["--help"], Duration::from_secs(2)) {
+        match command_output_timeout(binary, &["--help"], Duration::from_secs(6)) {
             Ok(help) => {
                 source = "claude_help".to_string();
-                models.extend(parse_claude_help_models(&help));
-                reasoning = parse_claude_reasoning(&help);
+                cli_levels = parse_claude_effort_levels(&help);
+                help_models = parse_claude_help_models(&help);
             }
             Err(err) => error = Some(err),
         }
     } else {
         error = Some("claude binary was not found".to_string());
+    }
+
+    let mut models = curated_claude_models(cli_levels.as_deref());
+    let mut reasoning =
+        cli_levels.unwrap_or_else(|| CLAUDE_EFFORT_FULL.iter().map(|s| s.to_string()).collect());
+    // Anything the CLI itself mentions (new aliases, new full ids) merges in;
+    // aliases already carried by a curated entry dedupe into that entry, and
+    // genuinely new models inherit the CLI-advertised effort levels.
+    for mut option in help_models {
+        let known = models.iter().any(|existing| {
+            model_ids_equal(&existing.id, &option.id)
+                || existing
+                    .aliases
+                    .iter()
+                    .any(|alias| model_ids_equal(alias, &option.id))
+        });
+        if !known {
+            option.reasoning = reasoning.clone();
+        }
+        push_model_option(&mut models, option);
     }
 
     if let Some(model) = defaults.model.as_deref() {
@@ -1431,9 +1529,6 @@ fn claude_model_catalog(defaults: AgentRunDefaults) -> AgentModelCatalog {
     }
     if let Some(reasoning_default) = defaults.reasoning.as_deref() {
         push_unique(&mut reasoning, reasoning_default);
-    }
-    if reasoning.is_empty() {
-        reasoning.extend(["low", "medium", "high", "xhigh", "max"].map(str::to_string));
     }
 
     AgentModelCatalog {
@@ -1462,24 +1557,35 @@ fn codex_model_catalog(mut defaults: AgentRunDefaults) -> AgentModelCatalog {
     let mut reasoning = Vec::new();
 
     if let Some(binary) = binary.as_ref() {
-        match command_output_timeout(binary, &["debug", "models"], Duration::from_secs(4)) {
-            Ok(raw) => match parse_codex_debug_models(&raw, defaults.model.as_deref()) {
-                Ok((parsed, parsed_reasoning)) => {
-                    source = "codex_debug_models".to_string();
-                    models = parsed;
-                    reasoning = parsed_reasoning;
-                }
-                Err(err) => {
-                    error = Some(err);
-                    if defaults.model.is_none() {
-                        defaults.model = codex_doctor_default_model(binary);
+        // Current Codex CLIs expose the model catalog over the app-server
+        // JSON-RPC `model/list` request (the older `codex debug models`
+        // subcommand was removed around 0.117). Try the app-server first and
+        // keep the legacy paths as fallbacks for older installs.
+        match codex_app_server_models(binary, defaults.model.as_deref()) {
+            Ok((parsed, parsed_reasoning)) if !parsed.is_empty() => {
+                source = "codex_app_server".to_string();
+                models = parsed;
+                reasoning = parsed_reasoning;
+            }
+            first_attempt => {
+                let app_server_error = match first_attempt {
+                    Ok(_) => "codex app-server returned no models".to_string(),
+                    Err(err) => err,
+                };
+                match command_output_timeout(binary, &["debug", "models"], Duration::from_secs(4))
+                    .and_then(|raw| parse_codex_debug_models(&raw, defaults.model.as_deref()))
+                {
+                    Ok((parsed, parsed_reasoning)) => {
+                        source = "codex_debug_models".to_string();
+                        models = parsed;
+                        reasoning = parsed_reasoning;
                     }
-                }
-            },
-            Err(err) => {
-                error = Some(err);
-                if defaults.model.is_none() {
-                    defaults.model = codex_doctor_default_model(binary);
+                    Err(_) => {
+                        error = Some(app_server_error);
+                        if defaults.model.is_none() {
+                            defaults.model = codex_doctor_default_model(binary);
+                        }
+                    }
                 }
             }
         }
@@ -1510,7 +1616,7 @@ fn codex_model_catalog(mut defaults: AgentRunDefaults) -> AgentModelCatalog {
         push_unique(&mut reasoning, reasoning_default);
     }
     if reasoning.is_empty() {
-        reasoning.extend(["low", "medium", "high"].map(str::to_string));
+        reasoning.extend(["low", "medium", "high", "xhigh"].map(str::to_string));
     }
 
     AgentModelCatalog {
@@ -1525,6 +1631,194 @@ fn codex_model_catalog(mut defaults: AgentRunDefaults) -> AgentModelCatalog {
         detected_at: now(),
         error,
     }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexAppServerModel {
+    id: String,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    display_name: Option<String>,
+    #[serde(default)]
+    hidden: bool,
+    #[serde(default)]
+    is_default: bool,
+    #[serde(default)]
+    default_reasoning_effort: Option<String>,
+    #[serde(default)]
+    supported_reasoning_efforts: Vec<CodexAppServerReasoning>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexAppServerReasoning {
+    reasoning_effort: String,
+}
+
+/// Query the installed Codex CLI for its live model catalog over the
+/// app-server JSON-RPC transport (`initialize` → `initialized` →
+/// `model/list`). This is how the Codex TUI itself populates its model
+/// picker, so new models and their per-model reasoning efforts show up here
+/// the moment the CLI updates — no extension release required.
+fn codex_app_server_models(
+    binary: &Path,
+    default_model: Option<&str>,
+) -> Result<(Vec<AgentModelOption>, Vec<String>), String> {
+    use std::io::{BufRead, BufReader, Write};
+
+    let mut child = Command::new(binary)
+        .arg("app-server")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|err| format!("failed to run {} app-server: {err}", binary.display()))?;
+
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| format!("{} app-server did not expose stdin", binary.display()))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| format!("{} app-server did not expose stdout", binary.display()))?;
+
+    let request = |id: Option<u64>, method: &str, params: serde_json::Value| {
+        let mut message = json!({ "method": method, "params": params });
+        if let Some(id) = id {
+            message["id"] = json!(id);
+        }
+        format!("{message}\n")
+    };
+    let handshake = [
+        request(
+            Some(1),
+            "initialize",
+            json!({ "clientInfo": { "name": "Perpetual", "version": env!("CARGO_PKG_VERSION") } }),
+        ),
+        request(None, "initialized", json!({})),
+        request(Some(2), "model/list", json!({ "includeHidden": false })),
+    ]
+    .concat();
+    stdin
+        .write_all(handshake.as_bytes())
+        .and_then(|_| stdin.flush())
+        .map_err(|err| format!("failed to write to {} app-server: {err}", binary.display()))?;
+
+    // Read on a helper thread so the deadline holds even if the server hangs.
+    let (line_tx, line_rx) = std::sync::mpsc::channel::<String>();
+    let reader = std::thread::spawn(move || {
+        let mut lines = BufReader::new(stdout).lines();
+        while let Ok(Some(line)) = lines.next().transpose() {
+            if line_tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut outcome = Err(format!("{} app-server timed out", binary.display()));
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        let line = match line_rx.recv_timeout(remaining) {
+            Ok(line) => line,
+            Err(_) => break,
+        };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
+            continue;
+        };
+        if value.get("id").and_then(serde_json::Value::as_u64) != Some(2) {
+            continue;
+        }
+        outcome = if let Some(err) = value.get("error") {
+            Err(err
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("codex app-server model/list failed")
+                .to_string())
+        } else {
+            Ok(value.pointer("/result/data").cloned().unwrap_or_default())
+        };
+        break;
+    }
+
+    // Close stdin first: the app-server exits on stdin EOF, which also covers
+    // the Windows npm `.cmd` shim case where killing the wrapper would leave
+    // the real server process holding the stdout pipe open. Never join the
+    // reader thread — if the server ignores EOF, it would block forever; the
+    // thread exits on its own once the pipe closes.
+    drop(stdin);
+    let _ = child.kill();
+    let _ = child.wait();
+    drop(line_rx);
+    drop(reader);
+
+    let data = outcome?;
+    let parsed: Vec<CodexAppServerModel> = serde_json::from_value(data)
+        .map_err(|err| format!("could not parse codex app-server models: {err}"))?;
+    Ok(collect_app_server_models(parsed, default_model))
+}
+
+fn collect_app_server_models(
+    parsed: Vec<CodexAppServerModel>,
+    default_model: Option<&str>,
+) -> (Vec<AgentModelOption>, Vec<String>) {
+    let mut models = Vec::new();
+    let mut reasoning = Vec::new();
+    for model in parsed {
+        if model.hidden {
+            continue;
+        }
+        let id = model.model.as_deref().unwrap_or(&model.id).trim();
+        if id.is_empty() {
+            continue;
+        }
+        let model_reasoning: Vec<String> = model
+            .supported_reasoning_efforts
+            .iter()
+            .map(|level| level.reasoning_effort.trim().to_string())
+            .filter(|effort| !effort.is_empty())
+            .collect();
+        for effort in &model_reasoning {
+            push_unique(&mut reasoning, effort);
+        }
+        if let Some(default_effort) = model.default_reasoning_effort.as_deref() {
+            push_unique(&mut reasoning, default_effort);
+        }
+        let is_default = default_model
+            .map(|default| model_ids_equal(default, id))
+            .unwrap_or(model.is_default);
+        push_model_option(
+            &mut models,
+            AgentModelOption {
+                id: id.to_string(),
+                label: model
+                    .display_name
+                    .clone()
+                    .filter(|label| !label.trim().is_empty())
+                    .unwrap_or_else(|| pretty_model_label(id)),
+                aliases: if model.id.trim() != id {
+                    vec![model.id.trim().to_string()]
+                } else {
+                    Vec::new()
+                },
+                family: model_family(id),
+                default: is_default,
+                available: true,
+                source: "codex_app_server".to_string(),
+                reasoning: model_reasoning,
+                default_reasoning: model.default_reasoning_effort,
+                local_provider: None,
+                local_base_url: None,
+            },
+        );
+    }
+    (models, reasoning)
 }
 
 #[derive(Debug, Deserialize)]
@@ -1657,13 +1951,39 @@ fn parse_claude_help_models(help: &str) -> Vec<AgentModelOption> {
     models
 }
 
-fn parse_claude_reasoning(help: &str) -> Vec<String> {
+/// Extract the effort levels the installed CLI advertises. Claude Code's help
+/// text documents the flag as `--effort <level>  ... (low, medium, high,
+/// xhigh, max)`, so the parenthesized list after `--effort` is authoritative
+/// and automatically picks up levels added in future CLI releases. Falls back
+/// to scanning for known level names anywhere in the help text.
+fn parse_claude_effort_levels(help: &str) -> Option<Vec<String>> {
+    if let Some(idx) = help.find("--effort") {
+        let window = &help[idx..(idx + 400).min(help.len())];
+        if let Some(open) = window.find('(') {
+            if let Some(close) = window[open..].find(')') {
+                let levels: Vec<String> = window[open + 1..open + close]
+                    .split([',', ' ', '\n', '\r'])
+                    .map(str::trim)
+                    .filter(|token| {
+                        !token.is_empty()
+                            && token.len() <= 12
+                            && token.chars().all(|ch| ch.is_ascii_alphabetic())
+                    })
+                    .map(str::to_lowercase)
+                    .collect();
+                if !levels.is_empty() {
+                    return Some(levels);
+                }
+            }
+        }
+    }
     let lower = help.to_lowercase();
-    ["low", "medium", "high", "xhigh", "max"]
+    let found: Vec<String> = ["low", "medium", "high", "xhigh", "max"]
         .into_iter()
         .filter(|level| lower.contains(level))
         .map(str::to_string)
-        .collect()
+        .collect();
+    (!found.is_empty()).then_some(found)
 }
 
 fn codex_doctor_default_model(binary: &Path) -> Option<String> {
@@ -1769,10 +2089,20 @@ fn push_model_option(models: &mut Vec<AgentModelOption>, option: AgentModelOptio
     if key.is_empty() {
         return;
     }
-    if let Some(existing) = models
-        .iter_mut()
-        .find(|existing| model_dedupe_key(&existing.id) == key)
-    {
+    // An option matches an existing entry when the ids collide directly or
+    // when either side lists the other's id as an alias (e.g. the "opus"
+    // alias folding into the versioned "claude-opus-4-8" entry).
+    if let Some(existing) = models.iter_mut().find(|existing| {
+        model_dedupe_key(&existing.id) == key
+            || existing
+                .aliases
+                .iter()
+                .any(|alias| model_dedupe_key(alias) == key)
+            || option
+                .aliases
+                .iter()
+                .any(|alias| model_ids_equal(alias, &existing.id))
+    }) {
         if option.default {
             existing.default = true;
         }
@@ -2133,6 +2463,138 @@ mod model_catalog_tests {
         assert!(models.iter().any(|model| model.id == "opus"));
         assert!(models.iter().any(|model| model.id == "sonnet"));
         assert!(models.iter().any(|model| model.id == "claude-fable-5"));
+    }
+
+    #[test]
+    fn parses_codex_app_server_model_list() {
+        let data = serde_json::json!([
+            {
+                "id": "gpt-5.3-codex",
+                "model": "gpt-5.3-codex",
+                "displayName": "gpt-5.3-codex",
+                "hidden": false,
+                "isDefault": true,
+                "defaultReasoningEffort": "medium",
+                "supportedReasoningEfforts": [
+                    {"reasoningEffort": "low", "description": ""},
+                    {"reasoningEffort": "medium", "description": ""},
+                    {"reasoningEffort": "high", "description": ""},
+                    {"reasoningEffort": "xhigh", "description": ""}
+                ]
+            },
+            {
+                "id": "gpt-5.1-codex-mini",
+                "model": "gpt-5.1-codex-mini",
+                "displayName": "gpt-5.1-codex-mini",
+                "hidden": false,
+                "isDefault": false,
+                "defaultReasoningEffort": "medium",
+                "supportedReasoningEfforts": [
+                    {"reasoningEffort": "medium", "description": ""},
+                    {"reasoningEffort": "high", "description": ""}
+                ]
+            },
+            { "id": "secret", "model": "secret", "hidden": true, "isDefault": false,
+              "defaultReasoningEffort": "medium", "supportedReasoningEfforts": [],
+              "displayName": "secret", "description": "" }
+        ]);
+        let parsed: Vec<CodexAppServerModel> = serde_json::from_value(data).unwrap();
+        let (models, reasoning) = collect_app_server_models(parsed, None);
+        assert_eq!(models.len(), 2);
+        assert!(models[0].default);
+        assert_eq!(models[0].reasoning, vec!["low", "medium", "high", "xhigh"]);
+        assert_eq!(models[0].default_reasoning.as_deref(), Some("medium"));
+        assert_eq!(models[1].reasoning, vec!["medium", "high"]);
+        assert_eq!(reasoning, vec!["low", "medium", "high", "xhigh"]);
+    }
+
+    #[test]
+    fn app_server_default_yields_to_configured_model() {
+        let data = serde_json::json!([
+            { "id": "gpt-a", "model": "gpt-a", "displayName": "A", "hidden": false,
+              "isDefault": true, "defaultReasoningEffort": "medium",
+              "supportedReasoningEfforts": [] },
+            { "id": "gpt-b", "model": "gpt-b", "displayName": "B", "hidden": false,
+              "isDefault": false, "defaultReasoningEffort": "medium",
+              "supportedReasoningEfforts": [] }
+        ]);
+        let parsed: Vec<CodexAppServerModel> = serde_json::from_value(data).unwrap();
+        let (models, _) = collect_app_server_models(parsed, Some("gpt-b"));
+        assert!(!models[0].default);
+        assert!(models[1].default);
+    }
+
+    #[test]
+    fn curated_claude_models_are_versioned_with_per_model_effort() {
+        let models = curated_claude_models(None);
+        let fable = models.iter().find(|m| m.id == "claude-fable-5").unwrap();
+        assert_eq!(fable.label, "Claude Fable 5");
+        assert!(fable.aliases.iter().any(|alias| alias == "fable"));
+        assert_eq!(fable.reasoning, ["low", "medium", "high", "xhigh", "max"]);
+        let opus = models.iter().find(|m| m.id == "claude-opus-4-8").unwrap();
+        assert_eq!(opus.label, "Claude Opus 4.8");
+        let opus46 = models.iter().find(|m| m.id == "claude-opus-4-6").unwrap();
+        assert!(!opus46.reasoning.iter().any(|level| level == "xhigh"));
+        let haiku = models.iter().find(|m| m.id == "claude-haiku-4-5").unwrap();
+        assert!(haiku.reasoning.is_empty());
+    }
+
+    #[test]
+    fn curated_claude_models_intersect_with_cli_levels() {
+        let levels: Vec<String> = ["low", "medium", "high"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let models = curated_claude_models(Some(&levels));
+        let fable = models.iter().find(|m| m.id == "claude-fable-5").unwrap();
+        assert_eq!(fable.reasoning, ["low", "medium", "high"]);
+    }
+
+    #[test]
+    fn help_aliases_fold_into_curated_versioned_entries() {
+        let mut models = curated_claude_models(None);
+        let before = models.len();
+        for option in parse_claude_help_models(
+            "Provide an alias for the latest model (e.g. 'fable', 'opus', or 'sonnet')",
+        ) {
+            push_model_option(&mut models, option);
+        }
+        assert_eq!(models.len(), before, "aliases must not create duplicates");
+    }
+
+    #[test]
+    fn parses_effort_levels_from_help_parenthetical() {
+        let help = "  --effort <level>   Effort level for the current session\n\
+                    (low, medium, high, xhigh, max)";
+        assert_eq!(
+            parse_claude_effort_levels(help).unwrap(),
+            ["low", "medium", "high", "xhigh", "max"]
+        );
+        assert_eq!(
+            parse_claude_effort_levels("--effort <level> (low, medium, high, ultra)").unwrap(),
+            ["low", "medium", "high", "ultra"]
+        );
+        assert!(parse_claude_effort_levels("no efforts here at all").is_none());
+    }
+
+    /// Live check against the locally installed Codex CLI. Ignored by default
+    /// so CI stays hermetic; run with `cargo test -p am-core -- --ignored`.
+    #[test]
+    #[ignore]
+    fn live_codex_app_server_model_list() {
+        let Some(binary) = find_binary("codex") else {
+            eprintln!("codex not installed; skipping");
+            return;
+        };
+        let (models, reasoning) = codex_app_server_models(&binary, None).unwrap();
+        assert!(!models.is_empty(), "expected at least one model");
+        assert!(!reasoning.is_empty(), "expected at least one effort level");
+        for model in &models {
+            eprintln!(
+                "{} ({}) efforts={:?} default_effort={:?} default={}",
+                model.label, model.id, model.reasoning, model.default_reasoning, model.default
+            );
+        }
     }
 
     #[cfg(unix)]
