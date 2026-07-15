@@ -2,7 +2,15 @@
 
 ## Unreleased
 
-## 0.1.4
+## 0.1.5
+
+- Resolve the agent CLI by newest installed version instead of first directory
+  hit: machines with a stale npm-global Codex next to the auto-updating Codex
+  desktop-app/IDE-extension install were pinned to the old CLI, hiding new
+  models (e.g. GPT-5.5 and the GPT-5.6 Sol/Terra/Luna family) from the picker.
+  The Codex app's managed install directory now participates in discovery.
+
+_0.1.4 was tagged but never published; its changes ship in 0.1.5._
 
 - Detect the Codex model catalog live from the installed CLI over the
   app-server `model/list` RPC (the removed `codex debug models` subcommand is

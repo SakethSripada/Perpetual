@@ -399,12 +399,99 @@ fn remember_binary(bin: &str, path: Option<PathBuf>) {
 }
 
 fn resolve_binary(bin: &str) -> Option<PathBuf> {
+    // Gather every plausible install, then prefer the one reporting the
+    // newest version. Machines routinely carry several copies of the same
+    // CLI — a stale npm global next to an auto-updating desktop-app install
+    // or an editor-extension bundle — and "first directory hit" used to pin
+    // the extension to whichever stale copy sat earliest on the list, which
+    // hid newly released models from the catalog.
+    let mut candidates = Vec::new();
     for dir in candidate_dirs() {
         if let Some(path) = find_in_dir(&dir, bin) {
-            return Some(path);
+            candidates.push(path);
         }
     }
-    via_system_lookup(bin).or_else(|| newest_path(extension_binaries(bin)))
+    for dir in managed_install_dirs(bin) {
+        if let Some(path) = find_in_dir(&dir, bin) {
+            candidates.push(path);
+        }
+    }
+    if let Some(path) = via_system_lookup(bin) {
+        candidates.push(path);
+    }
+    // The freshest editor-extension bundle only (probing every historical
+    // extension version would mean a `--version` spawn per directory).
+    if let Some(path) = newest_path(extension_binaries(bin)) {
+        candidates.push(path);
+    }
+    let candidates = dedupe_paths(candidates);
+    match candidates.len() {
+        0 => None,
+        1 => candidates.into_iter().next(),
+        _ => pick_newest_version(candidates),
+    }
+}
+
+/// Auto-updated per-app install roots — e.g. the Codex desktop app keeps its
+/// managed CLI under hashed folders in `OpenAI/Codex/bin`. These update ahead
+/// of package managers, so they must participate in binary discovery.
+fn managed_install_dirs(bin: &str) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if bin != "codex" {
+        return dirs;
+    }
+    let Some(home) = home_dir() else {
+        return dirs;
+    };
+    for root in [
+        home.join("AppData/Local/OpenAI/Codex/bin"),
+        home.join("Library/Application Support/OpenAI/Codex/bin"),
+        home.join(".local/share/openai/codex/bin"),
+    ] {
+        let Ok(entries) = fs::read_dir(&root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                dirs.push(path);
+            }
+        }
+    }
+    dirs
+}
+
+/// Choose the candidate whose `--version` reports the newest release. A
+/// candidate with an unparseable (or failing) version ranks below any parsed
+/// one; ties keep the earlier, higher-priority candidate.
+fn pick_newest_version(candidates: Vec<PathBuf>) -> Option<PathBuf> {
+    let mut best: Option<(Vec<u64>, PathBuf)> = None;
+    for path in candidates {
+        let key = binary_version(&path)
+            .as_deref()
+            .and_then(parse_version_numbers)
+            .unwrap_or_default();
+        if best.as_ref().is_none_or(|(best_key, _)| key > *best_key) {
+            best = Some((key, path));
+        }
+    }
+    best.map(|(_, path)| path)
+}
+
+/// Extract the leading numeric version from a `--version` line, e.g.
+/// `codex-cli 0.144.0-alpha.4` → `[0, 144, 0]`, `2.1.210 (Claude Code)` →
+/// `[2, 1, 210]`. Pre-release suffixes are ignored.
+fn parse_version_numbers(raw: &str) -> Option<Vec<u64>> {
+    let start = raw.find(|ch: char| ch.is_ascii_digit())?;
+    let segment: String = raw[start..]
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit() || *ch == '.')
+        .collect();
+    let numbers: Vec<u64> = segment
+        .split('.')
+        .map_while(|part| part.parse().ok())
+        .collect();
+    (!numbers.is_empty()).then_some(numbers)
 }
 
 /// Run `<binary> --version` and return the trimmed first line, if it succeeds.
@@ -441,6 +528,25 @@ mod tests {
         fs::canonicalize(path)
             .map(strip_verbatim_prefix)
             .unwrap_or_else(|_| path.to_path_buf())
+    }
+
+    #[test]
+    fn parses_leading_numeric_versions() {
+        assert_eq!(
+            parse_version_numbers("codex-cli 0.144.0-alpha.4"),
+            Some(vec![0, 144, 0])
+        );
+        assert_eq!(
+            parse_version_numbers("2.1.210 (Claude Code)"),
+            Some(vec![2, 1, 210])
+        );
+        assert_eq!(
+            parse_version_numbers("codex-cli 0.117.0"),
+            Some(vec![0, 117, 0])
+        );
+        assert_eq!(parse_version_numbers("no digits"), None);
+        assert!(vec![0u64, 144, 0] > vec![0u64, 117, 0]);
+        assert!(vec![2u64, 1, 210] > vec![2u64, 1]);
     }
 
     #[test]

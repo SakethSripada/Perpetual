@@ -4310,13 +4310,12 @@ function fallbackModelOptions(agent: AgentKind): PickerModelOption[] {
           "claude-haiku-4-5",
         ]
       : [
+          "gpt-5.6-sol",
+          "gpt-5.6-terra",
+          "gpt-5.6-luna",
+          "gpt-5.5",
           "gpt-5.4",
           "gpt-5.4-mini",
-          "gpt-5.3-codex",
-          "gpt-5.2-codex",
-          "gpt-5.2",
-          "gpt-5.1-codex-max",
-          "gpt-5.1-codex-mini",
         ];
   return models.map((value) => ({
     value,
@@ -4500,6 +4499,9 @@ function prettyModel(value: string): string {
     "claude-sonnet-5": "Claude Sonnet 5",
     "claude-sonnet-4-6": "Claude Sonnet 4.6",
     "claude-haiku-4-5": "Claude Haiku 4.5",
+    "gpt-5.6-sol": "GPT-5.6 Sol",
+    "gpt-5.6-terra": "GPT-5.6 Terra",
+    "gpt-5.6-luna": "GPT-5.6 Luna",
     "gpt-5.4": "GPT-5.4",
     "gpt-5.4-mini": "GPT-5.4 Mini",
     "gpt-5.3-codex": "GPT-5.3 Codex",
