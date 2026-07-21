@@ -6,6 +6,52 @@ use crate::{
     ModelTargetKind, TaskStatus,
 };
 
+/// A graceful, response-boundary usage target for a Workbench session.
+/// Providers report usage after responses, so this is a target rather than an
+/// exact hard token cutoff.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum TaskBudget {
+    Unlimited,
+    Tokens { limit_tokens: u64 },
+    WeeklyPercent { limit_percent: u8 },
+}
+
+impl Default for TaskBudget {
+    fn default() -> Self {
+        Self::Unlimited
+    }
+}
+
+impl TaskBudget {
+    pub const MIN_TOKENS: u64 = 10_000;
+    pub const MAX_TOKENS: u64 = 10_000_000;
+
+    pub fn validate(&self) -> Result<(), String> {
+        match self {
+            Self::Unlimited => Ok(()),
+            Self::Tokens { limit_tokens }
+                if (*limit_tokens >= Self::MIN_TOKENS && *limit_tokens <= Self::MAX_TOKENS) =>
+            {
+                Ok(())
+            }
+            Self::Tokens { .. } => Err(format!(
+                "Token budgets must be between {} and {} tokens.",
+                Self::MIN_TOKENS,
+                Self::MAX_TOKENS
+            )),
+            Self::WeeklyPercent { limit_percent } if (1..=100).contains(limit_percent) => Ok(()),
+            Self::WeeklyPercent { .. } => {
+                Err("Weekly budgets must be a whole percentage from 1% through 100%.".into())
+            }
+        }
+    }
+
+    pub fn is_unlimited(&self) -> bool {
+        matches!(self, Self::Unlimited)
+    }
+}
+
 /// A first-class Workbench conversation. It is intentionally independent from
 /// tasks, while still optionally belonging to a project for repo organization.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,6 +96,8 @@ pub struct AgentThread {
     pub progress: String,
     pub open_questions: String,
     pub next_actions: String,
+    #[serde(default)]
+    pub task_budget: TaskBudget,
     pub sort_order: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -127,6 +175,8 @@ pub struct NewAgentThread {
     pub fallback_model_target: Option<ModelTargetKind>,
     #[serde(default)]
     pub sort_order: Option<i64>,
+    #[serde(default)]
+    pub task_budget: Option<TaskBudget>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -174,6 +224,8 @@ pub struct AgentThreadUpdate {
     pub open_questions: Option<String>,
     #[serde(default)]
     pub next_actions: Option<String>,
+    #[serde(default)]
+    pub task_budget: Option<TaskBudget>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

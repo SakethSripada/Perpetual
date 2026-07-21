@@ -110,6 +110,35 @@ fn execution_backend_contract() {
 }
 
 #[test]
+fn task_budget_contract() {
+    assert_eq!(
+        serde_json::to_value(TaskBudget::Unlimited).unwrap(),
+        json!({ "mode": "unlimited" })
+    );
+    assert_eq!(
+        serde_json::to_value(TaskBudget::Tokens {
+            limit_tokens: 50_000
+        })
+        .unwrap(),
+        json!({ "mode": "tokens", "limit_tokens": 50_000 })
+    );
+    assert_eq!(
+        serde_json::from_value::<TaskBudget>(json!({
+            "mode": "weekly_percent",
+            "limit_percent": 5
+        }))
+        .unwrap(),
+        TaskBudget::WeeklyPercent { limit_percent: 5 }
+    );
+    assert!(TaskBudget::Tokens { limit_tokens: 9_999 }
+        .validate()
+        .is_err());
+    assert!(TaskBudget::WeeklyPercent { limit_percent: 101 }
+        .validate()
+        .is_err());
+}
+
+#[test]
 fn local_model_provider_contract() {
     assert_enum_contract!(LocalModelProviderKind, [
         LocalModelProviderKind::Ollama => "ollama",

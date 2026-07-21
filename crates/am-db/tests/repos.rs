@@ -218,6 +218,7 @@ async fn agent_thread_repos_turns_messages_and_queue_roundtrip() {
             reasoning: Some("high".into()),
             local_provider: None,
             local_base_url: None,
+            task_budget: Some(TaskBudget::WeeklyPercent { limit_percent: 5 }),
             sort_order: None,
             ..Default::default()
         },
@@ -229,6 +230,10 @@ async fn agent_thread_repos_turns_messages_and_queue_roundtrip() {
     assert_eq!(thread.execution_backend, ExecutionBackend::DockerSandbox);
     assert_eq!(thread.model.as_deref(), Some("opus"));
     assert_eq!(thread.reasoning.as_deref(), Some("high"));
+    assert_eq!(
+        thread.task_budget,
+        TaskBudget::WeeklyPercent { limit_percent: 5 }
+    );
 
     let group = agent_thread::create_group(
         &db.pool,

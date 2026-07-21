@@ -1,7 +1,7 @@
 use am_proto::{
     new_id, now, AgentKind, AgentThread, AgentThreadUpdate, ComputeProviderKind, ExecutionBackend,
-    LocalModelProviderKind, ModelTargetKind, NewAgentThread, NewWorkbenchSessionGroup, TaskStatus,
-    WorkbenchSessionGroup, WorkbenchSessionGroupUpdate,
+    LocalModelProviderKind, ModelTargetKind, NewAgentThread, NewWorkbenchSessionGroup, TaskBudget,
+    TaskStatus, WorkbenchSessionGroup, WorkbenchSessionGroupUpdate,
 };
 use chrono::{DateTime, Utc};
 use sqlx::SqlitePool;
@@ -45,6 +45,7 @@ struct AgentThreadRow {
     progress: String,
     open_questions: String,
     next_actions: String,
+    task_budget: String,
     sort_order: i64,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -134,6 +135,7 @@ impl TryFrom<AgentThreadRow> for AgentThread {
             progress: r.progress,
             open_questions: r.open_questions,
             next_actions: r.next_actions,
+            task_budget: parse_task_budget(r.task_budget)?,
             sort_order: r.sort_order,
             created_at: r.created_at,
             updated_at: r.updated_at,
@@ -153,16 +155,23 @@ fn parse_model_target(value: Option<String>) -> Result<Option<ModelTargetKind>, 
         .transpose()
 }
 
+fn parse_task_budget(value: String) -> Result<TaskBudget, DbError> {
+    serde_json::from_str(&value).map_err(|err| DbError::Serde(err.to_string()))
+}
+
 const SELECT: &str = "SELECT id, project_id, group_id, title, status, active_agent, preferred_agent, \
     permission, execution_backend, model, reasoning, local_provider, local_base_url, \
     model_target, compute_lease_id, compute_provider, estimated_compute_cost_usd, fallback_model_target, \
     original_agent, fallback_agent, original_model, fallback_model, original_local_provider, \
     fallback_local_provider, original_local_base_url, fallback_local_base_url, \
     switch_back_pending, limit_reset_at, switch_back, handoff_state, objective, decisions, \
-    progress, open_questions, next_actions, sort_order, created_at, updated_at FROM agent_threads";
+    progress, open_questions, next_actions, task_budget, sort_order, created_at, updated_at FROM agent_threads";
 
 pub async fn create(pool: &SqlitePool, input: NewAgentThread) -> Result<AgentThread, DbError> {
     let ts = now();
+    if let Some(task_budget) = input.task_budget.as_ref() {
+        task_budget.validate().map_err(DbError::Serde)?;
+    }
     let thread = AgentThread {
         id: new_id(),
         project_id: input.project_id,
@@ -207,6 +216,7 @@ pub async fn create(pool: &SqlitePool, input: NewAgentThread) -> Result<AgentThr
         progress: String::new(),
         open_questions: String::new(),
         next_actions: String::new(),
+        task_budget: input.task_budget.unwrap_or_default(),
         sort_order: input.sort_order.unwrap_or(0),
         created_at: ts,
         updated_at: ts,
@@ -219,8 +229,8 @@ pub async fn create(pool: &SqlitePool, input: NewAgentThread) -> Result<AgentThr
          original_agent, fallback_agent, original_model, fallback_model, original_local_provider, \
          fallback_local_provider, original_local_base_url, fallback_local_base_url, \
          switch_back_pending, limit_reset_at, switch_back, handoff_state, objective, decisions, \
-         progress, open_questions, next_actions, sort_order, created_at, updated_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         progress, open_questions, next_actions, task_budget, sort_order, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&thread.id)
     .bind(&thread.project_id)
@@ -257,6 +267,7 @@ pub async fn create(pool: &SqlitePool, input: NewAgentThread) -> Result<AgentThr
     .bind(&thread.progress)
     .bind(&thread.open_questions)
     .bind(&thread.next_actions)
+    .bind(serde_json::to_string(&thread.task_budget).map_err(|err| DbError::Serde(err.to_string()))?)
     .bind(thread.sort_order)
     .bind(thread.created_at)
     .bind(thread.updated_at)
@@ -398,6 +409,10 @@ pub async fn update(
     if let Some(next_actions) = patch.next_actions {
         thread.next_actions = next_actions;
     }
+    if let Some(task_budget) = patch.task_budget {
+        task_budget.validate().map_err(DbError::Serde)?;
+        thread.task_budget = task_budget;
+    }
     save(pool, &thread).await
 }
 
@@ -413,7 +428,7 @@ pub async fn save(pool: &SqlitePool, thread: &AgentThread) -> Result<AgentThread
          fallback_model = ?, original_local_provider = ?, fallback_local_provider = ?, \
          original_local_base_url = ?, fallback_local_base_url = ?, switch_back_pending = ?, \
          limit_reset_at = ?, switch_back = ?, handoff_state = ?, objective = ?, decisions = ?, \
-         progress = ?, open_questions = ?, next_actions = ?, sort_order = ?, updated_at = ? WHERE id = ?",
+         progress = ?, open_questions = ?, next_actions = ?, task_budget = ?, sort_order = ?, updated_at = ? WHERE id = ?",
     )
     .bind(&thread.title)
     .bind(thread.status.as_str())
@@ -456,6 +471,7 @@ pub async fn save(pool: &SqlitePool, thread: &AgentThread) -> Result<AgentThread
     .bind(&thread.progress)
     .bind(&thread.open_questions)
     .bind(&thread.next_actions)
+    .bind(serde_json::to_string(&thread.task_budget).map_err(|err| DbError::Serde(err.to_string()))?)
     .bind(thread.sort_order)
     .bind(updated_at)
     .bind(&thread.id)

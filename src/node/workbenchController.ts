@@ -28,6 +28,7 @@ import type {
   PermissionPolicy,
   SandboxPolicy,
   SandboxRuntimeStatus,
+  TaskBudget,
   ThreadDetails,
   WorkbenchDefaults,
   WorkbenchSnapshot,
@@ -51,6 +52,7 @@ type SubmitMessage = {
   reasoning?: string | null;
   localProvider?: LocalModelProvider | null;
   localBaseUrl?: string | null;
+  taskBudget?: TaskBudget;
 };
 
 type WebviewMessage =
@@ -659,6 +661,7 @@ export class WorkbenchController implements vscode.Disposable {
         reasoning,
         local_provider: localProvider,
         local_base_url: localBaseUrl,
+        task_budget: message.taskBudget,
       });
       await this.selectThread(message.threadId);
       void this.sendThreadMessageInBackground(
@@ -683,6 +686,7 @@ export class WorkbenchController implements vscode.Disposable {
       reasoning,
       local_provider: localProvider,
       local_base_url: localBaseUrl,
+      task_budget: message.taskBudget,
     });
     await this.selectThread(thread.id);
     await this.refresh();

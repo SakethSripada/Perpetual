@@ -17,6 +17,10 @@ export type PermissionPolicy = "read_only" | "workspace_write" | "autonomous";
 export type ExecutionBackend = "host" | "docker_sandbox";
 export type AvailabilityState = "unknown" | "available" | "limited";
 export type LocalModelProvider = "ollama" | "lm_studio";
+export type TaskBudget =
+  | { mode: "unlimited" }
+  | { mode: "tokens"; limit_tokens: number }
+  | { mode: "weekly_percent"; limit_percent: number };
 
 export interface Project {
   id: string;
@@ -285,6 +289,7 @@ export interface AgentThread {
   progress: string;
   open_questions: string;
   next_actions: string;
+  task_budget: TaskBudget;
   created_at: string;
   updated_at: string;
 }
@@ -301,6 +306,7 @@ export interface NewAgentThread {
   reasoning?: string | null;
   local_provider?: LocalModelProvider | null;
   local_base_url?: string | null;
+  task_budget?: TaskBudget;
 }
 
 export interface AgentThreadUpdate {
@@ -319,6 +325,7 @@ export interface AgentThreadUpdate {
   progress?: string | null;
   open_questions?: string | null;
   next_actions?: string | null;
+  task_budget?: TaskBudget;
 }
 
 export interface AgentThreadRepo {

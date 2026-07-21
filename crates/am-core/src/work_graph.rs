@@ -178,6 +178,7 @@ impl AppCore {
                         estimated_compute_cost_usd: input.max_compute_usd,
                         fallback_model_target: None,
                         sort_order: None,
+                        task_budget: None,
                     })
                     .await?;
                 let mut node =

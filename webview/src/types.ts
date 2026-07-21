@@ -16,6 +16,10 @@ export type PermissionPolicy = "read_only" | "workspace_write" | "autonomous";
 export type ExecutionBackend = "host" | "docker_sandbox";
 export type AvailabilityState = "unknown" | "available" | "limited";
 export type LocalModelProvider = "ollama" | "lm_studio";
+export type TaskBudget =
+  | { mode: "unlimited" }
+  | { mode: "tokens"; limit_tokens: number }
+  | { mode: "weekly_percent"; limit_percent: number };
 
 export interface WorkbenchDefaults {
   agent: AgentKind;
@@ -255,6 +259,7 @@ export interface AgentThread {
   progress: string;
   open_questions: string;
   next_actions: string;
+  task_budget: TaskBudget;
   created_at: string;
   updated_at: string;
 }
