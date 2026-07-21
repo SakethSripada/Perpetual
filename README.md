@@ -109,6 +109,15 @@ automatically. Limit detection, fallback, switchback, retry timing, and resume
 state are recorded in the transcript instead of appearing as unexplained
 provider failures.
 
+### Graceful session task budgets
+
+Set an approximate token target or, for Codex Host sessions with ChatGPT
+7-day quota telemetry, an account-usage percentage allocation from the
+composer's gauge control. Budgets include follow-up turns, wrap up near the
+target, and pause cleanly without draining queued work or silently switching
+to another quota. See [the task budget guarantees and limitations](docs/task-budgets.md)
+for the provider matrix and weekly-percentage semantics.
+
 ### Cloud continuity
 
 Cloud continuity lets eligible work continue in the provider's cloud when the
