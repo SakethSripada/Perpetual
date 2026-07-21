@@ -31,6 +31,7 @@ type IconName =
   | "cloud"
   | "download"
   | "clock"
+  | "gauge"
   | "terminal"
   | "alert";
 
@@ -69,6 +70,7 @@ const PATHS: Record<IconName, string> = {
   cloud: "M5.2 12.5H4a2.6 2.6 0 0 1-.4-5.2A4.2 4.2 0 0 1 11.3 5a3.3 3.3 0 0 1 .5 6.6H6.5",
   download: "M8 2.5v7M5.2 7.3 8 10.1l2.8-2.8M3 13.2h10",
   clock: "M8 2.6a5.4 5.4 0 1 0 0 10.8 5.4 5.4 0 0 0 0-10.8zM8 5.2V8l2 1.4",
+  gauge: "M2.2 10.8a6 6 0 1 1 11.6 0M8 8l2.6-2.6M3.7 12.4h8.6",
   terminal: "M3 3.5h10v9H3zM5 6.3l2 1.7-2 1.7M8.5 10h2.5",
   alert: "M8 2.5 14.5 13.5h-13zM8 6.5v3.2M8 11.6v.1",
 };

@@ -26,6 +26,7 @@ import type {
   LocalModelProvider,
   PermissionPolicy,
   SandboxPolicy,
+  TaskBudget,
   ThreadDetails,
   WorkbenchSnapshot,
 } from "./types";
@@ -96,6 +97,9 @@ export default function App() {
     "",
   );
   const [localBaseUrl, setLocalBaseUrl] = useState("");
+  const [taskBudget, setTaskBudget] = useState<TaskBudget>({
+    mode: "unlimited",
+  });
   const [repoIds, setRepoIds] = useState<string[]>(persisted.repoIds ?? []);
   const repoIdsRef = useRef(repoIds);
   repoIdsRef.current = repoIds;
@@ -348,6 +352,7 @@ export default function App() {
       selectedThread?.local_provider ?? snapshot.defaults.local_provider ?? "";
     const nextLocalBaseUrl =
       selectedThread?.local_base_url ?? snapshot.defaults.local_base_url ?? "";
+    const nextTaskBudget = selectedThread?.task_budget ?? { mode: "unlimited" as const };
     const runControlsKey = [
       effectiveSelectedId ?? "new",
       nextAgent,
@@ -357,6 +362,7 @@ export default function App() {
       nextReasoning,
       nextLocalProvider,
       nextLocalBaseUrl,
+      JSON.stringify(nextTaskBudget),
       selectedThread?.handoff_state ?? "",
     ].join("|");
     if (runControlsKeyRef.current !== runControlsKey) {
@@ -368,6 +374,7 @@ export default function App() {
       setReasoning(nextReasoning);
       setLocalProvider(nextAgent === "codex" ? nextLocalProvider : "");
       setLocalBaseUrl(nextAgent === "codex" ? nextLocalBaseUrl : "");
+      setTaskBudget(nextTaskBudget);
     }
     if (
       selectedThread &&
@@ -403,6 +410,7 @@ export default function App() {
     selectedThread?.reasoning,
     selectedThread?.local_provider,
     selectedThread?.local_base_url,
+    selectedThread?.task_budget,
     selectedThread?.handoff_state,
     snapshot?.defaults.agent,
     snapshot?.defaults.permission,
@@ -705,6 +713,7 @@ export default function App() {
       reasoning: reasoning.trim() || null,
       localProvider: submittedLocalProvider,
       localBaseUrl: submittedLocalProvider ? localBaseUrl.trim() || null : null,
+      taskBudget,
     });
     return true;
   };
@@ -960,6 +969,8 @@ export default function App() {
         setLocalProvider={setLocalProvider}
         localBaseUrl={localBaseUrl}
         setLocalBaseUrl={setLocalBaseUrl}
+        taskBudget={taskBudget}
+        setTaskBudget={setTaskBudget}
         repoIds={repoIds}
         setRepoIds={setDraftRepoIds}
         reposLocked={reposLocked}
@@ -2083,6 +2094,8 @@ type ComposerProps = {
   setLocalProvider(value: LocalModelProvider | ""): void;
   localBaseUrl: string;
   setLocalBaseUrl(value: string): void;
+  taskBudget: TaskBudget;
+  setTaskBudget(value: TaskBudget): void;
   repoIds: string[];
   setRepoIds(value: string[]): void;
   reposLocked: boolean;
@@ -2108,6 +2121,8 @@ function Composer(props: ComposerProps) {
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   const [permOpen, setPermOpen] = useState(false);
+  const [budgetOpen, setBudgetOpen] = useState(false);
+  const [customBudget, setCustomBudget] = useState("");
   // The draft lives here, not in App, so each keystroke re-renders only the
   // composer — never the transcript. App receives the text only on submit.
   const [draft, setDraft] = useState("");
@@ -2181,7 +2196,7 @@ function Composer(props: ComposerProps) {
   const perm =
     PERMISSIONS.find((item) => item.value === props.permission) ??
     PERMISSIONS[1];
-  const permissionLabel = permissionComposerLabel(props.permission);
+  const budgetLabel = taskBudgetComposerLabel(props.taskBudget);
   const optionsActive =
     sandboxOn ||
     localOn ||
@@ -2436,8 +2451,6 @@ function Composer(props: ComposerProps) {
                   onClick={toggle}
                 >
                   <Icon name={perm.icon} />
-                  <span>{permissionLabel}</span>
-                  <Icon name="caret" className="chip-caret" />
                 </button>
               )}
             >
@@ -2465,6 +2478,53 @@ function Composer(props: ComposerProps) {
                   </button>
                 ))}
               </div>
+            </Popover>
+
+            <Popover
+              open={budgetOpen}
+              setOpen={setBudgetOpen}
+              placement="above"
+              trigger={({ toggle, ref }) => (
+                <button
+                  ref={ref as (el: HTMLButtonElement | null) => void}
+                  type="button"
+                  className={`budget-trigger${props.taskBudget.mode !== "unlimited" ? " active" : ""}`}
+                  title={`Session budget: ${budgetLabel}`}
+                  aria-label={`Session budget: ${budgetLabel}`}
+                  onClick={toggle}
+                >
+                  <Icon name="gauge" />
+                  {props.taskBudget.mode !== "unlimited" && <span>{budgetLabel}</span>}
+                </button>
+              )}
+            >
+              <BudgetMenu
+                budget={props.taskBudget}
+                agent={props.agent}
+                backend={props.backend}
+                localOn={localOn}
+                authenticated={
+                  props.snapshot?.agents.find((item) => item.kind === "codex")
+                    ?.authenticated ?? false
+                }
+                isRunning={props.isRunning}
+                customValue={customBudget}
+                setCustomValue={setCustomBudget}
+                onSelect={(next, close = true) => {
+                  if (
+                    props.isRunning &&
+                    JSON.stringify(next) !== JSON.stringify(props.taskBudget)
+                  ) {
+                    props.onNotice(
+                      "Stop the session before changing its budget. Increase the cap or turn budgeting off while paused.",
+                    );
+                    return;
+                  }
+                  props.setTaskBudget(next);
+                  setBudgetOpen(!close);
+                }}
+                onNotice={props.onNotice}
+              />
             </Popover>
 
             <Popover
@@ -2667,6 +2727,167 @@ function Composer(props: ComposerProps) {
         </div>
       </div>
     </footer>
+  );
+}
+
+function BudgetMenu(props: {
+  budget: TaskBudget;
+  agent: AgentKind;
+  backend: ExecutionBackend;
+  localOn: boolean;
+  authenticated: boolean;
+  isRunning: boolean;
+  customValue: string;
+  setCustomValue(value: string): void;
+  onSelect(next: TaskBudget, close?: boolean): void;
+  onNotice(message: string): void;
+}) {
+  const hostSupported = props.backend === "host" && !props.localOn;
+  const weeklySupported = hostSupported && props.agent === "codex" && props.authenticated;
+  const selectedTokenBudget =
+    props.budget.mode === "tokens" ? props.budget.limit_tokens : null;
+  const selectedWeeklyBudget =
+    props.budget.mode === "weekly_percent" ? props.budget.limit_percent : null;
+  const unsupportedReason = props.localOn
+    ? "Budgets require a hosted agent; local model runs are not metered here."
+    : props.backend !== "host"
+      ? "Budgets require Host execution."
+      : "Weekly % requires Codex with ChatGPT account usage telemetry.";
+  const applyCustom = () => {
+    const normalized = props.customValue.replace(/[,\s]/g, "");
+    if (!/^\d+$/.test(normalized)) {
+      props.onNotice("Enter a whole-number budget.");
+      return;
+    }
+    const value = Number(normalized);
+    if (props.budget.mode === "weekly_percent") {
+      if (value < 1 || value > 100) {
+        props.onNotice("Weekly budgets must be between 1% and 100%.");
+        return;
+      }
+      props.onSelect({ mode: "weekly_percent", limit_percent: value });
+      return;
+    }
+    if (value < 10_000 || value > 10_000_000) {
+      props.onNotice("Token budgets must be between 10k and 10m tokens.");
+      return;
+    }
+    props.onSelect({ mode: "tokens", limit_tokens: value });
+  };
+  return (
+    <div className="menu budget-menu" role="listbox" aria-label="Session budget">
+      <div className="menu-head">Session budget</div>
+      <p className="budget-helper">
+        Approximate target across this session. The agent wraps up near it; one
+        provider response may overshoot.
+      </p>
+      {props.isRunning && (
+        <div className="budget-note">Stop the session to adjust its cap.</div>
+      )}
+      <button
+        type="button"
+        role="option"
+        aria-selected={props.budget.mode === "unlimited"}
+        className={props.budget.mode === "unlimited" ? "menu-item selected" : "menu-item"}
+        onClick={() => props.onSelect({ mode: "unlimited" })}
+      >
+        <Icon name="gauge" />
+        <span>No limit</span>
+        {props.budget.mode === "unlimited" && <Icon name="check" />}
+      </button>
+      <button
+        type="button"
+        role="option"
+        aria-selected={props.budget.mode === "tokens"}
+        disabled={!hostSupported}
+        className={props.budget.mode === "tokens" ? "menu-item selected" : "menu-item"}
+        title={!hostSupported ? unsupportedReason : undefined}
+        onClick={() => props.onSelect({ mode: "tokens", limit_tokens: 50_000 }, false)}
+      >
+        <Icon name="clock" />
+        <span>Tokens</span>
+        {props.budget.mode === "tokens" && <Icon name="check" />}
+      </button>
+      {props.budget.mode === "tokens" && hostSupported && (
+        <div className="budget-presets">
+          {[25_000, 50_000, 100_000].map((value) => (
+            <button
+              key={value}
+              type="button"
+              className={
+                selectedTokenBudget === value
+                  ? "budget-preset selected"
+                  : "budget-preset"
+              }
+              onClick={() => props.onSelect({ mode: "tokens", limit_tokens: value })}
+            >
+              {taskBudgetComposerLabel({ mode: "tokens", limit_tokens: value })}
+            </button>
+          ))}
+        </div>
+      )}
+      <button
+        type="button"
+        role="option"
+        aria-selected={props.budget.mode === "weekly_percent"}
+        disabled={!weeklySupported}
+        className={
+          props.budget.mode === "weekly_percent"
+            ? "menu-item selected"
+            : "menu-item"
+        }
+        title={!weeklySupported ? unsupportedReason : undefined}
+        onClick={() =>
+          props.onSelect({ mode: "weekly_percent", limit_percent: 5 }, false)
+        }
+      >
+        <Icon name="gauge" />
+        <span>Weekly %</span>
+        {props.budget.mode === "weekly_percent" && <Icon name="check" />}
+      </button>
+      {props.budget.mode === "weekly_percent" && weeklySupported && (
+        <div className="budget-presets">
+          {[1, 2, 5, 10].map((value) => (
+            <button
+              key={value}
+              type="button"
+              className={
+                selectedWeeklyBudget === value
+                  ? "budget-preset selected"
+                  : "budget-preset"
+              }
+              onClick={() =>
+                props.onSelect({ mode: "weekly_percent", limit_percent: value })
+              }
+            >
+              {value}%
+            </button>
+          ))}
+        </div>
+      )}
+      {!hostSupported && <div className="budget-note">{unsupportedReason}</div>}
+      {hostSupported && !weeklySupported && (
+        <div className="budget-note">Weekly % needs Codex host execution and a ChatGPT-authenticated 7-day usage window.</div>
+      )}
+      {props.budget.mode !== "unlimited" && hostSupported && (
+        <div className="budget-custom">
+          <input
+            type="text"
+            inputMode="numeric"
+            value={props.customValue}
+            placeholder={props.budget.mode === "weekly_percent" ? "Custom %" : "Custom tokens"}
+            aria-label={props.budget.mode === "weekly_percent" ? "Custom weekly percentage" : "Custom token budget"}
+            onChange={(event) => props.setCustomValue(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") applyCustom();
+            }}
+          />
+          <button type="button" className="budget-apply" onClick={applyCustom}>
+            Apply
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -3081,6 +3302,15 @@ function permissionComposerLabel(permission: PermissionPolicy): string {
     case "workspace_write":
       return "Write access";
   }
+}
+
+function taskBudgetComposerLabel(budget: TaskBudget): string {
+  if (budget.mode === "unlimited") return "No limit";
+  if (budget.mode === "weekly_percent") return `${budget.limit_percent}%`;
+  if (budget.limit_tokens >= 1_000_000) {
+    return `${Math.round(budget.limit_tokens / 1_000_000)}m`;
+  }
+  return `${Math.round(budget.limit_tokens / 1_000)}k`;
 }
 
 function ChangesView(props: {

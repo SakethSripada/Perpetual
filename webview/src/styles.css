@@ -1121,9 +1121,10 @@ textarea {
   align-items: center;
   gap: 6px;
   height: 30px;
-  max-width: 158px;
+  width: 30px;
+  max-width: 30px;
   min-width: 0;
-  padding: 0 8px;
+  padding: 0;
   border: 0;
   border-radius: 999px;
   background: transparent;
@@ -1131,21 +1132,41 @@ textarea {
   cursor: pointer;
   font-size: 12px;
   font-weight: 600;
+  justify-content: center;
   transition: background 0.12s ease, color 0.12s ease;
 }
 .permission-chip:hover {
   background: var(--am-control-bg-hover);
   color: var(--vscode-foreground);
 }
-.permission-chip span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .permission-chip.danger {
   background: transparent;
   color: var(--am-control-fg);
+}
+.budget-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--am-control-fg);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 650;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.budget-trigger:hover,
+.budget-trigger.active {
+  background: var(--am-control-bg-hover);
+  color: var(--vscode-foreground);
+}
+.budget-trigger span {
+  white-space: nowrap;
 }
 .chip-badge {
   position: absolute;
@@ -1214,6 +1235,66 @@ textarea {
   transform: scale(1.2);
 }
 
+.budget-menu {
+  width: min(286px, calc(100vw - 24px));
+  padding-bottom: 8px;
+}
+.budget-helper {
+  margin: -2px 12px 8px;
+  color: var(--am-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.budget-note {
+  margin: 7px 12px 8px;
+  color: var(--am-muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+.budget-presets {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  padding: 0 10px 7px 38px;
+}
+.budget-preset,
+.budget-apply {
+  min-height: 26px;
+  border: 1px solid var(--am-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--am-control-fg);
+  cursor: pointer;
+  font-size: 11px;
+}
+.budget-preset:hover,
+.budget-preset.selected,
+.budget-apply:hover {
+  border-color: var(--am-accent);
+  color: var(--vscode-foreground);
+  background: var(--am-control-bg-hover);
+}
+.budget-custom {
+  display: flex;
+  gap: 5px;
+  padding: 1px 10px 0 38px;
+}
+.budget-custom input {
+  min-width: 0;
+  flex: 1 1 auto;
+  height: 27px;
+  padding: 0 7px;
+  border: 1px solid var(--am-border);
+  border-radius: 6px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  font: inherit;
+  font-size: 11px;
+}
+.budget-apply {
+  padding: 0 8px;
+}
+
 /* Collapse the agent label when the composer gets narrow */
 @container (max-width: 380px) {
   .agent-chip {
@@ -1230,10 +1311,6 @@ textarea {
     width: 30px;
     padding: 0;
     justify-content: center;
-  }
-  .permission-chip span,
-  .permission-chip .chip-caret {
-    display: none;
   }
 }
 
