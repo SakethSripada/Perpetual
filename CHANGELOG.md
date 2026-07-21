@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.2.0
+
+- Add graceful per-session token targets and Codex weekly-usage percentage
+  targets with private usage reconciliation, closeout guidance, and pause-safe
+  handoffs.
+- Add static task-budget controls to the composer and document provider
+  limitations and response-boundary behavior.
+
 ## 0.1.5
 
 - Resolve the agent CLI by newest installed version instead of first directory

@@ -7,6 +7,7 @@
 //! against the official headless docs; the parser is tolerant of version drift
 //! and unit-tested against fixtures.
 
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -287,6 +288,7 @@ fn is_openai_reasoning_model(value: &str) -> bool {
 
 /// The driver task: owns the child, streams parsed events, and is the sole
 /// emitter of the terminal [`NormalizedEvent::SessionEnded`].
+#[allow(clippy::too_many_arguments)]
 async fn drive(
     mut child: ManagedChild,
     stdout: tokio::process::ChildStdout,
@@ -326,6 +328,7 @@ async fn drive(
     let mut timeout_message: Option<String> = None;
     let mut saw_result = false;
     let mut saw_structured_output = false;
+    let mut seen_usage_message_ids = HashSet::new();
     let hard_timeout = tokio::time::sleep(limits.run_timeout);
     let idle_timeout = tokio::time::sleep(limits.idle_timeout);
     let startup_timeout = tokio::time::sleep(limits.startup_timeout);
@@ -346,7 +349,15 @@ async fn drive(
                             if value.get("type").and_then(|t| t.as_str()) == Some("result") {
                                 saw_result = true;
                             }
+                            let message_id = usage_message_id(&value);
                             for event in parse_line(&value) {
+                                if matches!(&event, NormalizedEvent::TokenUsage { .. })
+                                    && message_id.as_ref().is_some_and(|id| {
+                                        !seen_usage_message_ids.insert(id.clone())
+                                    })
+                                {
+                                    continue;
+                                }
                                 if tx.send(event).await.is_err() {
                                     cancelled = true; // receiver gone
                                     break;
@@ -480,6 +491,13 @@ pub(crate) fn parse_line(v: &Value) -> Vec<NormalizedEvent> {
             _ => {}
         },
         Some("assistant") => {
+            if let Some(usage) = v
+                .pointer("/message/usage")
+                .or_else(|| v.get("usage"))
+                .and_then(token_usage_event)
+            {
+                out.push(usage);
+            }
             if let Some(content) = v.pointer("/message/content").and_then(|c| c.as_array()) {
                 for block in content {
                     match block.get("type").and_then(|t| t.as_str()) {
@@ -538,26 +556,8 @@ pub(crate) fn parse_line(v: &Value) -> Vec<NormalizedEvent> {
             }
         }
         Some("result") => {
-            if let Some(usage) = v.get("usage") {
-                let input = usage
-                    .get("input_tokens")
-                    .and_then(|x| x.as_u64())
-                    .unwrap_or(0);
-                let cached_input = usage
-                    .get("cache_read_input_tokens")
-                    .or_else(|| usage.get("cached_input_tokens"))
-                    .and_then(|x| x.as_u64())
-                    .unwrap_or(0);
-                let output = usage
-                    .get("output_tokens")
-                    .and_then(|x| x.as_u64())
-                    .unwrap_or(0);
-                if input + cached_input + output > 0 {
-                    out.push(NormalizedEvent::TokenUsage {
-                        input: input.saturating_add(cached_input),
-                        output,
-                    });
-                }
+            if let Some(usage) = v.get("usage").and_then(token_usage_event) {
+                out.push(usage);
             }
             // Actions the agent attempted but the chosen permission level blocked.
             // Surfacing these lets the user re-run with more autonomy ("approval").
@@ -583,6 +583,35 @@ pub(crate) fn parse_line(v: &Value) -> Vec<NormalizedEvent> {
         _ => {}
     }
     out
+}
+
+fn token_usage_event(usage: &Value) -> Option<NormalizedEvent> {
+    let input = usage
+        .get("input_tokens")
+        .and_then(|x| x.as_u64())
+        .unwrap_or(0);
+    let cached_input = usage
+        .get("cache_read_input_tokens")
+        .or_else(|| usage.get("cached_input_tokens"))
+        .and_then(|x| x.as_u64())
+        .unwrap_or(0);
+    let output = usage
+        .get("output_tokens")
+        .and_then(|x| x.as_u64())
+        .unwrap_or(0);
+    (input + cached_input + output > 0).then_some(NormalizedEvent::TokenUsage {
+        input: input.saturating_add(cached_input),
+        output,
+    })
+}
+
+fn usage_message_id(value: &Value) -> Option<String> {
+    value
+        .pointer("/message/id")
+        .or_else(|| value.pointer("/message/message_id"))
+        .or_else(|| value.get("message_id"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
 /// Summarize a `result.permission_denials` array into a human detail string, or
@@ -826,10 +855,12 @@ mod tests {
 
     #[test]
     fn budgeted_host_runs_use_streaming_input() {
-        let mut policy = crate::AgentPolicyRuntime::default();
-        policy.task_budget = Some(am_proto::TaskBudget::Tokens {
-            limit_tokens: 50_000,
-        });
+        let policy = crate::AgentPolicyRuntime {
+            task_budget: Some(am_proto::TaskBudget::Tokens {
+                limit_tokens: 50_000,
+            }),
+            ..Default::default()
+        };
         let spec = SessionSpec {
             worktree: "/tmp/wt".into(),
             prompt: "go".into(),
@@ -892,6 +923,30 @@ mod tests {
         assert!(!events
             .iter()
             .any(|e| matches!(e, NormalizedEvent::SessionEnded { .. })));
+    }
+
+    #[test]
+    fn assistant_usage_includes_cached_input_and_message_ids() {
+        let v = json!({
+            "type": "assistant",
+            "message": {
+                "id": "msg_1",
+                "usage": {
+                    "input_tokens": 100,
+                    "cache_read_input_tokens": 25,
+                    "output_tokens": 10
+                }
+            }
+        });
+        let events = parse_line(&v);
+        assert!(matches!(
+            events.as_slice(),
+            [NormalizedEvent::TokenUsage {
+                input: 125,
+                output: 10
+            }]
+        ));
+        assert_eq!(usage_message_id(&v).as_deref(), Some("msg_1"));
     }
 
     #[test]

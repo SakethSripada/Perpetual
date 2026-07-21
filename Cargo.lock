@@ -19,7 +19,7 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "am-agents"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "am-proto",
  "async-trait",
@@ -35,7 +35,7 @@ dependencies = [
 
 [[package]]
 name = "am-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "am-agents",
  "am-db",
@@ -55,7 +55,7 @@ dependencies = [
 
 [[package]]
 name = "am-daemon"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "am-agents",
  "am-core",
@@ -71,7 +71,7 @@ dependencies = [
 
 [[package]]
 name = "am-db"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "am-proto",
  "chrono",
@@ -84,7 +84,7 @@ dependencies = [
 
 [[package]]
 name = "am-proto"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "serde",
@@ -94,7 +94,7 @@ dependencies = [
 
 [[package]]
 name = "am-vcs"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "am-proto",
  "thiserror",

@@ -266,16 +266,16 @@ async fn run_turn(
         })
         .await;
 
-    if let Some(budget) = spec.policy.as_ref().and_then(|p| p.task_budget.as_ref()) {
-        if let am_proto::TaskBudget::WeeklyPercent { .. } = budget {
-            let quota = rpc
-                .request("account/rateLimits/read", json!({}))
-                .await
-                .map_err(|err| format!("Codex did not provide a 7-day usage window: {err}"))?;
-            let event = parse_quota_window(&quota)
-                .ok_or_else(|| "Codex did not provide a 7-day usage window".to_string())?;
-            let _ = events_tx.send(event).await;
-        }
+    if let Some(am_proto::TaskBudget::WeeklyPercent { .. }) =
+        spec.policy.as_ref().and_then(|p| p.task_budget.as_ref())
+    {
+        let quota = rpc
+            .request("account/rateLimits/read", json!({}))
+            .await
+            .map_err(|err| format!("Codex did not provide a 7-day usage window: {err}"))?;
+        let event = parse_quota_window(&quota)
+            .ok_or_else(|| "Codex did not provide a 7-day usage window".to_string())?;
+        let _ = events_tx.send(event).await;
     }
 
     let turn = rpc

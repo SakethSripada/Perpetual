@@ -1323,9 +1323,19 @@ impl AppCore {
                     if let Ok(Some(mut thread)) =
                         am_db::repos::agent_thread::get(&self.db.pool, &thread_id).await
                     {
-                        thread.status = TaskStatus::WaitingForLimit;
+                        let weekly_budget =
+                            matches!(&usage_budget, TaskBudget::WeeklyPercent { .. });
+                        thread.status = if weekly_budget {
+                            TaskStatus::Paused
+                        } else {
+                            TaskStatus::WaitingForLimit
+                        };
                         thread.limit_reset_at = *reset_at;
-                        thread.handoff_state = "waiting_for_fallback".to_string();
+                        thread.handoff_state = if weekly_budget {
+                            "budget_paused_provider_limit".to_string()
+                        } else {
+                            "waiting_for_fallback".to_string()
+                        };
                         if let Ok(saved) =
                             am_db::repos::agent_thread::save(&self.db.pool, &thread).await
                         {
@@ -1397,10 +1407,9 @@ impl AppCore {
                     if let Ok(Some(mut thread)) =
                         am_db::repos::agent_thread::get(&self.db.pool, &thread_id).await
                     {
-                        thread.status = if budget_exhausted {
-                            TaskStatus::Paused
-                        } else if !usage_budget.is_unlimited()
-                            && (!saw_budget_telemetry || budget_state_invalid)
+                        thread.status = if budget_exhausted
+                            || (!usage_budget.is_unlimited()
+                                && (!saw_budget_telemetry || budget_state_invalid))
                         {
                             TaskStatus::Paused
                         } else if saw_network_loss {
@@ -1512,12 +1521,19 @@ impl AppCore {
             return;
         }
 
+        if saw_network_loss && !usage_budget.is_unlimited() {
+            return;
+        }
+
         if saw_network_loss {
             self.handle_thread_network_loss(&thread_id, agent).await;
             return;
         }
 
         if saw_usage_limit {
+            if matches!(&usage_budget, TaskBudget::WeeklyPercent { .. }) {
+                return;
+            }
             self.start_thread_fallback(&thread_id, agent, limit_reset_at)
                 .await;
             return;

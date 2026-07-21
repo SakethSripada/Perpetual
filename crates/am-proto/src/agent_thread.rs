@@ -9,18 +9,17 @@ use crate::{
 /// A graceful, response-boundary usage target for a Workbench session.
 /// Providers report usage after responses, so this is a target rather than an
 /// exact hard token cutoff.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum TaskBudget {
+    #[default]
     Unlimited,
-    Tokens { limit_tokens: u64 },
-    WeeklyPercent { limit_percent: u8 },
-}
-
-impl Default for TaskBudget {
-    fn default() -> Self {
-        Self::Unlimited
-    }
+    Tokens {
+        limit_tokens: u64,
+    },
+    WeeklyPercent {
+        limit_percent: u8,
+    },
 }
 
 impl TaskBudget {
