@@ -143,6 +143,9 @@ pub struct AgentPolicyRuntime {
     pub env_allowlist: Vec<String>,
     pub disable_remote_mcp_connectors: bool,
     pub max_budget_usd: Option<f64>,
+    /// Private launch metadata used by the graceful session budget adapter.
+    /// It is never serialized into the webview or transcript.
+    pub task_budget: Option<am_proto::TaskBudget>,
 }
 
 /// Local provider target passed to adapters that can run against local models.
@@ -229,6 +232,12 @@ pub enum NormalizedEvent {
         input: u64,
         output: u64,
     },
+    /// Internal account-level quota sample used for weekly task budgets. Core
+    /// consumes it without persisting or publishing the raw values.
+    QuotaWindow {
+        used_percent: f64,
+        reset_at: Option<DateTime<Utc>>,
+    },
     AwaitingApproval {
         detail: String,
     },
@@ -264,12 +273,24 @@ pub struct AgentInstallStatus {
 /// Control surface for a running session.
 pub struct SessionControl {
     cancel: Option<tokio::sync::oneshot::Sender<()>>,
+    steer: Option<tokio::sync::mpsc::UnboundedSender<String>>,
 }
 
 impl SessionControl {
     pub fn new(cancel: tokio::sync::oneshot::Sender<()>) -> Self {
         Self {
             cancel: Some(cancel),
+            steer: None,
+        }
+    }
+
+    pub fn with_steer(
+        cancel: tokio::sync::oneshot::Sender<()>,
+        steer: tokio::sync::mpsc::UnboundedSender<String>,
+    ) -> Self {
+        Self {
+            cancel: Some(cancel),
+            steer: Some(steer),
         }
     }
 
@@ -278,6 +299,12 @@ impl SessionControl {
         if let Some(tx) = self.cancel.take() {
             let _ = tx.send(());
         }
+    }
+
+    pub fn steer(&self, instruction: String) -> bool {
+        self.steer
+            .as_ref()
+            .is_some_and(|tx| tx.send(instruction).is_ok())
     }
 }
 

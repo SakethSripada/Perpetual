@@ -130,9 +130,11 @@ fn task_budget_contract() {
         .unwrap(),
         TaskBudget::WeeklyPercent { limit_percent: 5 }
     );
-    assert!(TaskBudget::Tokens { limit_tokens: 9_999 }
-        .validate()
-        .is_err());
+    assert!(TaskBudget::Tokens {
+        limit_tokens: 9_999
+    }
+    .validate()
+    .is_err());
     assert!(TaskBudget::WeeklyPercent { limit_percent: 101 }
         .validate()
         .is_err());

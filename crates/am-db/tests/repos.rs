@@ -5,7 +5,7 @@
 
 use am_db::repos::{
     agent, agent_thread, agent_thread_message, agent_thread_repo, agent_turn, event, knowledge,
-    memory, message, project, queued_turn, repo, session, task, task_repo,
+    memory, message, project, queued_turn, repo, session, task, task_budget_state, task_repo,
 };
 use am_db::Db;
 use am_proto::*;
@@ -233,6 +233,19 @@ async fn agent_thread_repos_turns_messages_and_queue_roundtrip() {
     assert_eq!(
         thread.task_budget,
         TaskBudget::WeeklyPercent { limit_percent: 5 }
+    );
+
+    let private_state = serde_json::json!({
+        "weekly_baseline_percent": 42.0,
+        "weekly_consumed_percent": 1.5,
+        "reminder_sent": true
+    });
+    task_budget_state::save(&db.pool, &thread.id, &private_state)
+        .await
+        .unwrap();
+    assert_eq!(
+        task_budget_state::get(&db.pool, &thread.id).await.unwrap(),
+        private_state
     );
 
     let group = agent_thread::create_group(

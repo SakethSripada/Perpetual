@@ -53,15 +53,17 @@ pub(crate) async fn launch(
 
     let (events_tx, events_rx) = mpsc::channel::<NormalizedEvent>(CHANNEL_CAPACITY);
     let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
+    let (steer_tx, steer_rx) = mpsc::unbounded_channel::<String>();
 
     let limits = spec.runtime.limits();
     tokio::spawn(drive(
-        child, stdin, stdout, stderr, spec, resume, approver, events_tx, cancel_rx, limits,
+        child, stdin, stdout, stderr, spec, resume, approver, events_tx, cancel_rx, steer_rx,
+        limits,
     ));
 
     Ok(SessionHandle {
         events: events_rx,
-        control: SessionControl::new(cancel_tx),
+        control: SessionControl::with_steer(cancel_tx, steer_tx),
     })
 }
 
@@ -95,6 +97,7 @@ async fn drive(
     approver: ApprovalResponder,
     events_tx: mpsc::Sender<NormalizedEvent>,
     mut cancel_rx: oneshot::Receiver<()>,
+    mut steer_rx: mpsc::UnboundedReceiver<String>,
     limits: crate::runtime::RuntimeLimits,
 ) {
     // Drain stderr so the pipe never blocks the child.
@@ -113,7 +116,7 @@ async fn drive(
 
     let pending: PendingResponses = Arc::new(Mutex::new(HashMap::new()));
     let next_id = Arc::new(AtomicU64::new(1));
-    let (terminal_tx, terminal_rx) = oneshot::channel::<SessionStatus>();
+    let (terminal_tx, mut terminal_rx) = oneshot::channel::<SessionStatus>();
 
     // Reader dispatches responses, notifications, and server→client requests.
     let reader_task = tokio::spawn(reader(
@@ -140,24 +143,31 @@ async fn drive(
     tokio::pin!(startup_timeout);
     let final_status = tokio::select! {
         result = &mut startup => match result {
-            Ok(turn_id) => {
-                // Wait for the turn to complete, the user to cancel, or a timeout.
+            Ok((thread_id, turn_id)) => {
+                // Wait for completion while allowing core to steer a graceful
+                // budget reminder or closeout into the active turn.
                 let hard = tokio::time::sleep(limits.run_timeout);
                 tokio::pin!(hard);
-                tokio::select! {
-                    status = terminal_rx => status.unwrap_or(SessionStatus::Failed),
-                    _ = &mut cancel_rx => {
-                        rpc.notify_or_request_interrupt(&turn_id).await;
-                        SessionStatus::Interrupted
-                    }
-                    _ = &mut hard => {
-                        let _ = events_tx
-                            .send(NormalizedEvent::Error {
-                                message: "agent run timed out".into(),
-                                retryable: true,
-                            })
-                            .await;
-                        SessionStatus::Interrupted
+                loop {
+                    tokio::select! {
+                        status = &mut terminal_rx => break status.unwrap_or(SessionStatus::Failed),
+                        Some(instruction) = steer_rx.recv() => {
+                            rpc.steer(&thread_id, &turn_id, &instruction).await;
+                        }
+                        _ = &mut cancel_rx => {
+                            rpc.notify_or_request_interrupt(&thread_id, &turn_id).await;
+                            break SessionStatus::Interrupted;
+                        }
+                        _ = &mut hard => {
+                            let _ = events_tx
+                                .send(NormalizedEvent::Error {
+                                    message: "agent run timed out".into(),
+                                    retryable: true,
+                                })
+                                .await;
+                            rpc.notify_or_request_interrupt(&thread_id, &turn_id).await;
+                            break SessionStatus::Interrupted;
+                        }
                     }
                 }
             }
@@ -210,7 +220,7 @@ async fn run_turn(
     spec: &SessionSpec,
     resume: Option<&SessionRef>,
     events_tx: &mpsc::Sender<NormalizedEvent>,
-) -> Result<String, String> {
+) -> Result<(String, String), String> {
     rpc.request(
         "initialize",
         json!({
@@ -256,6 +266,18 @@ async fn run_turn(
         })
         .await;
 
+    if let Some(budget) = spec.policy.as_ref().and_then(|p| p.task_budget.as_ref()) {
+        if let am_proto::TaskBudget::WeeklyPercent { .. } = budget {
+            let quota = rpc
+                .request("account/rateLimits/read", json!({}))
+                .await
+                .map_err(|err| format!("Codex did not provide a 7-day usage window: {err}"))?;
+            let event = parse_quota_window(&quota)
+                .ok_or_else(|| "Codex did not provide a 7-day usage window".to_string())?;
+            let _ = events_tx.send(event).await;
+        }
+    }
+
     let turn = rpc
         .request(
             "turn/start",
@@ -272,7 +294,7 @@ async fn run_turn(
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
-    Ok(turn_id)
+    Ok((thread_id, turn_id))
 }
 
 /// Codex approval policy for a permission level. `Ask` prompts for every action
@@ -336,10 +358,25 @@ impl Rpc {
         let _ = self.out_tx.send(line).await;
     }
 
-    async fn notify_or_request_interrupt(&self, turn_id: &str) {
+    async fn notify_or_request_interrupt(&self, thread_id: &str, turn_id: &str) {
         // Best-effort interrupt; the child is killed regardless.
-        self.notify("turn/interrupt", json!({ "turnId": turn_id }))
-            .await;
+        self.notify(
+            "turn/interrupt",
+            json!({ "threadId": thread_id, "turnId": turn_id }),
+        )
+        .await;
+    }
+
+    async fn steer(&self, thread_id: &str, turn_id: &str, instruction: &str) {
+        self.notify(
+            "turn/steer",
+            json!({
+                "threadId": thread_id,
+                "turnId": turn_id,
+                "input": [{ "type": "text", "text": instruction }]
+            }),
+        )
+        .await;
     }
 }
 
@@ -582,6 +619,9 @@ async fn handle_notification(
             if let Some(usage) = parse_usage(params.pointer("/turn/usage")) {
                 let _ = events_tx.send(usage).await;
             }
+            if let Some(quota) = parse_quota_window(params) {
+                let _ = events_tx.send(quota).await;
+            }
             let status = params
                 .pointer("/turn/status")
                 .and_then(Value::as_str)
@@ -627,6 +667,12 @@ async fn handle_notification(
                         })
                         .await;
                 }
+            }
+            None
+        }
+        "account/rateLimits/updated" | "account/rateLimits/read" => {
+            if let Some(quota) = parse_quota_window(params) {
+                let _ = events_tx.send(quota).await;
             }
             None
         }
@@ -763,13 +809,68 @@ fn parse_usage(usage: Option<&Value>) -> Option<NormalizedEvent> {
         .and_then(Value::as_i64)
         .unwrap_or(0)
         .max(0) as u64;
+    let cached_input = usage
+        .get("cached_input_tokens")
+        .or_else(|| usage.get("cachedInputTokens"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        .max(0) as u64;
     let output = usage
         .get("output_tokens")
         .or_else(|| usage.get("outputTokens"))
         .and_then(Value::as_i64)
         .unwrap_or(0)
         .max(0) as u64;
-    (input + output > 0).then_some(NormalizedEvent::TokenUsage { input, output })
+    (input + cached_input + output > 0).then_some(NormalizedEvent::TokenUsage {
+        input: input.saturating_add(cached_input),
+        output,
+    })
+}
+
+fn parse_quota_window(value: &Value) -> Option<NormalizedEvent> {
+    fn find_weekly(value: &Value) -> Option<&Value> {
+        match value {
+            Value::Object(map) => {
+                let window = map
+                    .get("window")
+                    .or_else(|| map.get("duration"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                let duration_minutes = map
+                    .get("window_duration_mins")
+                    .or_else(|| map.get("windowDurationMins"))
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.0);
+                if let Some(bucket) = map.get("7d").or_else(|| map.get("weekly")) {
+                    return Some(bucket);
+                }
+                if window.contains("7d") || window.contains("week") || duration_minutes >= 10_000.0
+                {
+                    return Some(value);
+                }
+                map.values().find_map(find_weekly)
+            }
+            Value::Array(items) => items.iter().find_map(find_weekly),
+            _ => None,
+        }
+    }
+    fn number(map: &serde_json::Map<String, Value>, names: &[&str]) -> Option<f64> {
+        names
+            .iter()
+            .find_map(|name| map.get(*name).and_then(Value::as_f64))
+    }
+    let candidate = find_weekly(value)?;
+    let map = candidate.as_object()?;
+    let used = number(
+        map,
+        &["used_percent", "usedPercent", "percent_used", "percentUsed"],
+    )
+    .or_else(|| number(map, &["remaining_percent", "remainingPercent"]).map(|v| 100.0 - v))?;
+    Some(NormalizedEvent::QuotaWindow {
+        used_percent: used.clamp(0.0, 100.0),
+        reset_at: None,
+    })
 }
 
 fn truncate(s: &str, max: usize) -> String {
@@ -954,6 +1055,30 @@ mod tests {
             rx.recv().await,
             Some(NormalizedEvent::AssistantTextDelta { delta }) if delta == "Smooth"
         ));
+    }
+
+    #[test]
+    fn reads_a_weekly_quota_window_without_exposing_raw_payload() {
+        let event = parse_quota_window(&json!({
+            "primary": {
+                "window": "7d",
+                "usedPercent": 18.5,
+                "remainingPercent": 81.5
+            }
+        }));
+        assert!(matches!(
+            event,
+            Some(NormalizedEvent::QuotaWindow { used_percent, .. })
+                if (used_percent - 18.5).abs() < f64::EPSILON
+        ));
+    }
+
+    #[test]
+    fn weekly_quota_requires_a_weekly_window() {
+        assert!(parse_quota_window(&json!({
+            "primary": { "usedPercent": 18.5 }
+        }))
+        .is_none());
     }
 
     #[test]

@@ -49,15 +49,27 @@ impl AppCore {
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn record_token_usage(
         &self,
-        _project_id: Option<String>,
-        _session_id: Option<String>,
-        _run_id: Option<String>,
-        _agent: AgentKind,
-        _model: Option<String>,
-        _policy_envelope_id: Option<String>,
-        _input_tokens: u64,
-        _output_tokens: u64,
-    ) -> Result<(), CoreError> {
-        Ok(())
+        project_id: Option<String>,
+        session_id: Option<String>,
+        run_id: Option<String>,
+        agent: AgentKind,
+        model: Option<String>,
+        policy_envelope_id: Option<String>,
+        input_tokens: u64,
+        output_tokens: u64,
+    ) -> Result<u64, CoreError> {
+        am_db::repos::usage_ledger::record_tokens(
+            &self.db.pool,
+            project_id.as_deref(),
+            session_id.as_deref(),
+            run_id.as_deref(),
+            agent,
+            model.as_deref(),
+            policy_envelope_id.as_deref(),
+            input_tokens,
+            output_tokens,
+        )
+        .await?;
+        Ok(input_tokens.saturating_add(output_tokens))
     }
 }

@@ -12,7 +12,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::ChildStdin;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::detect::{binary_version, find_binary};
@@ -49,9 +50,14 @@ impl ClaudeAdapter {
         let envs = policy_env(&spec);
         tracing::debug!(?args, worktree = ?spec.worktree, "launching claude");
 
-        let mut child =
+        let budgeted = budgeted_host_run(&spec);
+        let mut child = if budgeted {
+            crate::runtime::spawn_host_piped_stdin(BIN, &args, &spec.worktree, &envs).await?
+        } else {
             spawn_for_runtime_with_env(BIN, "claude", &args, &spec.worktree, &spec.runtime, &envs)
-                .await?;
+                .await?
+        };
+        let stdin = budgeted.then(|| child.take_stdin()).flatten();
         let stdout = child
             .take_stdout()
             .ok_or_else(|| AgentError::Spawn("no stdout pipe".into()))?;
@@ -59,13 +65,24 @@ impl ClaudeAdapter {
 
         let (tx, rx) = mpsc::channel::<NormalizedEvent>(CHANNEL_CAPACITY);
         let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
+        let (steer_tx, steer_rx) = mpsc::unbounded_channel::<String>();
 
         let limits = spec.runtime.limits();
-        tokio::spawn(drive(child, stdout, stderr, tx, cancel_rx, limits));
+        tokio::spawn(drive(
+            child,
+            stdout,
+            stderr,
+            stdin,
+            budgeted.then(|| spec.prompt.clone()),
+            steer_rx,
+            tx,
+            cancel_rx,
+            limits,
+        ));
 
         Ok(SessionHandle {
             events: rx,
-            control: SessionControl::new(cancel_tx),
+            control: SessionControl::with_steer(cancel_tx, steer_tx),
         })
     }
 }
@@ -117,14 +134,25 @@ impl AgentAdapter for ClaudeAdapter {
 /// Build the `claude` argument vector. Every value is a discrete argument; the
 /// prompt is never interpolated into a shell string.
 fn build_args(spec: &SessionSpec, resume: Option<&SessionRef>) -> Vec<String> {
-    let mut args = vec![
-        "-p".to_string(),
-        spec.prompt.clone(),
-        "--output-format".to_string(),
-        "stream-json".to_string(),
-        "--include-partial-messages".to_string(),
-        "--verbose".to_string(),
-    ];
+    let mut args = if budgeted_host_run(spec) {
+        vec![
+            "--input-format".to_string(),
+            "stream-json".to_string(),
+            "--output-format".to_string(),
+            "stream-json".to_string(),
+            "--include-partial-messages".to_string(),
+            "--verbose".to_string(),
+        ]
+    } else {
+        vec![
+            "-p".to_string(),
+            spec.prompt.clone(),
+            "--output-format".to_string(),
+            "stream-json".to_string(),
+            "--include-partial-messages".to_string(),
+            "--verbose".to_string(),
+        ]
+    };
 
     match spec.permission {
         PermissionPolicy::ReadOnly => {
@@ -158,6 +186,29 @@ fn build_args(spec: &SessionSpec, resume: Option<&SessionRef>) -> Vec<String> {
         args.push(prior.agent_session_id.clone());
     }
     args
+}
+
+fn budgeted_host_run(spec: &SessionSpec) -> bool {
+    matches!(spec.runtime, crate::SessionRuntime::Host { .. })
+        && spec
+            .policy
+            .as_ref()
+            .and_then(|policy| policy.task_budget.as_ref())
+            .is_some_and(|budget| !budget.is_unlimited())
+}
+
+async fn write_stream_input(stdin: &mut ChildStdin, text: &str) -> std::io::Result<()> {
+    let line = serde_json::json!({
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": [{ "type": "text", "text": text }]
+        }
+    })
+    .to_string();
+    stdin.write_all(line.as_bytes()).await?;
+    stdin.write_all(b"\n").await?;
+    stdin.flush().await
 }
 
 fn push_policy_args(args: &mut Vec<String>, policy: &crate::AgentPolicyRuntime) {
@@ -240,10 +291,23 @@ async fn drive(
     mut child: ManagedChild,
     stdout: tokio::process::ChildStdout,
     stderr: Option<tokio::process::ChildStderr>,
+    mut stdin: Option<ChildStdin>,
+    initial_prompt: Option<String>,
+    mut steer_rx: mpsc::UnboundedReceiver<String>,
     tx: mpsc::Sender<NormalizedEvent>,
     mut cancel_rx: oneshot::Receiver<()>,
     limits: RuntimeLimits,
 ) {
+    if let (Some(stdin), Some(prompt)) = (stdin.as_mut(), initial_prompt.as_deref()) {
+        if write_stream_input(stdin, prompt).await.is_err() {
+            let _ = tx
+                .send(NormalizedEvent::Error {
+                    message: "Claude stream input closed before the session started".into(),
+                    retryable: false,
+                })
+                .await;
+        }
+    }
     // Capture stderr in the background for diagnostics / limit detection.
     let stderr_buf = Arc::new(Mutex::new(String::new()));
     let stderr_task = stderr.map(|se| {
@@ -299,6 +363,13 @@ async fn drive(
                 Ok(None) => break,         // EOF: process is finishing
                 Err(e) => { tracing::warn!(error = %e, "stdout read error"); break; }
             },
+            Some(instruction) = steer_rx.recv(), if stdin.is_some() => {
+                if let Some(input) = stdin.as_mut() {
+                    if write_stream_input(input, &instruction).await.is_err() {
+                        break;
+                    }
+                }
+            }
             _ = &mut cancel_rx => { cancelled = true; break; }
             _ = &mut hard_timeout => {
                 timeout_message = Some("agent run timed out".to_string());
@@ -472,12 +543,20 @@ pub(crate) fn parse_line(v: &Value) -> Vec<NormalizedEvent> {
                     .get("input_tokens")
                     .and_then(|x| x.as_u64())
                     .unwrap_or(0);
+                let cached_input = usage
+                    .get("cache_read_input_tokens")
+                    .or_else(|| usage.get("cached_input_tokens"))
+                    .and_then(|x| x.as_u64())
+                    .unwrap_or(0);
                 let output = usage
                     .get("output_tokens")
                     .and_then(|x| x.as_u64())
                     .unwrap_or(0);
-                if input + output > 0 {
-                    out.push(NormalizedEvent::TokenUsage { input, output });
+                if input + cached_input + output > 0 {
+                    out.push(NormalizedEvent::TokenUsage {
+                        input: input.saturating_add(cached_input),
+                        output,
+                    });
                 }
             }
             // Actions the agent attempted but the chosen permission level blocked.
@@ -743,6 +822,30 @@ mod tests {
             &events[0],
             NormalizedEvent::AssistantTextDelta { delta } if delta == "Smooth"
         ));
+    }
+
+    #[test]
+    fn budgeted_host_runs_use_streaming_input() {
+        let mut policy = crate::AgentPolicyRuntime::default();
+        policy.task_budget = Some(am_proto::TaskBudget::Tokens {
+            limit_tokens: 50_000,
+        });
+        let spec = SessionSpec {
+            worktree: "/tmp/wt".into(),
+            prompt: "go".into(),
+            model: None,
+            reasoning: None,
+            local_model: None,
+            permission: PermissionPolicy::WorkspaceWrite,
+            runtime: crate::SessionRuntime::default(),
+            policy: Some(policy),
+            approver: None,
+        };
+        let args = build_args(&spec, None);
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--input-format", "stream-json"]));
+        assert!(!args.iter().any(|arg| arg == "-p"));
     }
 
     #[test]

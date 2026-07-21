@@ -1175,6 +1175,7 @@ mod tests {
             progress: String::new(),
             open_questions: String::new(),
             next_actions: String::new(),
+            task_budget: am_proto::TaskBudget::default(),
             sort_order: 0,
             created_at: am_proto::now(),
             updated_at: am_proto::now(),

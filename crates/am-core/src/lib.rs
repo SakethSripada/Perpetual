@@ -35,6 +35,7 @@ mod agent_thread;
 mod agents;
 mod approvals;
 mod availability;
+mod budget;
 mod bus;
 mod capacity;
 mod cloud_handoff;

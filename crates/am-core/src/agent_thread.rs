@@ -10,7 +10,7 @@ use am_proto::{
     new_id, now, AgentThread, AgentThreadApplyResult, AgentThreadDiff, AgentThreadEvent,
     AgentThreadRepoApplyResult, AgentThreadRepoDiff, AgentThreadUpdate, AppEvent,
     AvailabilityState, ExecutionBackend, FileChange, ModelTargetKind, NewAgentThread,
-    NewWorkbenchSessionGroup, Project, QueuedTurn, SessionState, TaskDiff, TaskStatus,
+    NewWorkbenchSessionGroup, Project, QueuedTurn, SessionState, TaskBudget, TaskDiff, TaskStatus,
     WorkbenchSessionGroup, WorkbenchSessionGroupUpdate,
 };
 use serde_json::json;
@@ -201,6 +201,21 @@ impl AppCore {
         id: &str,
         patch: AgentThreadUpdate,
     ) -> Result<AgentThread, CoreError> {
+        if let Some(requested) = patch.task_budget.as_ref() {
+            let current = am_db::repos::agent_thread::get(&self.db.pool, id)
+                .await?
+                .ok_or(CoreError::NotFound)?;
+            if self.sessions.is_active(id).await && current.task_budget != *requested {
+                return Err(CoreError::Other(
+                    "Stop the session before changing its task budget.".into(),
+                ));
+            }
+            let has_started = !am_db::repos::agent_turn::list_for_thread(&self.db.pool, id)
+                .await?
+                .is_empty();
+            crate::budget::validate_change(&current.task_budget, requested, has_started)
+                .map_err(CoreError::Other)?;
+        }
         let thread = am_db::repos::agent_thread::update(&self.db.pool, id, patch).await?;
         self.events
             .publish(AppEvent::AgentThreadUpdated(thread.clone()));
@@ -382,6 +397,7 @@ impl AppCore {
         let backend = policy.runtime;
         thread.model = policy.model.clone().or_else(|| thread.model.clone());
         thread.model_target = model_target;
+        thread.task_budget.validate().map_err(CoreError::Other)?;
 
         let adapter = self.agents.get(agent).ok_or_else(|| {
             CoreError::Other(format!("no adapter available for {}", agent.label()))
@@ -409,11 +425,20 @@ impl AppCore {
         {
             return Err(CoreError::Other(
                 "local model endpoints on localhost are not reachable from Docker Sandbox. Use Host execution, or set the local endpoint to a host-reachable address such as http://host.docker.internal:<port>."
-                    .into(),
+                .into(),
             ));
         }
+        validate_runtime_budget(&thread.task_budget, agent, backend, local_model.is_some())?;
         if local_model.is_none() {
             if let Some(reset_at) = self.known_limited_agent_reset(agent).await? {
+                if matches!(thread.task_budget, TaskBudget::WeeklyPercent { .. }) {
+                    thread.status = TaskStatus::Paused;
+                    let saved = am_db::repos::agent_thread::save(&self.db.pool, &thread).await?;
+                    self.events.publish(AppEvent::AgentThreadUpdated(saved));
+                    return Err(CoreError::Other(
+                        "Weekly % budgets pause when the selected provider is limited; they do not switch providers because quota percentages are not comparable.".into(),
+                    ));
+                }
                 return self
                     .start_known_limited_thread_fallback(
                         thread,
@@ -424,6 +449,19 @@ impl AppCore {
                         policy.envelope_id.clone(),
                     )
                     .await;
+            }
+        }
+        if let TaskBudget::Tokens { limit_tokens } = &thread.task_budget {
+            let consumed = am_db::repos::usage_ledger::total_for_session(&self.db.pool, thread_id)
+                .await
+                .unwrap_or(0);
+            if consumed >= *limit_tokens {
+                thread.status = TaskStatus::Paused;
+                let saved = am_db::repos::agent_thread::save(&self.db.pool, &thread).await?;
+                self.events.publish(AppEvent::AgentThreadUpdated(saved));
+                return Err(CoreError::Other(
+                    "This task budget is exhausted. Increase the cap or turn budgeting off before resuming.".into(),
+                ));
             }
         }
         let target_hash = run_target_hash(
@@ -603,10 +641,12 @@ impl AppCore {
 
         let context_files_available = !workspace.uses_visible_repo;
         let workspace_path = workspace.path;
+        let mut runtime_policy = policy.runtime_policy.clone();
+        runtime_policy.task_budget = Some(thread.task_budget.clone());
         let spec = SessionSpec {
             worktree: workspace_path,
             prompt: match (&message, prior.is_some()) {
-                (Some(msg), true) => build_thread_followup_prompt(&msg.text),
+                (Some(msg), true) => build_thread_followup_prompt(&thread, &msg.text),
                 (Some(msg), false) => {
                     build_thread_initial_prompt(&thread, &msg.text, context_files_available)
                 }
@@ -620,7 +660,7 @@ impl AppCore {
             local_model,
             permission,
             runtime,
-            policy: Some(policy.runtime_policy.clone()),
+            policy: Some(runtime_policy),
             approver: self.approver_for(
                 permission,
                 agent,
@@ -1077,6 +1117,9 @@ impl AppCore {
         let mut saw_approval_needed = false;
         let mut completed_ok = false;
         let mut limit_reset_at = None;
+        let mut budget_exhausted = false;
+        let mut saw_budget_telemetry = false;
+        let mut usage_reconciler = crate::budget::UsageReconciler::default();
         let mut streaming_assistant: Option<AgentThreadEvent> = None;
         let usage_turn = am_db::repos::agent_turn::get(&self.db.pool, &turn_id)
             .await
@@ -1086,7 +1129,25 @@ impl AppCore {
             .await
             .ok()
             .flatten();
-        let usage_project_id = usage_thread.and_then(|thread| thread.project_id);
+        let usage_project_id = usage_thread
+            .as_ref()
+            .and_then(|thread| thread.project_id.clone());
+        let usage_budget = usage_thread
+            .as_ref()
+            .map(|thread| thread.task_budget.clone())
+            .unwrap_or_default();
+        let mut usage_total =
+            am_db::repos::usage_ledger::total_for_session(&self.db.pool, &thread_id)
+                .await
+                .unwrap_or(0);
+        let (mut enforcement_state, budget_state_invalid) =
+            match am_db::repos::task_budget_state::get(&self.db.pool, &thread_id).await {
+                Ok(value) => match crate::budget::EnforcementState::from_json(value) {
+                    Ok(state) => (state, false),
+                    Err(_) => (crate::budget::EnforcementState::default(), true),
+                },
+                Err(_) => (crate::budget::EnforcementState::default(), true),
+            };
         let usage_model = usage_turn.as_ref().and_then(|turn| turn.model.clone());
         let usage_policy_envelope_id = usage_turn
             .as_ref()
@@ -1144,7 +1205,12 @@ impl AppCore {
             match &event {
                 NormalizedEvent::AwaitingApproval { .. } => saw_approval_needed = true,
                 NormalizedEvent::TokenUsage { input, output } => {
-                    let _ = self
+                    saw_budget_telemetry = true;
+                    let (input_delta, output_delta) = usage_reconciler.delta(*input, *output);
+                    if input_delta == 0 && output_delta == 0 {
+                        continue;
+                    }
+                    if let Ok(recorded) = self
                         .record_token_usage(
                             usage_project_id.clone(),
                             Some(thread_id.clone()),
@@ -1152,10 +1218,93 @@ impl AppCore {
                             agent,
                             usage_model.clone(),
                             usage_policy_envelope_id.clone(),
-                            *input,
-                            *output,
+                            input_delta,
+                            output_delta,
                         )
-                        .await;
+                        .await
+                    {
+                        usage_total = usage_total.saturating_add(recorded);
+                    }
+                    if let TaskBudget::Tokens { limit_tokens } = &usage_budget {
+                        let remaining = limit_tokens.saturating_sub(usage_total);
+                        if usage_total >= *limit_tokens {
+                            budget_exhausted = true;
+                            let _ = self.sessions.cancel(&thread_id).await;
+                        } else if remaining <= crate::budget::token_reserve(*limit_tokens)
+                            && !enforcement_state.closeout_sent
+                        {
+                            enforcement_state.closeout_sent = true;
+                            let _ = am_db::repos::task_budget_state::save(
+                                &self.db.pool,
+                                &thread_id,
+                                &enforcement_state.to_json(),
+                            )
+                            .await;
+                            let _ = self
+                                .sessions
+                                .steer(&thread_id, crate::budget::closeout_instruction())
+                                .await;
+                        }
+                        if usage_total.saturating_mul(2) >= *limit_tokens
+                            && !enforcement_state.reminder_sent
+                        {
+                            enforcement_state.reminder_sent = true;
+                            let _ = am_db::repos::task_budget_state::save(
+                                &self.db.pool,
+                                &thread_id,
+                                &enforcement_state.to_json(),
+                            )
+                            .await;
+                            let _ = self
+                                .sessions
+                                .steer(&thread_id, crate::budget::progress_instruction())
+                                .await;
+                        }
+                    }
+                }
+                NormalizedEvent::QuotaWindow { used_percent, .. } => {
+                    saw_budget_telemetry = true;
+                    let weekly_consumed =
+                        enforcement_state.observe_weekly(*used_percent, agent.as_str());
+                    let _ = am_db::repos::task_budget_state::save(
+                        &self.db.pool,
+                        &thread_id,
+                        &enforcement_state.to_json(),
+                    )
+                    .await;
+                    if let TaskBudget::WeeklyPercent { limit_percent } = &usage_budget {
+                        let limit = f64::from(*limit_percent);
+                        let remaining = (limit - weekly_consumed).max(0.0);
+                        if weekly_consumed >= limit {
+                            budget_exhausted = true;
+                            let _ = self.sessions.cancel(&thread_id).await;
+                        } else if remaining <= limit * 0.15 && !enforcement_state.closeout_sent {
+                            enforcement_state.closeout_sent = true;
+                            let _ = am_db::repos::task_budget_state::save(
+                                &self.db.pool,
+                                &thread_id,
+                                &enforcement_state.to_json(),
+                            )
+                            .await;
+                            let _ = self
+                                .sessions
+                                .steer(&thread_id, crate::budget::closeout_instruction())
+                                .await;
+                        }
+                        if weekly_consumed >= limit * 0.5 && !enforcement_state.reminder_sent {
+                            enforcement_state.reminder_sent = true;
+                            let _ = am_db::repos::task_budget_state::save(
+                                &self.db.pool,
+                                &thread_id,
+                                &enforcement_state.to_json(),
+                            )
+                            .await;
+                            let _ = self
+                                .sessions
+                                .steer(&thread_id, crate::budget::progress_instruction())
+                                .await;
+                        }
+                    }
                 }
                 NormalizedEvent::SessionStarted {
                     session_id: provider,
@@ -1248,7 +1397,13 @@ impl AppCore {
                     if let Ok(Some(mut thread)) =
                         am_db::repos::agent_thread::get(&self.db.pool, &thread_id).await
                     {
-                        thread.status = if saw_network_loss {
+                        thread.status = if budget_exhausted {
+                            TaskStatus::Paused
+                        } else if !usage_budget.is_unlimited()
+                            && (!saw_budget_telemetry || budget_state_invalid)
+                        {
+                            TaskStatus::Paused
+                        } else if saw_network_loss {
                             TaskStatus::WaitingForNetwork
                         } else if saw_usage_limit {
                             TaskStatus::WaitingForLimit
@@ -1275,9 +1430,14 @@ impl AppCore {
                 _ => {}
             }
 
-            let ev = map_thread_event(&thread_id, &turn_id, &event);
-            let _ = am_db::repos::agent_thread_message::insert(&self.db.pool, &ev).await;
-            self.events.publish(AppEvent::AgentThreadEvent(ev));
+            if !matches!(event, NormalizedEvent::QuotaWindow { .. })
+                && (usage_budget.is_unlimited()
+                    || !matches!(event, NormalizedEvent::TokenUsage { .. }))
+            {
+                let ev = map_thread_event(&thread_id, &turn_id, &event);
+                let _ = am_db::repos::agent_thread_message::insert(&self.db.pool, &ev).await;
+                self.events.publish(AppEvent::AgentThreadEvent(ev));
+            }
 
             if let Some(status) = ended_status {
                 let handoff_status = if saw_network_loss {
@@ -1306,7 +1466,7 @@ impl AppCore {
         // user's input. Put that input back on the queue so the fallback agent or
         // the scheduler's resume delivers it, instead of dropping it and resuming
         // with a generic "continue" prompt.
-        if (saw_usage_limit || saw_network_loss) && pending_message.is_some() {
+        if !budget_exhausted && (saw_usage_limit || saw_network_loss) && pending_message.is_some() {
             if let Some(msg) = pending_message.as_ref() {
                 let permission = am_db::repos::agent_thread::get(&self.db.pool, &thread_id)
                     .await
@@ -1344,6 +1504,12 @@ impl AppCore {
                             .await;
                 }
             }
+        }
+
+        if budget_exhausted
+            || (!usage_budget.is_unlimited() && (!saw_budget_telemetry || budget_state_invalid))
+        {
+            return;
         }
 
         if saw_network_loss {
@@ -1488,19 +1654,26 @@ impl AppCore {
             }
             crate::fallback::FallbackDecision::Wait { reset_at } => {
                 let local_policy = self.get_local_model_policy().await.unwrap_or_default();
-                if let Ok(Some(target)) = self.best_ready_local_target(&local_policy).await {
-                    let queued_id = self
-                        .queue_known_limited_message(
+                if thread.task_budget.is_unlimited() {
+                    if let Ok(Some(target)) = self.best_ready_local_target(&local_policy).await {
+                        let queued_id = self
+                            .queue_known_limited_message(
+                                &thread_id,
+                                current,
+                                &permission_string,
+                                message,
+                                policy_envelope_id.as_deref(),
+                            )
+                            .await?;
+                        self.start_thread_local_fallback(
                             &thread_id,
                             current,
-                            &permission_string,
-                            message,
-                            policy_envelope_id.as_deref(),
+                            target,
+                            &local_policy,
                         )
-                        .await?;
-                    self.start_thread_local_fallback(&thread_id, current, target, &local_policy)
                         .await;
-                    return Ok(queued_id.unwrap_or(thread_id));
+                        return Ok(queued_id.unwrap_or(thread_id));
+                    }
                 }
                 let queued_id = self
                     .queue_known_limited_message(
@@ -2581,6 +2754,35 @@ fn delete_managed_branch(repo: &Path, branch: Option<&str>) -> Result<(), CoreEr
     Err(CoreError::Other(stderr.trim().to_string()))
 }
 
+fn validate_runtime_budget(
+    budget: &TaskBudget,
+    agent: AgentKind,
+    backend: ExecutionBackend,
+    uses_local_model: bool,
+) -> Result<(), CoreError> {
+    if budget.is_unlimited() {
+        return Ok(());
+    }
+    if backend != ExecutionBackend::Host || uses_local_model {
+        return Err(CoreError::Other(
+            "Task budgets require host execution with a hosted agent; local models and Docker Sandbox are not supported.".into(),
+        ));
+    }
+    if matches!(budget, TaskBudget::WeeklyPercent { .. }) && agent != AgentKind::Codex {
+        return Err(CoreError::Other(
+            "Weekly % budgets currently require Codex with ChatGPT account usage telemetry.".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn append_budget_instruction(prompt: &mut String, budget: &TaskBudget) {
+    if let Some(instruction) = crate::budget::launch_instruction(budget) {
+        prompt.push_str("\n\n[Internal session guidance]\n");
+        prompt.push_str(&instruction);
+    }
+}
+
 fn build_thread_initial_prompt(
     thread: &AgentThread,
     message: &str,
@@ -2603,11 +2805,12 @@ fn build_thread_initial_prompt(
             "\n\nUse the current repository working tree directly. Apply edits in place as you work.",
         );
     }
+    append_budget_instruction(&mut prompt, &thread.task_budget);
     prompt
 }
 
 fn build_thread_resume_prompt(thread: &AgentThread, context_files_available: bool) -> String {
-    if context_files_available {
+    let mut prompt = if context_files_available {
         format!(
             "Continue the Perpetual session \"{}\". Read TASK_CONTEXT.md and AGENTS.md first, then proceed from the recorded progress and next actions.",
             thread.title
@@ -2617,11 +2820,15 @@ fn build_thread_resume_prompt(thread: &AgentThread, context_files_available: boo
             "Continue the Perpetual session \"{}\" in the current repository working tree, applying edits in place as you work.",
             thread.title
         )
-    }
+    };
+    append_budget_instruction(&mut prompt, &thread.task_budget);
+    prompt
 }
 
-fn build_thread_followup_prompt(message: &str) -> String {
-    message.to_string()
+fn build_thread_followup_prompt(thread: &AgentThread, message: &str) -> String {
+    let mut prompt = message.to_string();
+    append_budget_instruction(&mut prompt, &thread.task_budget);
+    prompt
 }
 
 async fn write_text_if_changed(path: &Path, content: &str) -> Result<(), CoreError> {
@@ -2727,6 +2934,7 @@ fn map_thread_event(thread_id: &str, turn_id: &str, ev: &NormalizedEvent) -> Age
             Some(format!("Token usage: {input} in / {output} out")),
             json!({ "input": input, "output": output }),
         ),
+        NormalizedEvent::QuotaWindow { .. } => ("system", "quota_window", None, json!({})),
         NormalizedEvent::AwaitingApproval { detail } => (
             "system",
             "awaiting_approval",
@@ -3011,6 +3219,7 @@ mod tests {
             progress: String::new(),
             open_questions: String::new(),
             next_actions: String::new(),
+            task_budget: TaskBudget::default(),
             sort_order: 0,
             created_at: now,
             updated_at: now,

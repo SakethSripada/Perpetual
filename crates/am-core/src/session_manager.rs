@@ -93,6 +93,14 @@ impl SessionManager {
         }
     }
 
+    pub async fn steer(&self, task_id: &str, instruction: String) -> bool {
+        self.active
+            .lock()
+            .await
+            .get(task_id)
+            .is_some_and(|control| control.steer(instruction))
+    }
+
     pub async fn remove(&self, task_id: &str) {
         self.active.lock().await.remove(task_id);
         self.inactive.notify_waiters();

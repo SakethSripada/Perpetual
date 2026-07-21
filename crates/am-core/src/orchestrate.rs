@@ -2347,6 +2347,7 @@ fn map_event(session_id: &str, task_id: &str, ev: &NormalizedEvent) -> SessionEv
             Some(format!("Token usage: {input} in / {output} out")),
             json!({ "input": input, "output": output }),
         ),
+        NormalizedEvent::QuotaWindow { .. } => ("system", "quota_window", None, json!({})),
         NormalizedEvent::AwaitingApproval { detail } => (
             "system",
             "awaiting_approval",
