@@ -235,6 +235,7 @@ pub enum NormalizedEvent {
     /// Internal account-level quota sample used for weekly task budgets. Core
     /// consumes it without persisting or publishing the raw values.
     QuotaWindow {
+        window: QuotaWindowKind,
         used_percent: f64,
         reset_at: Option<DateTime<Utc>>,
     },
@@ -274,6 +275,16 @@ pub struct AgentInstallStatus {
 pub struct SessionControl {
     cancel: Option<tokio::sync::oneshot::Sender<()>>,
     steer: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+}
+
+/// Provider quota windows that can be used by approximate session budgets.
+/// This stays internal to the normalized event stream; raw provider payloads
+/// are never persisted or sent to the webview.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QuotaWindowKind {
+    FiveHour,
+    Weekly,
 }
 
 impl SessionControl {

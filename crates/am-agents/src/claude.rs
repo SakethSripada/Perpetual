@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::ChildStdin;
@@ -27,7 +28,7 @@ use crate::runtime::{
 };
 use crate::{
     AgentAdapter, AgentError, AgentInstallStatus, AgentKind, NormalizedEvent, PermissionPolicy,
-    SessionControl, SessionHandle, SessionRef, SessionSpec, SessionStatus,
+    QuotaWindowKind, SessionControl, SessionHandle, SessionRef, SessionSpec, SessionStatus,
 };
 
 const BIN: &str = "claude";
@@ -475,6 +476,7 @@ async fn drive(
 /// **not** emit `SessionEnded` — the driver owns the terminal event.
 pub(crate) fn parse_line(v: &Value) -> Vec<NormalizedEvent> {
     let mut out = Vec::new();
+    out.extend(parse_quota_windows(v));
     match v.get("type").and_then(|t| t.as_str()) {
         Some("system") => match v.get("subtype").and_then(|s| s.as_str()) {
             Some("init") => {
@@ -583,6 +585,100 @@ pub(crate) fn parse_line(v: &Value) -> Vec<NormalizedEvent> {
         _ => {}
     }
     out
+}
+
+/// Claude subscription streams may report quota updates as Agent SDK-style
+/// `rate_limit_event` messages or as a statusline-shaped `rate_limits` object.
+/// Accept both shapes so the core can enforce the selected rolling windows
+/// without exposing the provider payload.
+fn parse_quota_windows(value: &Value) -> Vec<NormalizedEvent> {
+    let mut events = Vec::new();
+    if let Some(info) = value.get("rate_limit_info") {
+        if let Some(event) = parse_quota_sample(info, None) {
+            events.push(event);
+        }
+    }
+    if let Some(info) = value.get("rateLimitInfo") {
+        if let Some(event) = parse_quota_sample(info, None) {
+            events.push(event);
+        }
+    }
+    if let Some(rate_limits) = value.get("rate_limits").or_else(|| value.get("rateLimits")) {
+        if let Some(map) = rate_limits.as_object() {
+            for (window, info) in map {
+                if let Some(event) = parse_quota_sample(info, Some(window)) {
+                    events.push(event);
+                }
+            }
+        }
+    }
+    events
+}
+
+fn parse_quota_sample(value: &Value, window_hint: Option<&str>) -> Option<NormalizedEvent> {
+    let map = value.as_object()?;
+    let window_name = map
+        .get("rate_limit_type")
+        .or_else(|| map.get("rateLimitType"))
+        .or_else(|| map.get("window"))
+        .or_else(|| map.get("window_type"))
+        .and_then(Value::as_str)
+        .or(window_hint)?
+        .to_ascii_lowercase();
+    let window = if window_name.contains("five") || window_name.contains("5h") {
+        QuotaWindowKind::FiveHour
+    } else if window_name.contains("seven")
+        || window_name.contains("7d")
+        || window_name.contains("week")
+    {
+        QuotaWindowKind::Weekly
+    } else {
+        return None;
+    };
+    let used = map
+        .get("used_percentage")
+        .or_else(|| map.get("used_percent"))
+        .or_else(|| map.get("usedPercent"))
+        .or_else(|| map.get("percent_used"))
+        .or_else(|| map.get("percentUsed"))
+        .or_else(|| map.get("utilization"))
+        .and_then(Value::as_f64)
+        .or_else(|| {
+            map.get("remaining_percentage")
+                .or_else(|| map.get("remaining_percent"))
+                .or_else(|| map.get("remainingPercent"))
+                .and_then(Value::as_f64)
+                .map(|remaining| 100.0 - remaining)
+        })?;
+    let used = if map.get("utilization").is_some() && (0.0..=1.0).contains(&used) {
+        used * 100.0
+    } else {
+        used
+    };
+    Some(NormalizedEvent::QuotaWindow {
+        window,
+        used_percent: used.clamp(0.0, 100.0),
+        reset_at: map
+            .get("resets_at")
+            .or_else(|| map.get("reset_at"))
+            .or_else(|| map.get("resetsAt"))
+            .and_then(parse_reset_at),
+    })
+}
+
+fn parse_reset_at(value: &Value) -> Option<DateTime<Utc>> {
+    if let Some(text) = value.as_str() {
+        return DateTime::parse_from_rfc3339(text)
+            .ok()
+            .map(|value| value.with_timezone(&Utc));
+    }
+    let seconds = value.as_f64()?;
+    let seconds = if seconds > 10_000_000_000.0 {
+        seconds / 1_000.0
+    } else {
+        seconds
+    };
+    DateTime::from_timestamp(seconds as i64, 0)
 }
 
 fn token_usage_event(usage: &Value) -> Option<NormalizedEvent> {
@@ -947,6 +1043,52 @@ mod tests {
             }]
         ));
         assert_eq!(usage_message_id(&v).as_deref(), Some("msg_1"));
+    }
+
+    #[test]
+    fn parses_claude_five_hour_and_weekly_rate_limits() {
+        let events = parse_line(&json!({
+            "type": "rate_limit_event",
+            "rate_limit_info": {
+                "rate_limit_type": "five_hour",
+                "utilization": 0.125,
+                "resets_at": "2026-07-22T18:00:00Z"
+            }
+        }));
+        assert!(matches!(
+            events.as_slice(),
+            [NormalizedEvent::QuotaWindow {
+                window: QuotaWindowKind::FiveHour,
+                used_percent,
+                reset_at: Some(_),
+            }] if (*used_percent - 12.5).abs() < f64::EPSILON
+        ));
+
+        let events = parse_line(&json!({
+            "rate_limits": {
+                "seven_day": {
+                    "used_percentage": 32.0,
+                    "resets_at": 1785000000_i64
+                }
+            }
+        }));
+        assert!(matches!(
+            events.as_slice(),
+            [NormalizedEvent::QuotaWindow {
+                window: QuotaWindowKind::Weekly,
+                used_percent,
+                ..
+            }] if (*used_percent - 32.0).abs() < f64::EPSILON
+        ));
+    }
+
+    #[test]
+    fn ignores_rate_limit_payloads_without_a_supported_window_or_usage() {
+        assert!(parse_line(&json!({
+            "type": "rate_limit_event",
+            "rate_limit_info": { "rate_limit_type": "overage" }
+        }))
+        .is_empty());
     }
 
     #[test]

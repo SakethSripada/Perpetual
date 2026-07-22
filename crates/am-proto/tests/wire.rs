@@ -130,6 +130,18 @@ fn task_budget_contract() {
         .unwrap(),
         TaskBudget::WeeklyPercent { limit_percent: 5 }
     );
+    assert_eq!(
+        serde_json::to_value(TaskBudget::ClaudePercent {
+            five_hour_percent: Some(5),
+            weekly_percent: Some(10),
+        })
+        .unwrap(),
+        json!({
+            "mode": "claude_percent",
+            "five_hour_percent": 5,
+            "weekly_percent": 10
+        })
+    );
     assert!(TaskBudget::Tokens {
         limit_tokens: 9_999
     }
@@ -138,6 +150,12 @@ fn task_budget_contract() {
     assert!(TaskBudget::WeeklyPercent { limit_percent: 101 }
         .validate()
         .is_err());
+    assert!(TaskBudget::ClaudePercent {
+        five_hour_percent: None,
+        weekly_percent: None,
+    }
+    .validate()
+    .is_err());
 }
 
 #[test]

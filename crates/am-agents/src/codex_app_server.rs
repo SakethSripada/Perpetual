@@ -24,7 +24,8 @@ use crate::process::ManagedChild;
 use crate::runtime::spawn_host_piped_stdin;
 use crate::{
     ApprovalAsk, ApprovalDecision, ApprovalKind, ApprovalResponder, ChangeKind, NormalizedEvent,
-    PermissionPolicy, SessionControl, SessionHandle, SessionRef, SessionSpec, SessionStatus,
+    PermissionPolicy, QuotaWindowKind, SessionControl, SessionHandle, SessionRef, SessionSpec,
+    SessionStatus,
 };
 
 const BIN: &str = "codex";
@@ -868,6 +869,7 @@ fn parse_quota_window(value: &Value) -> Option<NormalizedEvent> {
     )
     .or_else(|| number(map, &["remaining_percent", "remainingPercent"]).map(|v| 100.0 - v))?;
     Some(NormalizedEvent::QuotaWindow {
+        window: QuotaWindowKind::Weekly,
         used_percent: used.clamp(0.0, 100.0),
         reset_at: None,
     })

@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use am_agents::{
-    AgentKind, NormalizedEvent, PermissionPolicy, SessionHandle, SessionRef, SessionSpec,
-    SessionStatus,
+    AgentKind, NormalizedEvent, PermissionPolicy, QuotaWindowKind, SessionHandle, SessionRef,
+    SessionSpec, SessionStatus,
 };
 use am_proto::{
     new_id, now, AgentThread, AgentThreadApplyResult, AgentThreadDiff, AgentThreadEvent,
@@ -431,12 +431,12 @@ impl AppCore {
         validate_runtime_budget(&thread.task_budget, agent, backend, local_model.is_some())?;
         if local_model.is_none() {
             if let Some(reset_at) = self.known_limited_agent_reset(agent).await? {
-                if matches!(thread.task_budget, TaskBudget::WeeklyPercent { .. }) {
+                if crate::budget::is_percentage_budget(&thread.task_budget) {
                     thread.status = TaskStatus::Paused;
                     let saved = am_db::repos::agent_thread::save(&self.db.pool, &thread).await?;
                     self.events.publish(AppEvent::AgentThreadUpdated(saved));
                     return Err(CoreError::Other(
-                        "Weekly % budgets pause when the selected provider is limited; they do not switch providers because quota percentages are not comparable.".into(),
+                        "Percentage budgets pause when the selected provider is limited; they do not switch providers because quota percentages are not comparable.".into(),
                     ));
                 }
                 return self
@@ -1118,7 +1118,9 @@ impl AppCore {
         let mut completed_ok = false;
         let mut limit_reset_at = None;
         let mut budget_exhausted = false;
-        let mut saw_budget_telemetry = false;
+        let mut saw_token_telemetry = false;
+        let mut saw_five_hour_telemetry = false;
+        let mut saw_weekly_telemetry = false;
         let mut usage_reconciler = crate::budget::UsageReconciler::default();
         let mut streaming_assistant: Option<AgentThreadEvent> = None;
         let usage_turn = am_db::repos::agent_turn::get(&self.db.pool, &turn_id)
@@ -1205,7 +1207,7 @@ impl AppCore {
             match &event {
                 NormalizedEvent::AwaitingApproval { .. } => saw_approval_needed = true,
                 NormalizedEvent::TokenUsage { input, output } => {
-                    saw_budget_telemetry = true;
+                    saw_token_telemetry = true;
                     let (input_delta, output_delta) = usage_reconciler.delta(*input, *output);
                     if input_delta == 0 && output_delta == 0 {
                         continue;
@@ -1262,20 +1264,26 @@ impl AppCore {
                         }
                     }
                 }
-                NormalizedEvent::QuotaWindow { used_percent, .. } => {
-                    saw_budget_telemetry = true;
-                    let weekly_consumed =
-                        enforcement_state.observe_weekly(*used_percent, agent.as_str());
+                NormalizedEvent::QuotaWindow {
+                    window,
+                    used_percent,
+                    ..
+                } => {
+                    match window {
+                        QuotaWindowKind::FiveHour => saw_five_hour_telemetry = true,
+                        QuotaWindowKind::Weekly => saw_weekly_telemetry = true,
+                    }
+                    let consumed =
+                        enforcement_state.observe(*window, *used_percent, agent.as_str());
                     let _ = am_db::repos::task_budget_state::save(
                         &self.db.pool,
                         &thread_id,
                         &enforcement_state.to_json(),
                     )
                     .await;
-                    if let TaskBudget::WeeklyPercent { limit_percent } = &usage_budget {
-                        let limit = f64::from(*limit_percent);
-                        let remaining = (limit - weekly_consumed).max(0.0);
-                        if weekly_consumed >= limit {
+                    if let Some(limit) = crate::budget::quota_limit(&usage_budget, *window) {
+                        let remaining = (limit - consumed).max(0.0);
+                        if consumed >= limit {
                             budget_exhausted = true;
                             let _ = self.sessions.cancel(&thread_id).await;
                         } else if remaining <= limit * 0.15 && !enforcement_state.closeout_sent {
@@ -1291,7 +1299,7 @@ impl AppCore {
                                 .steer(&thread_id, crate::budget::closeout_instruction())
                                 .await;
                         }
-                        if weekly_consumed >= limit * 0.5 && !enforcement_state.reminder_sent {
+                        if consumed >= limit * 0.5 && !enforcement_state.reminder_sent {
                             enforcement_state.reminder_sent = true;
                             let _ = am_db::repos::task_budget_state::save(
                                 &self.db.pool,
@@ -1323,15 +1331,14 @@ impl AppCore {
                     if let Ok(Some(mut thread)) =
                         am_db::repos::agent_thread::get(&self.db.pool, &thread_id).await
                     {
-                        let weekly_budget =
-                            matches!(&usage_budget, TaskBudget::WeeklyPercent { .. });
-                        thread.status = if weekly_budget {
+                        let percentage_budget = crate::budget::is_percentage_budget(&usage_budget);
+                        thread.status = if percentage_budget {
                             TaskStatus::Paused
                         } else {
                             TaskStatus::WaitingForLimit
                         };
                         thread.limit_reset_at = *reset_at;
-                        thread.handoff_state = if weekly_budget {
+                        thread.handoff_state = if percentage_budget {
                             "budget_paused_provider_limit".to_string()
                         } else {
                             "waiting_for_fallback".to_string()
@@ -1407,9 +1414,21 @@ impl AppCore {
                     if let Ok(Some(mut thread)) =
                         am_db::repos::agent_thread::get(&self.db.pool, &thread_id).await
                     {
+                        let budget_telemetry_complete = match &usage_budget {
+                            TaskBudget::Unlimited => true,
+                            TaskBudget::Tokens { .. } => saw_token_telemetry,
+                            TaskBudget::WeeklyPercent { .. } => saw_weekly_telemetry,
+                            TaskBudget::ClaudePercent {
+                                five_hour_percent,
+                                weekly_percent,
+                            } => {
+                                five_hour_percent.is_none_or(|_| saw_five_hour_telemetry)
+                                    && weekly_percent.is_none_or(|_| saw_weekly_telemetry)
+                            }
+                        };
                         thread.status = if budget_exhausted
                             || (!usage_budget.is_unlimited()
-                                && (!saw_budget_telemetry || budget_state_invalid))
+                                && (!budget_telemetry_complete || budget_state_invalid))
                         {
                             TaskStatus::Paused
                         } else if saw_network_loss {
@@ -1515,8 +1534,21 @@ impl AppCore {
             }
         }
 
+        let budget_telemetry_complete = match &usage_budget {
+            TaskBudget::Unlimited => true,
+            TaskBudget::Tokens { .. } => saw_token_telemetry,
+            TaskBudget::WeeklyPercent { .. } => saw_weekly_telemetry,
+            TaskBudget::ClaudePercent {
+                five_hour_percent,
+                weekly_percent,
+            } => {
+                five_hour_percent.is_none_or(|_| saw_five_hour_telemetry)
+                    && weekly_percent.is_none_or(|_| saw_weekly_telemetry)
+            }
+        };
         if budget_exhausted
-            || (!usage_budget.is_unlimited() && (!saw_budget_telemetry || budget_state_invalid))
+            || (!usage_budget.is_unlimited()
+                && (!budget_telemetry_complete || budget_state_invalid))
         {
             return;
         }
@@ -1531,7 +1563,7 @@ impl AppCore {
         }
 
         if saw_usage_limit {
-            if matches!(&usage_budget, TaskBudget::WeeklyPercent { .. }) {
+            if crate::budget::is_percentage_budget(&usage_budget) {
                 return;
             }
             self.start_thread_fallback(&thread_id, agent, limit_reset_at)
@@ -2787,6 +2819,11 @@ fn validate_runtime_budget(
     if matches!(budget, TaskBudget::WeeklyPercent { .. }) && agent != AgentKind::Codex {
         return Err(CoreError::Other(
             "Weekly % budgets currently require Codex with ChatGPT account usage telemetry.".into(),
+        ));
+    }
+    if matches!(budget, TaskBudget::ClaudePercent { .. }) && agent != AgentKind::ClaudeCode {
+        return Err(CoreError::Other(
+            "Claude percentage budgets require Claude with rolling 5-hour or 7-day usage telemetry.".into(),
         ));
     }
     Ok(())

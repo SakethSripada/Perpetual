@@ -1489,6 +1489,7 @@ function Popover(props: {
   setOpen(open: boolean): void;
   align?: "left" | "right" | "center";
   placement?: "auto" | "above" | "below";
+  fullWidth?: boolean;
   children: ReactNode;
 }) {
   const triggerRef = useRef<HTMLElement | null>(null);
@@ -1496,6 +1497,7 @@ function Popover(props: {
   const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null);
   const align = props.align ?? "left";
   const placement = props.placement ?? "auto";
+  const fullWidth = props.fullWidth ?? false;
 
   useLayoutEffect(() => {
     if (!props.open) {
@@ -1505,7 +1507,10 @@ function Popover(props: {
     const reposition = () => {
       const trigger = triggerRef.current;
       if (!trigger) return;
-      const rect = trigger.getBoundingClientRect();
+      const anchor = fullWidth
+        ? trigger.closest<HTMLElement>(".composer-box") ?? trigger
+        : trigger;
+      const rect = anchor.getBoundingClientRect();
       const margin = 6;
       const vw = window.innerWidth;
       const vh = window.innerHeight;
@@ -1519,9 +1524,24 @@ function Popover(props: {
       const next: CSSProperties = {
         position: "fixed",
         maxHeight,
-        minWidth: Math.min(rect.width, vw - margin * 2),
+        minWidth: fullWidth ? 0 : Math.min(rect.width, vw - margin * 2),
         transformOrigin: `${align === "right" ? "right" : align === "center" ? "center" : "left"} ${openUp ? "bottom" : "top"}`,
       };
+
+      if (fullWidth) {
+        const width = Math.min(rect.width, vw - margin * 2);
+        const left = Math.max(margin, Math.min(rect.left, vw - width - margin));
+        next.left = left;
+        next.width = width;
+        next.maxWidth = width;
+        if (openUp) {
+          next.bottom = Math.max(margin, vh - rect.top + margin);
+        } else {
+          next.top = Math.max(margin, Math.min(rect.bottom + margin, vh - margin - 120));
+        }
+        setMenuStyle(next);
+        return;
+      }
 
       // Anchor the edges that must stay glued to the trigger instead of
       // computing left/top from a measured size. Measuring the menu on its
@@ -1568,7 +1588,7 @@ function Popover(props: {
       window.removeEventListener("resize", reposition);
       window.removeEventListener("scroll", reposition, true);
     };
-  }, [props.open, align, placement]);
+  }, [props.open, align, placement, fullWidth]);
 
   useEffect(() => {
     if (!props.open) return;
@@ -1623,7 +1643,7 @@ function Popover(props: {
       {props.open && (
         <div
           ref={menuRef}
-          className="popover"
+          className={`popover${fullWidth ? " composer-popover" : ""}`}
           style={
             menuStyle ?? {
               position: "fixed",
@@ -1650,6 +1670,7 @@ function Dropdown(props: {
   title?: string;
   className?: string;
   placement?: "auto" | "above" | "below";
+  fullWidth?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const selected = props.options.find((option) => option.value === props.value);
@@ -1658,6 +1679,7 @@ function Dropdown(props: {
       open={open}
       setOpen={setOpen}
       placement={props.placement}
+      fullWidth={props.fullWidth}
       trigger={({ toggle, ref }) => (
         <button
           ref={ref as (el: HTMLButtonElement | null) => void}
@@ -2307,6 +2329,7 @@ function Composer(props: ComposerProps) {
               open={reposOpen}
               setOpen={setReposOpen}
               placement="above"
+              fullWidth
               trigger={({ toggle, ref }) => (
                 <button
                   ref={ref as (el: HTMLButtonElement | null) => void}
@@ -2431,6 +2454,7 @@ function Composer(props: ComposerProps) {
               value={props.agent}
               placement="above"
               onChange={(value) => props.setAgent(value as AgentKind)}
+              fullWidth
               options={[
                 { value: "claude_code", label: "Claude" },
                 { value: "codex", label: "Codex" },
@@ -2441,6 +2465,7 @@ function Composer(props: ComposerProps) {
               open={permOpen}
               setOpen={setPermOpen}
               placement="above"
+              fullWidth
               trigger={({ toggle, ref }) => (
                 <button
                   ref={ref as (el: HTMLButtonElement | null) => void}
@@ -2484,6 +2509,7 @@ function Composer(props: ComposerProps) {
               open={budgetOpen}
               setOpen={setBudgetOpen}
               placement="above"
+              fullWidth
               trigger={({ toggle, ref }) => (
                 <button
                   ref={ref as (el: HTMLButtonElement | null) => void}
@@ -2504,7 +2530,7 @@ function Composer(props: ComposerProps) {
                 backend={props.backend}
                 localOn={localOn}
                 authenticated={
-                  props.snapshot?.agents.find((item) => item.kind === "codex")
+                  props.snapshot?.agents.find((item) => item.kind === props.agent)
                     ?.authenticated ?? false
                 }
                 isRunning={props.isRunning}
@@ -2535,6 +2561,7 @@ function Composer(props: ComposerProps) {
               }}
               align="right"
               placement="above"
+              fullWidth
               trigger={({ toggle, ref }) => (
                 <button
                   ref={ref as (el: HTMLButtonElement | null) => void}
@@ -2744,6 +2771,12 @@ function BudgetMenu(props: {
 }) {
   const hostSupported = props.backend === "host" && !props.localOn;
   const weeklySupported = hostSupported && props.agent === "codex" && props.authenticated;
+  const claudeSupported = hostSupported && props.agent === "claude_code";
+  const claudeBudget =
+    props.budget.mode === "claude_percent" ? props.budget : null;
+  const [claudeCustomWindow, setClaudeCustomWindow] = useState<
+    "five_hour" | "weekly"
+  >(claudeBudget?.five_hour_percent === null ? "weekly" : "five_hour");
   const selectedTokenBudget =
     props.budget.mode === "tokens" ? props.budget.limit_tokens : null;
   const selectedWeeklyBudget =
@@ -2752,7 +2785,26 @@ function BudgetMenu(props: {
     ? "Budgets require a hosted agent; local model runs are not metered here."
     : props.backend !== "host"
       ? "Budgets require Host execution."
-      : "Weekly % requires Codex with ChatGPT account usage telemetry.";
+      : props.agent === "claude_code"
+        ? "Claude percentage budgets require Claude.ai subscription rate-limit telemetry. API-key runs support token targets only."
+        : "Weekly % requires Codex Host with a reported 7-day account usage window.";
+  const updateClaudeWindow = (
+    window: "five_hour" | "weekly",
+    value: number | null,
+    close = false,
+  ) => {
+    if (!claudeBudget) return;
+    props.onSelect(
+      {
+        mode: "claude_percent",
+        five_hour_percent:
+          window === "five_hour" ? value : claudeBudget.five_hour_percent,
+        weekly_percent:
+          window === "weekly" ? value : claudeBudget.weekly_percent,
+      },
+      close,
+    );
+  };
   const applyCustom = () => {
     const normalized = props.customValue.replace(/[,\s]/g, "");
     if (!/^\d+$/.test(normalized)) {
@@ -2766,6 +2818,14 @@ function BudgetMenu(props: {
         return;
       }
       props.onSelect({ mode: "weekly_percent", limit_percent: value });
+      return;
+    }
+    if (props.budget.mode === "claude_percent") {
+      if (value < 1 || value > 100) {
+        props.onNotice("Claude budgets must be between 1% and 100%.");
+        return;
+      }
+      updateClaudeWindow(claudeCustomWindow, value);
       return;
     }
     if (value < 10_000 || value > 10_000_000) {
@@ -2826,48 +2886,183 @@ function BudgetMenu(props: {
           ))}
         </div>
       )}
+      {props.agent === "codex" && (
+        <>
+          <button
+            type="button"
+            role="option"
+            aria-selected={props.budget.mode === "weekly_percent"}
+            disabled={!weeklySupported}
+            className={
+              props.budget.mode === "weekly_percent"
+                ? "menu-item selected"
+                : "menu-item"
+            }
+            title={!weeklySupported ? unsupportedReason : undefined}
+            onClick={() =>
+              props.onSelect({ mode: "weekly_percent", limit_percent: 5 }, false)
+            }
+          >
+            <Icon name="gauge" />
+            <span>Weekly %</span>
+            {props.budget.mode === "weekly_percent" && <Icon name="check" />}
+          </button>
+          {props.budget.mode === "weekly_percent" && weeklySupported && (
+            <div className="budget-presets">
+              {[1, 2, 5, 10].map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={
+                    selectedWeeklyBudget === value
+                      ? "budget-preset selected"
+                      : "budget-preset"
+                  }
+                  onClick={() =>
+                    props.onSelect({ mode: "weekly_percent", limit_percent: value })
+                  }
+                >
+                  {value}%
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+      {(props.agent === "claude_code" || props.budget.mode === "claude_percent") && (
       <button
         type="button"
         role="option"
-        aria-selected={props.budget.mode === "weekly_percent"}
-        disabled={!weeklySupported}
+        aria-selected={props.budget.mode === "claude_percent"}
+        disabled={!claudeSupported}
         className={
-          props.budget.mode === "weekly_percent"
+          props.budget.mode === "claude_percent"
             ? "menu-item selected"
             : "menu-item"
         }
-        title={!weeklySupported ? unsupportedReason : undefined}
+        title={!claudeSupported ? unsupportedReason : undefined}
         onClick={() =>
-          props.onSelect({ mode: "weekly_percent", limit_percent: 5 }, false)
+          props.onSelect(
+            {
+              mode: "claude_percent",
+              five_hour_percent: 5,
+              weekly_percent: null,
+            },
+            false,
+          )
         }
       >
         <Icon name="gauge" />
-        <span>Weekly %</span>
-        {props.budget.mode === "weekly_percent" && <Icon name="check" />}
+        <span>Claude windows</span>
+        {props.budget.mode === "claude_percent" && <Icon name="check" />}
       </button>
-      {props.budget.mode === "weekly_percent" && weeklySupported && (
-        <div className="budget-presets">
-          {[1, 2, 5, 10].map((value) => (
-            <button
-              key={value}
-              type="button"
-              className={
-                selectedWeeklyBudget === value
-                  ? "budget-preset selected"
-                  : "budget-preset"
-              }
-              onClick={() =>
-                props.onSelect({ mode: "weekly_percent", limit_percent: value })
-              }
-            >
-              {value}%
-            </button>
-          ))}
+      )}
+      {claudeBudget && claudeSupported && (
+        <div className="budget-windows" aria-label="Claude usage windows">
+          <div className="budget-window-card">
+            <label className="budget-window-toggle">
+              <input
+                type="checkbox"
+                checked={claudeBudget.five_hour_percent !== null}
+                onChange={(event) => {
+                  const value = event.target.checked
+                    ? claudeBudget.five_hour_percent ?? 5
+                    : null;
+                  if (value === null && claudeBudget.weekly_percent === null) {
+                    props.onNotice("Keep one Claude usage window selected.");
+                    return;
+                  }
+                  updateClaudeWindow("five_hour", value, false);
+                }}
+              />
+              <span>
+                <strong>Rolling 5-hour</strong>
+                <small>Short-session allowance</small>
+              </span>
+              <b>
+                {claudeBudget.five_hour_percent === null
+                  ? "Off"
+                  : `${claudeBudget.five_hour_percent}%`}
+              </b>
+            </label>
+            {claudeBudget.five_hour_percent !== null && (
+              <div className="budget-presets compact">
+                {[1, 2, 5, 10].map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={
+                      claudeBudget.five_hour_percent === value
+                        ? "budget-preset selected"
+                        : "budget-preset"
+                    }
+                    onClick={() => updateClaudeWindow("five_hour", value, false)}
+                  >
+                    {value}%
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="budget-window-card">
+            <label className="budget-window-toggle">
+              <input
+                type="checkbox"
+                checked={claudeBudget.weekly_percent !== null}
+                onChange={(event) => {
+                  const value = event.target.checked
+                    ? claudeBudget.weekly_percent ?? 5
+                    : null;
+                  if (value === null && claudeBudget.five_hour_percent === null) {
+                    props.onNotice("Keep one Claude usage window selected.");
+                    return;
+                  }
+                  updateClaudeWindow("weekly", value, false);
+                }}
+              />
+              <span>
+                <strong>7-day weekly</strong>
+                <small>Longer account allowance</small>
+              </span>
+              <b>
+                {claudeBudget.weekly_percent === null
+                  ? "Off"
+                  : `${claudeBudget.weekly_percent}%`}
+              </b>
+            </label>
+            {claudeBudget.weekly_percent !== null && (
+              <div className="budget-presets compact">
+                {[1, 2, 5, 10].map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={
+                      claudeBudget.weekly_percent === value
+                        ? "budget-preset selected"
+                        : "budget-preset"
+                    }
+                    onClick={() => updateClaudeWindow("weekly", value, false)}
+                  >
+                    {value}%
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
       {!hostSupported && <div className="budget-note">{unsupportedReason}</div>}
-      {hostSupported && !weeklySupported && (
-        <div className="budget-note">Weekly % needs Codex host execution and a ChatGPT-authenticated 7-day usage window.</div>
+      {hostSupported && props.agent === "codex" && !weeklySupported && (
+        <div className="budget-note">
+          Weekly % needs Codex Host execution and a reported 7-day account
+          window.
+        </div>
+      )}
+      {hostSupported && props.agent === "claude_code" && (
+        <div className="budget-note">
+          Claude percentages use rolling 5-hour and 7-day subscription windows;
+          each selected window is enforced independently.
+        </div>
       )}
       {props.budget.mode !== "unlimited" && hostSupported && (
         <div className="budget-custom">
@@ -2875,8 +3070,20 @@ function BudgetMenu(props: {
             type="text"
             inputMode="numeric"
             value={props.customValue}
-            placeholder={props.budget.mode === "weekly_percent" ? "Custom %" : "Custom tokens"}
-            aria-label={props.budget.mode === "weekly_percent" ? "Custom weekly percentage" : "Custom token budget"}
+            placeholder={
+              props.budget.mode === "tokens"
+                ? "Custom tokens"
+                : props.budget.mode === "weekly_percent"
+                  ? "Custom weekly %"
+                  : `Custom ${claudeCustomWindow === "five_hour" ? "5-hour" : "weekly"} %`
+            }
+            aria-label={
+              props.budget.mode === "tokens"
+                ? "Custom token budget"
+                : props.budget.mode === "weekly_percent"
+                  ? "Custom weekly percentage"
+                  : `Custom Claude ${claudeCustomWindow === "five_hour" ? "5-hour" : "weekly"} percentage`
+            }
             onChange={(event) => props.setCustomValue(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter") applyCustom();
@@ -2884,6 +3091,27 @@ function BudgetMenu(props: {
           />
           <button type="button" className="budget-apply" onClick={applyCustom}>
             Apply
+          </button>
+        </div>
+      )}
+      {claudeBudget && claudeSupported && (
+        <div className="budget-custom-target" role="group" aria-label="Custom Claude window">
+          <span>Custom applies to</span>
+          <button
+            type="button"
+            className={claudeCustomWindow === "five_hour" ? "selected" : ""}
+            onClick={() => setClaudeCustomWindow("five_hour")}
+            disabled={claudeBudget.five_hour_percent === null}
+          >
+            5-hour
+          </button>
+          <button
+            type="button"
+            className={claudeCustomWindow === "weekly" ? "selected" : ""}
+            onClick={() => setClaudeCustomWindow("weekly")}
+            disabled={claudeBudget.weekly_percent === null}
+          >
+            Weekly
           </button>
         </div>
       )}
@@ -3307,6 +3535,13 @@ function permissionComposerLabel(permission: PermissionPolicy): string {
 function taskBudgetComposerLabel(budget: TaskBudget): string {
   if (budget.mode === "unlimited") return "No limit";
   if (budget.mode === "weekly_percent") return `${budget.limit_percent}%`;
+  if (budget.mode === "claude_percent") {
+    const windows = [
+      budget.five_hour_percent === null ? null : `5h ${budget.five_hour_percent}%`,
+      budget.weekly_percent === null ? null : `wk ${budget.weekly_percent}%`,
+    ].filter(Boolean);
+    return windows.join(" + ");
+  }
   if (budget.limit_tokens >= 1_000_000) {
     return `${Math.round(budget.limit_tokens / 1_000_000)}m`;
   }

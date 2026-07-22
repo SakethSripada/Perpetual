@@ -1236,7 +1236,6 @@ textarea {
 }
 
 .budget-menu {
-  width: min(286px, calc(100vw - 24px));
   padding-bottom: 8px;
 }
 .budget-helper {
@@ -1294,6 +1293,83 @@ textarea {
 .budget-apply {
   padding: 0 8px;
 }
+.budget-windows {
+  display: grid;
+  gap: 7px;
+  padding: 0 10px 7px 38px;
+}
+.budget-window-card {
+  padding: 8px;
+  border: 1px solid var(--am-border-soft);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--am-surface-2) 62%, transparent);
+}
+.budget-window-toggle {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  cursor: pointer;
+}
+.budget-window-toggle input {
+  accent-color: var(--am-accent);
+}
+.budget-window-toggle > span {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+.budget-window-toggle strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+.budget-window-toggle small {
+  color: var(--am-muted);
+  font-size: 10px;
+}
+.budget-window-toggle b {
+  color: var(--vscode-foreground);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.budget-presets.compact {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 8px 0 0;
+}
+.budget-custom-target {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 7px 10px 0 38px;
+  color: var(--am-muted);
+  font-size: 10px;
+}
+.budget-custom-target span {
+  margin-right: auto;
+}
+.budget-custom-target button {
+  min-height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--am-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--am-control-fg);
+  cursor: pointer;
+  font-size: 10px;
+}
+.budget-custom-target button:hover:not(:disabled),
+.budget-custom-target button.selected {
+  border-color: var(--am-accent);
+  color: var(--vscode-foreground);
+  background: var(--am-control-bg-hover);
+}
+.budget-custom-target button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
 
 /* Collapse the agent label when the composer gets narrow */
 @container (max-width: 380px) {
@@ -1319,6 +1395,8 @@ textarea {
 .popover {
   z-index: 50;
   overflow: auto;
+  overflow-x: hidden;
+  box-sizing: border-box;
   border: 1px solid var(--am-border);
   border-radius: var(--am-radius);
   background: var(--vscode-menu-background, var(--vscode-editorWidget-background, var(--vscode-input-background)));
@@ -1327,6 +1405,22 @@ textarea {
   overscroll-behavior: contain;
   animation: popover-in 0.11s cubic-bezier(0.2, 0.8, 0.2, 1) both;
   will-change: opacity, transform;
+}
+.composer-popover {
+  border-radius: 16px;
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.42);
+}
+.composer-popover > .menu {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.composer-popover .repo-menu,
+.composer-popover .options-menu,
+.composer-popover .budget-menu {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
 }
 
 .menu {
@@ -1599,6 +1693,9 @@ textarea {
   gap: 10px;
   padding: 10px;
 }
+.composer-popover .options-menu {
+  gap: 9px;
+}
 .field {
   display: grid;
   gap: 4px;
@@ -1716,6 +1813,10 @@ textarea {
   overscroll-behavior: contain;
   margin: 0 -4px;
   padding: 0 4px;
+}
+.composer-popover .model-list {
+  margin: 0;
+  padding: 0 2px;
 }
 .model-list .menu-head {
   padding: 8px 8px 4px;

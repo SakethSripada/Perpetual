@@ -7,10 +7,10 @@ in-flight response after the target is crossed.
 
 ## Available modes
 
-| Execution path | Token target | Weekly % target |
+| Execution path | Token target | Percentage windows |
 | --- | --- | --- |
-| Claude Code on Host | Yes | No |
-| Codex on Host with ChatGPT authentication and a reported 7-day window | Yes | Yes |
+| Claude Code on Host with Claude subscription telemetry | Yes | Rolling 5-hour and/or 7-day |
+| Codex on Host with ChatGPT authentication and a reported 7-day window | Yes | 7-day |
 | Codex on Host with API-key authentication | Yes | No |
 | Docker Sandbox, local models, or cloud handoff | No in v1 | No |
 
@@ -18,6 +18,23 @@ Existing sessions continue with **No limit**. A budget applies to the whole
 session, including follow-up turns and hosted provider changes. Token usage
 includes provider-reported input, cached-input, and output tokens. Duplicate
 and cumulative provider reports are reconciled before they are stored.
+
+## Percentage windows
+
+For Claude, choose either or both of the provider's rolling windows:
+
+- **5-hour** limits how much this session may increase the current rolling
+  five-hour usage window.
+- **7-day** limits how much this session may increase the current weekly usage
+  window.
+
+Claude percentage budgets require the CLI to report the selected subscription
+window. Claude.ai subscriber status data can expose these windows after the
+first provider response; if a selected window is missing or malformed,
+Perpetual fails closed and pauses instead of allowing an unmetered run.
+
+For Codex, the v1 composer exposes the reliably reported 7-day account window.
+Codex's provider-owned five-hour limits are not selectable in this mode.
 
 ## Weekly percentage meaning
 
@@ -37,7 +54,8 @@ Budgeted runs receive private launch guidance to prioritize valuable work and
 reserve capacity for validation and a concise status summary. Perpetual sends
 one private progress reminder at 50% and begins closeout with 15% remaining.
 For token targets, the closeout reserve is clamped to 4,000–20,000 tokens.
-For weekly targets, it is 15% of the selected allocation.
+For percentage targets, it is 15% of the selected allocation in the window
+that is approaching its cap.
 
 Closeout asks the agent to stop starting substantive work, safely finish the
 operation already in flight, run only the highest-value validation that fits,
