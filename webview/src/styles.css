@@ -539,10 +539,6 @@ textarea {
   -webkit-text-fill-color: transparent;
   animation: working-shimmer 1.55s linear infinite;
 }
-.transcript.is-starting .thinking {
-  animation: first-working-in 0.58s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-
 .empty {
   display: grid;
   justify-items: center;
@@ -2673,18 +2669,6 @@ textarea {
     transform: translateY(5px) scale(0.98);
   }
   to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-@keyframes first-working-in {
-  0%,
-  32% {
-    opacity: 0;
-    transform: translateY(clamp(90px, 27vh, 220px)) scale(0.98);
-  }
-  100% {
     opacity: 1;
     transform: translateY(0) scale(1);
   }

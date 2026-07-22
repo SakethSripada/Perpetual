@@ -690,7 +690,10 @@ export class WorkbenchController implements vscode.Disposable {
       task_budget: message.taskBudget,
     });
     await this.selectThread(thread.id);
-    await this.refresh();
+    // Do not make the first provider response wait for a full snapshot refresh
+    // (agent detection, model catalogs, and workspace reads). The webview has
+    // already rendered the optimistic message; the daemon events and the final
+    // run refresh will fill in the new thread while the provider starts.
     void this.runThreadInBackground(
       thread.id,
       agent,
@@ -699,6 +702,7 @@ export class WorkbenchController implements vscode.Disposable {
       executionBackend,
       blankToNull(message.clientMessageId ?? null),
     );
+    void this.refresh();
   }
 
   private async sendThreadMessageInBackground(

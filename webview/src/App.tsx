@@ -50,6 +50,9 @@ type PendingMessage = PendingTranscriptMessage;
 type PersistedState = {
   repoIds?: string[];
   repoTouched?: boolean;
+  lastAgent?: AgentKind;
+  lastModel?: string;
+  lastReasoning?: string;
 };
 
 type PendingRepoAssignment = {
@@ -89,12 +92,16 @@ function writePersistedState(state: PersistedState): void {
 export default function App() {
   const persisted = useMemo(() => readPersistedState(), []);
   const [snapshot, setSnapshot] = useState<WorkbenchSnapshot | null>(null);
-  const [agent, setAgent] = useState<AgentKind>("claude_code");
+  const [agent, setAgent] = useState<AgentKind>(
+    persisted.lastAgent ?? "claude_code",
+  );
   const [permission, setPermission] =
     useState<PermissionPolicy>("workspace_write");
   const [backend, setBackend] = useState<ExecutionBackend>("host");
-  const [model, setModel] = useState("");
-  const [reasoning, setReasoning] = useState("medium");
+  const [model, setModel] = useState(persisted.lastModel ?? "");
+  const [reasoning, setReasoning] = useState(
+    persisted.lastReasoning ?? "medium",
+  );
   const [localProvider, setLocalProvider] = useState<LocalModelProvider | "">(
     "",
   );
@@ -145,6 +152,15 @@ export default function App() {
   const repoTouchedRef = useRef(false);
   const repoInitKeyRef = useRef("");
   const pendingRepoAssignmentRef = useRef<PendingRepoAssignment | null>(null);
+  const composerDefaultsRef = useRef<{
+    agent: AgentKind;
+    model: string | undefined;
+    reasoning: string | undefined;
+  }>({
+    agent: persisted.lastAgent ?? "claude_code",
+    model: persisted.lastModel,
+    reasoning: persisted.lastReasoning,
+  });
 
   useEffect(() => {
     const onMessage = (event: MessageEvent<ExtensionMessage>) => {
@@ -335,7 +351,9 @@ export default function App() {
     const nextAgent =
       selectedThread?.active_agent ??
       selectedThread?.preferred_agent ??
-      snapshot.defaults.agent;
+      (effectiveSelectedId === null
+        ? composerDefaultsRef.current.agent
+        : snapshot.defaults.agent);
     const defaults = runDefaults(snapshot, nextAgent);
     const nextPermission =
       selectedThread?.permission ?? snapshot.defaults.permission;
@@ -344,9 +362,14 @@ export default function App() {
       selectedThread?.execution_backend ?? snapshot.defaults.execution_backend,
     );
     const nextModel =
-      selectedThread?.model ?? snapshot.defaults.model ?? defaults.model ?? "";
+      selectedThread?.model ??
+      (effectiveSelectedId === null ? composerDefaultsRef.current.model : null) ??
+      snapshot.defaults.model ??
+      defaults.model ??
+      "";
     const nextReasoning =
       selectedThread?.reasoning ??
+      (effectiveSelectedId === null ? composerDefaultsRef.current.reasoning : null) ??
       snapshot.defaults.reasoning ??
       defaults.reasoning ??
       "medium";
@@ -426,6 +449,16 @@ export default function App() {
     snapshot?.defaultRepoIds,
     snapshot?.runDefaults,
   ]);
+
+  useEffect(() => {
+    composerDefaultsRef.current = { agent, model, reasoning };
+    writePersistedState({
+      ...readPersistedState(),
+      lastAgent: agent,
+      lastModel: model,
+      lastReasoning: reasoning,
+    });
+  }, [agent, model, reasoning]);
 
   // Catalog refreshes may reveal that a persisted effort does not belong to
   // the selected model. Repair it immediately to the model's advertised
