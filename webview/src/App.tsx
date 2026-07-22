@@ -2812,13 +2812,14 @@ function UsageWindowCard(props: {
   const used = Number.isFinite(props.window.used_percent)
     ? Math.max(0, Math.min(100, props.window.used_percent))
     : 0;
+  const remaining = Math.max(0, 100 - used);
   const level = used >= 85 ? " high" : used >= 65 ? " medium" : "";
   return (
     <div className="usage-window">
       <div className="usage-window-head">
         <span className="usage-window-label">{props.label}</span>
         <strong className="usage-window-value">
-          {formatUsagePercent(used)} used
+          {formatUsagePercent(remaining)} left
         </strong>
       </div>
       <div
@@ -2873,6 +2874,12 @@ function BudgetMenu(props: {
   const [claudeCustomWindow, setClaudeCustomWindow] = useState<
     "five_hour" | "weekly"
   >(claudeBudget?.five_hour_percent === null ? "weekly" : "five_hour");
+  const customWindow =
+    claudeBudget?.five_hour_percent === null && claudeCustomWindow === "five_hour"
+      ? "weekly"
+      : claudeBudget?.weekly_percent === null && claudeCustomWindow === "weekly"
+        ? "five_hour"
+        : claudeCustomWindow;
   const selectedTokenBudget =
     props.budget.mode === "tokens" ? props.budget.limit_tokens : null;
   const selectedWeeklyBudget =
@@ -2921,7 +2928,7 @@ function BudgetMenu(props: {
         props.onNotice("Claude budgets must be between 1% and 100%.");
         return;
       }
-      updateClaudeWindow(claudeCustomWindow, value);
+      updateClaudeWindow(customWindow, value);
       return;
     }
     if (value < 10_000 || value > 10_000_000) {
@@ -3151,60 +3158,62 @@ function BudgetMenu(props: {
           window.
         </div>
       )}
-      {hostSupported && props.agent === "claude_code" && claudeBudget && (
-        <div className="budget-note">
-          Claude percentages use rolling 5-hour and 7-day subscription windows;
-          each selected window is enforced independently.
-        </div>
-      )}
       {props.budget.mode !== "unlimited" && hostSupported && (
-        <div className="budget-custom">
+        <div className={`budget-custom${claudeBudget ? " with-window" : ""}`}>
+          {claudeBudget && claudeSupported && (
+            <div className="budget-custom-window" role="group" aria-label="Custom Claude window">
+              <button
+                type="button"
+                className={customWindow === "five_hour" ? "selected" : ""}
+                onClick={() => setClaudeCustomWindow("five_hour")}
+                disabled={claudeBudget.five_hour_percent === null}
+              >
+                5h
+              </button>
+              <button
+                type="button"
+                className={customWindow === "weekly" ? "selected" : ""}
+                onClick={() => setClaudeCustomWindow("weekly")}
+                disabled={claudeBudget.weekly_percent === null}
+              >
+                7d
+              </button>
+            </div>
+          )}
           <input
             type="text"
             inputMode="numeric"
             value={props.customValue}
             placeholder={
               props.budget.mode === "tokens"
-                ? "Custom tokens"
-                : props.budget.mode === "weekly_percent"
-                  ? "Custom weekly %"
-                  : `Custom ${claudeCustomWindow === "five_hour" ? "5-hour" : "weekly"} %`
+                ? "e.g. 50000"
+                : "e.g. 15"
             }
             aria-label={
               props.budget.mode === "tokens"
                 ? "Custom token budget"
-                : props.budget.mode === "weekly_percent"
-                  ? "Custom weekly percentage"
-                  : `Custom Claude ${claudeCustomWindow === "five_hour" ? "5-hour" : "weekly"} percentage`
+                : `Custom ${
+                    props.budget.mode === "claude_percent"
+                      ? customWindow === "five_hour"
+                        ? "Claude 5-hour"
+                        : "Claude weekly"
+                      : "weekly"
+                  } percentage`
             }
             onChange={(event) => props.setCustomValue(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter") applyCustom();
             }}
           />
-          <button type="button" className="budget-apply" onClick={applyCustom}>
-            Apply
-          </button>
-        </div>
-      )}
-      {claudeBudget && claudeSupported && (
-        <div className="budget-custom-target" role="group" aria-label="Custom Claude window">
-          <span>Custom applies to</span>
+          {props.budget.mode !== "tokens" && <span className="budget-custom-suffix">%</span>}
           <button
             type="button"
-            className={claudeCustomWindow === "five_hour" ? "selected" : ""}
-            onClick={() => setClaudeCustomWindow("five_hour")}
-            disabled={claudeBudget.five_hour_percent === null}
+            className="budget-apply"
+            onClick={applyCustom}
+            aria-label="Apply custom budget"
+            title="Apply custom budget"
           >
-            5-hour
-          </button>
-          <button
-            type="button"
-            className={claudeCustomWindow === "weekly" ? "selected" : ""}
-            onClick={() => setClaudeCustomWindow("weekly")}
-            disabled={claudeBudget.weekly_percent === null}
-          >
-            Weekly
+            <Icon name="check" className="budget-apply-icon" />
           </button>
         </div>
       )}

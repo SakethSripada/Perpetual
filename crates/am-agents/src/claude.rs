@@ -8,6 +8,9 @@
 //! and unit-tested against fixtures.
 
 use std::collections::HashSet;
+#[cfg(not(windows))]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -35,6 +38,92 @@ const BIN: &str = "claude";
 const CHANNEL_CAPACITY: usize = 256;
 const TERMINATE_GRACE: Duration = Duration::from_secs(3);
 
+#[derive(Debug)]
+struct ClaudeQuotaCapture {
+    output_path: PathBuf,
+    script_path: PathBuf,
+}
+
+impl ClaudeQuotaCapture {
+    fn create() -> std::io::Result<Self> {
+        let root =
+            std::env::temp_dir().join(format!("perpetual-claude-quota-{}", am_proto::new_id()));
+        std::fs::create_dir_all(&root)?;
+        let output_path = root.join("statusline.json");
+        let script_path = root.join(if cfg!(windows) {
+            "capture-statusline.ps1"
+        } else {
+            "capture-statusline.sh"
+        });
+        let script = if cfg!(windows) {
+            r#"$ErrorActionPreference = "Stop"
+$target = $args[0]
+$data = [Console]::In.ReadToEnd()
+if ([string]::IsNullOrWhiteSpace($data)) { exit 0 }
+$temporary = "$target.$PID.tmp"
+[System.IO.File]::WriteAllText($temporary, $data, [System.Text.UTF8Encoding]::new($false))
+Move-Item -LiteralPath $temporary -Destination $target -Force
+"#
+        } else {
+            r#"#!/bin/sh
+set -eu
+target="$1"
+temporary="$target.$$"
+cat > "$temporary"
+mv -f "$temporary" "$target"
+"#
+        };
+        std::fs::write(&script_path, script)?;
+        Ok(Self {
+            output_path,
+            script_path,
+        })
+    }
+
+    fn settings_json(&self) -> String {
+        serde_json::json!({
+            "statusLine": {
+                "type": "command",
+                "command": self.statusline_command(),
+            }
+        })
+        .to_string()
+    }
+
+    fn statusline_command(&self) -> String {
+        #[cfg(windows)]
+        {
+            format!(
+                "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{}\" \"{}\"",
+                self.script_path.display(),
+                self.output_path.display(),
+            )
+        }
+        #[cfg(not(windows))]
+        {
+            format!(
+                "sh {} {}",
+                shell_quote(&self.script_path),
+                shell_quote(&self.output_path),
+            )
+        }
+    }
+}
+
+impl Drop for ClaudeQuotaCapture {
+    fn drop(&mut self) {
+        if let Some(root) = self.script_path.parent() {
+            let _ = std::fs::remove_dir_all(root);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn shell_quote(path: &Path) -> String {
+    let value = path.to_string_lossy().replace('\'', "'\\''");
+    format!("'{value}'")
+}
+
 #[derive(Default)]
 pub struct ClaudeAdapter;
 
@@ -48,7 +137,19 @@ impl ClaudeAdapter {
         spec: SessionSpec,
         resume: Option<SessionRef>,
     ) -> Result<SessionHandle, AgentError> {
-        let args = build_args(&spec, resume.as_ref());
+        let quota_capture = if matches!(spec.runtime, crate::SessionRuntime::Host { .. }) {
+            Some(
+                ClaudeQuotaCapture::create()
+                    .map_err(|error| AgentError::Spawn(format!("Claude usage capture: {error}")))?,
+            )
+        } else {
+            None
+        };
+        let mut args = build_args(&spec, resume.as_ref());
+        if let Some(capture) = quota_capture.as_ref() {
+            args.push("--settings".into());
+            args.push(capture.settings_json());
+        }
         let envs = policy_env(&spec);
         tracing::debug!(?args, worktree = ?spec.worktree, "launching claude");
 
@@ -76,6 +177,7 @@ impl ClaudeAdapter {
             stderr,
             stdin,
             budgeted.then(|| spec.prompt.clone()),
+            quota_capture,
             steer_rx,
             tx,
             cancel_rx,
@@ -296,6 +398,7 @@ async fn drive(
     stderr: Option<tokio::process::ChildStderr>,
     mut stdin: Option<ChildStdin>,
     initial_prompt: Option<String>,
+    quota_capture: Option<ClaudeQuotaCapture>,
     mut steer_rx: mpsc::UnboundedReceiver<String>,
     tx: mpsc::Sender<NormalizedEvent>,
     mut cancel_rx: oneshot::Receiver<()>,
@@ -330,6 +433,9 @@ async fn drive(
     let mut saw_result = false;
     let mut saw_structured_output = false;
     let mut seen_usage_message_ids = HashSet::new();
+    let mut seen_quota_samples = HashSet::new();
+    let mut quota_poll = tokio::time::interval(Duration::from_millis(200));
+    quota_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let hard_timeout = tokio::time::sleep(limits.run_timeout);
     let idle_timeout = tokio::time::sleep(limits.idle_timeout);
     let startup_timeout = tokio::time::sleep(limits.startup_timeout);
@@ -349,6 +455,10 @@ async fn drive(
                             idle_timeout.as_mut().reset(tokio::time::Instant::now() + limits.idle_timeout);
                             if value.get("type").and_then(|t| t.as_str()) == Some("result") {
                                 saw_result = true;
+                                // Print-mode stream input is bidirectional. Once Claude has
+                                // emitted its terminal result, close our side of the pipe so
+                                // the process can exit instead of waiting for another turn.
+                                drop(stdin.take());
                             }
                             let message_id = usage_message_id(&value);
                             for event in parse_line(&value) {
@@ -382,6 +492,11 @@ async fn drive(
                     }
                 }
             }
+            _ = quota_poll.tick(), if quota_capture.is_some() => {
+                if let Some(capture) = quota_capture.as_ref() {
+                    refresh_quota_capture(capture, &mut seen_quota_samples, &tx).await;
+                }
+            }
             _ = &mut cancel_rx => { cancelled = true; break; }
             _ = &mut hard_timeout => {
                 timeout_message = Some("agent run timed out".to_string());
@@ -413,6 +528,9 @@ async fn drive(
     }
 
     let exit = child.wait().await;
+    if let Some(capture) = quota_capture.as_ref() {
+        refresh_quota_capture(capture, &mut seen_quota_samples, &tx).await;
+    }
     let success = matches!(&exit, Ok(status) if status.success());
 
     let final_status = if cancelled {
@@ -469,6 +587,36 @@ async fn drive(
 
     if let Some(task) = stderr_task {
         task.abort();
+    }
+}
+
+async fn refresh_quota_capture(
+    capture: &ClaudeQuotaCapture,
+    seen_samples: &mut HashSet<String>,
+    tx: &mpsc::Sender<NormalizedEvent>,
+) {
+    let Ok(raw) = tokio::fs::read_to_string(&capture.output_path).await else {
+        return;
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&raw) else {
+        return;
+    };
+    for event in parse_quota_windows(&value) {
+        let NormalizedEvent::QuotaWindow {
+            window,
+            used_percent,
+            reset_at,
+        } = &event
+        else {
+            continue;
+        };
+        let key = format!("{window:?}:{used_percent:.3}:{reset_at:?}");
+        if !seen_samples.insert(key) {
+            continue;
+        }
+        if tx.send(event).await.is_err() {
+            break;
+        }
     }
 }
 

@@ -1351,8 +1351,45 @@ textarea {
 }
 .budget-custom {
   display: flex;
+  align-items: center;
   gap: 5px;
   padding: 1px 10px 0 38px;
+}
+.budget-custom.with-window {
+  gap: 4px;
+}
+.budget-custom-window {
+  display: flex;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid var(--am-border);
+  border-radius: 6px;
+}
+.budget-custom-window button {
+  min-width: 28px;
+  height: 27px;
+  padding: 0 5px;
+  border: 0;
+  border-right: 1px solid var(--am-border);
+  background: transparent;
+  color: var(--am-muted);
+  cursor: pointer;
+  font-size: 10px;
+}
+.budget-custom-window button:last-child {
+  border-right: 0;
+}
+.budget-custom-window button:hover:not(:disabled),
+.budget-custom-window button.selected {
+  background: var(--am-control-bg-hover);
+  color: var(--vscode-foreground);
+}
+.budget-custom-window button.selected {
+  box-shadow: inset 0 -2px 0 var(--am-accent);
+}
+.budget-custom-window button:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 .budget-custom input {
   min-width: 0;
@@ -1366,8 +1403,22 @@ textarea {
   font: inherit;
   font-size: 11px;
 }
+.budget-custom-suffix {
+  margin-left: -24px;
+  color: var(--am-muted);
+  font-size: 11px;
+  pointer-events: none;
+}
 .budget-apply {
-  padding: 0 8px;
+  display: inline-grid;
+  width: 27px;
+  flex: 0 0 27px;
+  padding: 0;
+  place-items: center;
+}
+.budget-apply-icon {
+  width: 13px;
+  height: 13px;
 }
 .budget-windows {
   display: grid;
@@ -1414,37 +1465,6 @@ textarea {
 .budget-presets.compact {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   padding: 8px 0 0;
-}
-.budget-custom-target {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 7px 10px 0 38px;
-  color: var(--am-muted);
-  font-size: 10px;
-}
-.budget-custom-target span {
-  margin-right: auto;
-}
-.budget-custom-target button {
-  min-height: 24px;
-  padding: 0 7px;
-  border: 1px solid var(--am-border);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--am-control-fg);
-  cursor: pointer;
-  font-size: 10px;
-}
-.budget-custom-target button:hover:not(:disabled),
-.budget-custom-target button.selected {
-  border-color: var(--am-accent);
-  color: var(--vscode-foreground);
-  background: var(--am-control-bg-hover);
-}
-.budget-custom-target button:disabled {
-  opacity: 0.4;
-  cursor: default;
 }
 
 @container (max-width: 460px) {
