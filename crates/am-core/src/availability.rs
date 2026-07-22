@@ -1,5 +1,7 @@
-use am_agents::AgentInstallStatus;
-use am_proto::{now, AgentKind, AgentStatus, AvailabilityState};
+use am_agents::{AgentInstallStatus, QuotaWindowKind};
+use am_proto::{
+    now, AgentKind, AgentStatus, AvailabilityState, ProviderUsage, ProviderUsageWindow,
+};
 use chrono::{DateTime, Utc};
 
 use crate::{AppCore, CoreError};
@@ -9,6 +11,36 @@ const READY_AGENT_CACHE_SECS: i64 = 60;
 const MAX_UNKNOWN_RESET_BACKOFF_SECS: i64 = 15 * 60;
 
 impl AppCore {
+    pub(crate) fn provider_usage(&self, kind: AgentKind) -> Option<ProviderUsage> {
+        self.provider_usage
+            .lock()
+            .ok()
+            .and_then(|usage| usage.get(&kind).cloned())
+    }
+
+    pub(crate) fn update_provider_usage(
+        &self,
+        kind: AgentKind,
+        window: QuotaWindowKind,
+        used_percent: f64,
+        reset_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> ProviderUsage {
+        let mut all_usage = self
+            .provider_usage
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let usage = all_usage.entry(kind).or_default();
+        let sample = Some(ProviderUsageWindow {
+            used_percent: used_percent.clamp(0.0, 100.0),
+            reset_at,
+        });
+        match window {
+            QuotaWindowKind::FiveHour => usage.five_hour = sample,
+            QuotaWindowKind::Weekly => usage.weekly = sample,
+        }
+        usage.clone()
+    }
+
     pub(crate) async fn fresh_ready_agent_status(
         &self,
         kind: AgentKind,
@@ -39,6 +71,7 @@ impl AppCore {
             availability: record.availability,
             reset_at: record.reset_at,
             last_checked: record.last_checked,
+            usage: self.provider_usage(kind),
         }))
     }
 
@@ -99,6 +132,7 @@ impl AppCore {
             availability: saved.availability,
             reset_at: saved.reset_at,
             last_checked: saved.last_checked,
+            usage: self.provider_usage(detected.kind),
         })
     }
 

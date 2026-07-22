@@ -26,6 +26,7 @@ import type {
   LocalModelProvider,
   NewGithubRepo,
   PermissionPolicy,
+  ProviderUsage,
   SandboxPolicy,
   SandboxRuntimeStatus,
   TaskBudget,
@@ -1256,6 +1257,17 @@ export class WorkbenchController implements vscode.Disposable {
     if (event.type === "cloud_run_updated") {
       const data = event.data as { thread_id?: string };
       if (data.thread_id) this.diffCache.delete(data.thread_id);
+    }
+    if (event.type === "provider_usage_updated") {
+      const data = event.data as { agent: AgentKind; usage: ProviderUsage };
+      if (this.detectionCache) {
+        this.detectionCache = {
+          ...this.detectionCache,
+          agents: this.detectionCache.agents.map((status) =>
+            status.kind === data.agent ? { ...status, usage: data.usage } : status,
+          ),
+        };
+      }
     }
     // Approvals are interactive — surface them immediately. Everything else is
     // throttled (not debounced): a continuous token stream must keep painting

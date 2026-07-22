@@ -1250,6 +1250,112 @@ textarea {
   font-size: 10px;
   line-height: 1.4;
 }
+.usage-summary {
+  min-width: 0;
+  margin: 0 10px 8px;
+  padding: 9px 10px 10px;
+  border: 1px solid var(--am-border-soft);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--am-surface-2) 66%, transparent);
+  box-sizing: border-box;
+}
+.usage-summary-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.usage-summary-head > span {
+  color: var(--vscode-foreground);
+  font-size: 11px;
+  font-weight: 650;
+}
+.usage-summary-head small {
+  color: var(--am-muted);
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.usage-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  min-width: 0;
+}
+.usage-window {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  padding: 7px 8px;
+  border: 1px solid var(--am-border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--am-surface-2) 54%, transparent);
+  box-sizing: border-box;
+}
+.usage-window.missing {
+  align-content: center;
+  min-height: 52px;
+}
+.usage-window-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+.usage-window-label,
+.usage-window-value,
+.usage-window-missing,
+.usage-window-reset {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.usage-window-label {
+  color: var(--am-muted);
+  font-size: 10px;
+}
+.usage-window-value {
+  color: var(--vscode-foreground);
+  font-size: 11px;
+  font-weight: 650;
+}
+.usage-window-missing {
+  color: var(--am-muted);
+  font-size: 10px;
+}
+.usage-window-reset {
+  color: var(--am-muted);
+  font-size: 9px;
+}
+.usage-bar {
+  height: 4px;
+  margin-top: 2px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--am-border) 72%, transparent);
+}
+.usage-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--am-accent);
+  transition: width 180ms ease, background-color 180ms ease;
+}
+.usage-bar-fill.medium {
+  background: var(--vscode-editorWarning-foreground, #d7ba7d);
+}
+.usage-bar-fill.high {
+  background: var(--vscode-errorForeground, #f85149);
+}
+.usage-summary-note {
+  margin: 7px 0 0;
+  color: var(--am-muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
 .budget-presets {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1371,6 +1477,12 @@ textarea {
   cursor: default;
 }
 
+@container (max-width: 460px) {
+  .usage-summary-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Collapse the agent label when the composer gets narrow */
 @container (max-width: 380px) {
   .agent-chip {
@@ -1421,6 +1533,8 @@ textarea {
   width: 100%;
   min-width: 0;
   max-width: none;
+  overflow-x: hidden;
+  box-sizing: border-box;
 }
 
 .menu {

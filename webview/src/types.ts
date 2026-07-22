@@ -65,6 +65,16 @@ export interface ActivityEvent {
   ts: string;
 }
 
+export interface ProviderUsageWindow {
+  used_percent: number;
+  reset_at: string | null;
+}
+
+export interface ProviderUsage {
+  five_hour: ProviderUsageWindow | null;
+  weekly: ProviderUsageWindow | null;
+}
+
 export interface AgentStatus {
   kind: AgentKind;
   installed: boolean;
@@ -74,6 +84,7 @@ export interface AgentStatus {
   availability: AvailabilityState;
   reset_at: string | null;
   last_checked: string | null;
+  usage: ProviderUsage | null;
 }
 
 export interface AgentRunDefaults {

@@ -138,6 +138,22 @@ impl AvailabilityState {
 
 /// Install / auth status of an agent, for the Agents settings view.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderUsageWindow {
+    pub used_percent: f64,
+    pub reset_at: Option<DateTime<Utc>>,
+}
+
+/// Sanitized provider usage summary. This is intentionally limited to the
+/// user-facing percentage and reset time; raw provider payloads and token
+/// streams stay internal to the agent session.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProviderUsage {
+    pub five_hour: Option<ProviderUsageWindow>,
+    pub weekly: Option<ProviderUsageWindow>,
+}
+
+/// Install / auth status of an agent, for the Agents settings view.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentStatus {
     pub kind: AgentKind,
     pub installed: bool,
@@ -147,6 +163,8 @@ pub struct AgentStatus {
     pub availability: AvailabilityState,
     pub reset_at: Option<DateTime<Utc>>,
     pub last_checked: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub usage: Option<ProviderUsage>,
 }
 
 /// Model/reasoning defaults read from the agent's own local CLI/IDE config.

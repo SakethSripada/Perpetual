@@ -1267,12 +1267,18 @@ impl AppCore {
                 NormalizedEvent::QuotaWindow {
                     window,
                     used_percent,
-                    ..
+                    reset_at,
                 } => {
                     match window {
                         QuotaWindowKind::FiveHour => saw_five_hour_telemetry = true,
                         QuotaWindowKind::Weekly => saw_weekly_telemetry = true,
                     }
+                    let provider_usage =
+                        self.update_provider_usage(agent, *window, *used_percent, *reset_at);
+                    self.events.publish(AppEvent::ProviderUsageUpdated {
+                        agent,
+                        usage: provider_usage,
+                    });
                     let consumed =
                         enforcement_state.observe(*window, *used_percent, agent.as_str());
                     let _ = am_db::repos::task_budget_state::save(

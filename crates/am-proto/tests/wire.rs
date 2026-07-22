@@ -206,6 +206,26 @@ fn app_event_is_tagged_with_type_and_data() {
     // Round-trips back to the same variant.
     let back: AppEvent = serde_json::from_value(value).unwrap();
     assert!(matches!(back, AppEvent::TaskUpdated(t) if t.id == "t1"));
+
+    let usage = ProviderUsage {
+        five_hour: Some(ProviderUsageWindow {
+            used_percent: 42.5,
+            reset_at: Some(now()),
+        }),
+        weekly: None,
+    };
+    let usage_value = serde_json::to_value(AppEvent::ProviderUsageUpdated {
+        agent: AgentKind::ClaudeCode,
+        usage,
+    })
+    .unwrap();
+    assert_eq!(usage_value["type"], json!("provider_usage_updated"));
+    assert_eq!(usage_value["data"]["agent"], json!("claude_code"));
+    assert_eq!(
+        usage_value["data"]["usage"]["five_hour"]["used_percent"],
+        json!(42.5)
+    );
+    assert!(usage_value["data"]["usage"]["weekly"].is_null());
 }
 
 #[test]

@@ -20,7 +20,12 @@ export type LocalModelProvider = "ollama" | "lm_studio";
 export type TaskBudget =
   | { mode: "unlimited" }
   | { mode: "tokens"; limit_tokens: number }
-  | { mode: "weekly_percent"; limit_percent: number };
+  | { mode: "weekly_percent"; limit_percent: number }
+  | {
+      mode: "claude_percent";
+      five_hour_percent: number | null;
+      weekly_percent: number | null;
+    };
 
 export interface Project {
   id: string;
@@ -85,6 +90,16 @@ export interface ActivityEvent {
   ts: string;
 }
 
+export interface ProviderUsageWindow {
+  used_percent: number;
+  reset_at: string | null;
+}
+
+export interface ProviderUsage {
+  five_hour: ProviderUsageWindow | null;
+  weekly: ProviderUsageWindow | null;
+}
+
 export interface AgentStatus {
   kind: AgentKind;
   installed: boolean;
@@ -94,6 +109,7 @@ export interface AgentStatus {
   availability: AvailabilityState;
   reset_at: string | null;
   last_checked: string | null;
+  usage: ProviderUsage | null;
 }
 
 export interface AgentRunDefaults {
@@ -581,6 +597,7 @@ export type AppEvent =
   | { type: "agent_thread_updated"; data: AgentThread }
   | { type: "agent_thread_event"; data: AgentThreadEvent }
   | { type: "cloud_run_updated"; data: CloudRun }
+  | { type: "provider_usage_updated"; data: { agent: AgentKind; usage: ProviderUsage } }
   | { type: "approval_requested"; data: ApprovalRequest }
   | { type: "approval_resolved"; data: { id: string; resolution: ApprovalResolution; decision?: ApprovalDecision | null } }
   | { type: "work_node_created"; data: WorkNode }

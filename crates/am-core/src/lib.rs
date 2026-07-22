@@ -14,7 +14,7 @@ use am_db::Db;
 use am_proto::{
     ActivityEvent, AgentKind, AppEvent, KnowledgeDoc, KnowledgeDocUpdate, MemoryNote,
     MemoryNoteUpdate, NewActivity, NewKnowledgeDoc, NewMemoryNote, NewProject, NewTask, Project,
-    SearchHit, Task, TaskStatus, TaskUpdate,
+    ProviderUsage, SearchHit, Task, TaskStatus, TaskUpdate,
 };
 use serde_json::json;
 use tokio::sync::Mutex;
@@ -107,6 +107,10 @@ pub struct AppCore {
     cloud_checkpoint_marks: Arc<std::sync::Mutex<HashMap<String, Instant>>>,
     /// Last provider/remote poll per active cloud run.
     cloud_monitor_marks: Arc<std::sync::Mutex<HashMap<String, Instant>>>,
+    /// Latest sanitized account-level usage windows reported by providers.
+    /// This is process-local so raw or stale provider telemetry is never
+    /// persisted as application history.
+    provider_usage: Arc<std::sync::Mutex<HashMap<AgentKind, ProviderUsage>>>,
     /// Serialize cloud handoffs so a power event, manual action, and daemon
     /// shutdown cannot all checkpoint and launch the same thread concurrently.
     cloud_handoff_lock: Arc<tokio::sync::Mutex<()>>,
@@ -153,6 +157,7 @@ impl AppCore {
             layout_debounce: Arc::new(std::sync::Mutex::new(HashMap::new())),
             cloud_checkpoint_marks: Arc::new(std::sync::Mutex::new(HashMap::new())),
             cloud_monitor_marks: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            provider_usage: Arc::new(std::sync::Mutex::new(HashMap::new())),
             cloud_handoff_lock: Arc::new(tokio::sync::Mutex::new(())),
         };
         core.reconcile_stale_sandboxes();
@@ -187,6 +192,7 @@ impl AppCore {
             layout_debounce: self.layout_debounce.clone(),
             cloud_checkpoint_marks: self.cloud_checkpoint_marks.clone(),
             cloud_monitor_marks: self.cloud_monitor_marks.clone(),
+            provider_usage: self.provider_usage.clone(),
             cloud_handoff_lock: self.cloud_handoff_lock.clone(),
         }
     }
@@ -509,6 +515,7 @@ pub(crate) async fn test_core() -> AppCore {
         layout_debounce: Arc::new(std::sync::Mutex::new(HashMap::new())),
         cloud_checkpoint_marks: Arc::new(std::sync::Mutex::new(HashMap::new())),
         cloud_monitor_marks: Arc::new(std::sync::Mutex::new(HashMap::new())),
+        provider_usage: Arc::new(std::sync::Mutex::new(HashMap::new())),
         cloud_handoff_lock: Arc::new(tokio::sync::Mutex::new(())),
     }
 }

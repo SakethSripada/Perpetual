@@ -25,6 +25,8 @@ import type {
   LocalModelPolicy,
   LocalModelProvider,
   PermissionPolicy,
+  ProviderUsage,
+  ProviderUsageWindow,
   SandboxPolicy,
   TaskBudget,
   ThreadDetails,
@@ -2527,6 +2529,10 @@ function Composer(props: ComposerProps) {
               <BudgetMenu
                 budget={props.taskBudget}
                 agent={props.agent}
+                usage={
+                  props.snapshot?.agents.find((item) => item.kind === props.agent)
+                    ?.usage ?? null
+                }
                 backend={props.backend}
                 localOn={localOn}
                 authenticated={
@@ -2757,9 +2763,109 @@ function Composer(props: ComposerProps) {
   );
 }
 
+function ProviderUsageSummary(props: {
+  agent: AgentKind;
+  usage: ProviderUsage | null;
+}) {
+  const windows: { key: string; label: string; window: ProviderUsageWindow | null }[] =
+    props.agent === "codex"
+      ? [{ key: "weekly", label: "Codex · 7-day", window: props.usage?.weekly ?? null }]
+      : [
+          {
+            key: "five_hour",
+            label: "Claude · 5-hour",
+            window: props.usage?.five_hour ?? null,
+          },
+          {
+            key: "weekly",
+            label: "Claude · 7-day",
+            window: props.usage?.weekly ?? null,
+          },
+        ];
+
+  return (
+    <section className="usage-summary" aria-label="Current provider usage">
+      <div className="usage-summary-head">
+        <span>Current usage</span>
+        <small>Provider-reported</small>
+      </div>
+      <div className="usage-summary-grid">
+        {windows.map(({ key, label, window }) => (
+          <UsageWindowCard key={key} label={label} window={window} />
+        ))}
+      </div>
+      <p className="usage-summary-note">
+        {props.agent === "codex"
+          ? "Shows the Codex account 7-day window when it is reported."
+          : "Claude subscription windows can appear independently after the first response."}
+      </p>
+    </section>
+  );
+}
+
+function UsageWindowCard(props: {
+  label: string;
+  window: ProviderUsageWindow | null;
+}) {
+  if (!props.window) {
+    return (
+      <div className="usage-window missing">
+        <div className="usage-window-head">
+          <span className="usage-window-label">{props.label}</span>
+          <span className="usage-window-missing">Not reported yet</span>
+        </div>
+        <span className="usage-window-reset">Available after a Host response</span>
+      </div>
+    );
+  }
+
+  const used = Number.isFinite(props.window.used_percent)
+    ? Math.max(0, Math.min(100, props.window.used_percent))
+    : 0;
+  const level = used >= 85 ? " high" : used >= 65 ? " medium" : "";
+  return (
+    <div className="usage-window">
+      <div className="usage-window-head">
+        <span className="usage-window-label">{props.label}</span>
+        <strong className="usage-window-value">
+          {formatUsagePercent(used)} used
+        </strong>
+      </div>
+      <div
+        className="usage-bar"
+        role="progressbar"
+        aria-label={`${props.label} usage`}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={used}
+      >
+        <span className={`usage-bar-fill${level}`} style={{ width: `${used}%` }} />
+      </div>
+      <span className="usage-window-reset">{usageResetLabel(props.window.reset_at)}</span>
+    </div>
+  );
+}
+
+function formatUsagePercent(value: number): string {
+  return `${value % 1 === 0 ? value.toFixed(0) : value.toFixed(1)}%`;
+}
+
+function usageResetLabel(resetAt: string | null): string {
+  if (!resetAt) return "Reset time unavailable";
+  const resetMs = Date.parse(resetAt);
+  if (!Number.isFinite(resetMs)) return "Reset time unavailable";
+  const minutes = Math.ceil((resetMs - Date.now()) / 60_000);
+  if (minutes <= 0) return "Resetting now";
+  if (minutes < 60) return `Resets in ${minutes}m`;
+  const hours = Math.ceil(minutes / 60);
+  if (hours < 24) return `Resets in ${hours}h`;
+  return `Resets in ${Math.ceil(hours / 24)}d`;
+}
+
 function BudgetMenu(props: {
   budget: TaskBudget;
   agent: AgentKind;
+  usage: ProviderUsage | null;
   backend: ExecutionBackend;
   localOn: boolean;
   authenticated: boolean;
@@ -2844,6 +2950,7 @@ function BudgetMenu(props: {
       {props.isRunning && (
         <div className="budget-note">Stop the session to adjust its cap.</div>
       )}
+      <ProviderUsageSummary agent={props.agent} usage={props.usage} />
       <button
         type="button"
         role="option"

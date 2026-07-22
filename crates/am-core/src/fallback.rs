@@ -172,6 +172,7 @@ mod tests {
             },
             reset_at: None,
             last_checked: None,
+            usage: None,
         }
     }
 

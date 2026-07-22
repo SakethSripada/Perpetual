@@ -2,8 +2,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AgentThread, AgentThreadEvent, ApprovalDecision, ApprovalRequest, ApprovalResolution, CloudRun,
-    Project, Repo, SessionEvent, Task, WorkNode, WorkPlanRun,
+    AgentKind, AgentThread, AgentThreadEvent, ApprovalDecision, ApprovalRequest,
+    ApprovalResolution, CloudRun, Project, ProviderUsage, Repo, SessionEvent, Task, WorkNode,
+    WorkPlanRun,
 };
 
 /// A persisted activity-log entry. Everything that happens inside a project is
@@ -58,6 +59,11 @@ pub enum AppEvent {
     CloudRunUpdated(CloudRun),
     /// An agent is waiting for the user to allow or deny an action.
     ApprovalRequested(ApprovalRequest),
+    /// A sanitized provider usage update for the composer budget menu.
+    ProviderUsageUpdated {
+        agent: AgentKind,
+        usage: ProviderUsage,
+    },
     /// A pending approval was resolved (decided, cancelled, or timed out) and
     /// should be removed from the UI.
     ApprovalResolved {
