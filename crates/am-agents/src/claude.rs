@@ -593,6 +593,11 @@ pub(crate) fn parse_line(v: &Value) -> Vec<NormalizedEvent> {
 /// without exposing the provider payload.
 fn parse_quota_windows(value: &Value) -> Vec<NormalizedEvent> {
     let mut events = Vec::new();
+    if value.get("rate_limit_type").is_some() || value.get("rateLimitType").is_some() {
+        if let Some(event) = parse_quota_sample(value, None) {
+            events.push(event);
+        }
+    }
     if let Some(info) = value.get("rate_limit_info") {
         if let Some(event) = parse_quota_sample(info, None) {
             events.push(event);
@@ -612,17 +617,31 @@ fn parse_quota_windows(value: &Value) -> Vec<NormalizedEvent> {
             }
         }
     }
+    for key in ["data", "event", "payload"] {
+        if let Some(nested) = value.get(key) {
+            events.extend(parse_quota_windows(nested));
+        }
+    }
     events
 }
 
 fn parse_quota_sample(value: &Value, window_hint: Option<&str>) -> Option<NormalizedEvent> {
     let map = value.as_object()?;
+    let raw = map.get("raw").and_then(Value::as_object);
     let window_name = map
         .get("rate_limit_type")
         .or_else(|| map.get("rateLimitType"))
         .or_else(|| map.get("window"))
         .or_else(|| map.get("window_type"))
         .and_then(Value::as_str)
+        .or_else(|| {
+            raw.and_then(|raw| {
+                raw.get("rate_limit_type")
+                    .or_else(|| raw.get("rateLimitType"))
+                    .or_else(|| raw.get("window"))
+                    .and_then(Value::as_str)
+            })
+        })
         .or(window_hint)?
         .to_ascii_lowercase();
     let window = if window_name.contains("five") || window_name.contains("5h") {
@@ -642,12 +661,20 @@ fn parse_quota_sample(value: &Value, window_hint: Option<&str>) -> Option<Normal
         .or_else(|| map.get("percent_used"))
         .or_else(|| map.get("percentUsed"))
         .or_else(|| map.get("utilization"))
-        .and_then(Value::as_f64)
+        .and_then(|value| {
+            value
+                .as_f64()
+                .or_else(|| value.as_str().and_then(|text| text.parse().ok()))
+        })
         .or_else(|| {
             map.get("remaining_percentage")
                 .or_else(|| map.get("remaining_percent"))
                 .or_else(|| map.get("remainingPercent"))
-                .and_then(Value::as_f64)
+                .and_then(|value| {
+                    value
+                        .as_f64()
+                        .or_else(|| value.as_str().and_then(|text| text.parse().ok()))
+                })
                 .map(|remaining| 100.0 - remaining)
         })?;
     let used = if map.get("utilization").is_some() && (0.0..=1.0).contains(&used) {
@@ -1079,6 +1106,25 @@ mod tests {
                 used_percent,
                 ..
             }] if (*used_percent - 32.0).abs() < f64::EPSILON
+        ));
+
+        let events = parse_line(&json!({
+            "type": "rate_limit_event",
+            "data": {
+                "rateLimitInfo": {
+                    "rateLimitType": "five_hour",
+                    "utilization": "0.25",
+                    "resetsAt": 1785000000_i64
+                }
+            }
+        }));
+        assert!(matches!(
+            events.as_slice(),
+            [NormalizedEvent::QuotaWindow {
+                window: QuotaWindowKind::FiveHour,
+                used_percent,
+                reset_at: Some(_),
+            }] if (*used_percent - 25.0).abs() < f64::EPSILON
         ));
     }
 

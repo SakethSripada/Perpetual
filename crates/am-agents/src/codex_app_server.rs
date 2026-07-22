@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::ChildStdin;
@@ -194,6 +195,14 @@ async fn drive(
         },
     };
 
+    // Codex may update account limits only after the response completes. Read
+    // them once more so unlimited runs also populate the usage menu.
+    let _ = tokio::time::timeout(
+        Duration::from_secs(2),
+        refresh_quota(&rpc, &events_tx, false),
+    )
+    .await;
+
     // Tear the child down and finish the stream.
     child.terminate_group();
     if tokio::time::timeout(TERMINATE_GRACE, child.wait())
@@ -212,6 +221,29 @@ async fn drive(
     writer_task.abort();
     if let Some(task) = stderr_task {
         task.abort();
+    }
+}
+
+async fn refresh_quota(
+    rpc: &Rpc,
+    events_tx: &mpsc::Sender<NormalizedEvent>,
+    required: bool,
+) -> Result<(), String> {
+    let quota = match rpc.request("account/rateLimits/read", json!({})).await {
+        Ok(quota) => quota,
+        Err(err) if required => {
+            return Err(format!("Codex did not provide a 7-day usage window: {err}"));
+        }
+        Err(_) => return Ok(()),
+    };
+    if let Some(event) = parse_quota_window(&quota) {
+        let _ = events_tx.send(event).await;
+        return Ok(());
+    }
+    if required {
+        Err("Codex did not provide a 7-day usage window".into())
+    } else {
+        Ok(())
     }
 }
 
@@ -267,17 +299,13 @@ async fn run_turn(
         })
         .await;
 
-    if let Some(am_proto::TaskBudget::WeeklyPercent { .. }) =
-        spec.policy.as_ref().and_then(|p| p.task_budget.as_ref())
-    {
-        let quota = rpc
-            .request("account/rateLimits/read", json!({}))
-            .await
-            .map_err(|err| format!("Codex did not provide a 7-day usage window: {err}"))?;
-        let event = parse_quota_window(&quota)
-            .ok_or_else(|| "Codex did not provide a 7-day usage window".to_string())?;
-        let _ = events_tx.send(event).await;
-    }
+    let requires_weekly_quota = matches!(
+        spec.policy
+            .as_ref()
+            .and_then(|policy| policy.task_budget.as_ref()),
+        Some(am_proto::TaskBudget::WeeklyPercent { .. })
+    );
+    refresh_quota(rpc, events_tx, requires_weekly_quota).await?;
 
     let turn = rpc
         .request(
@@ -857,9 +885,13 @@ fn parse_quota_window(value: &Value) -> Option<NormalizedEvent> {
         }
     }
     fn number(map: &serde_json::Map<String, Value>, names: &[&str]) -> Option<f64> {
-        names
-            .iter()
-            .find_map(|name| map.get(*name).and_then(Value::as_f64))
+        names.iter().find_map(|name| {
+            map.get(*name).and_then(|value| {
+                value
+                    .as_f64()
+                    .or_else(|| value.as_str().and_then(|text| text.parse().ok()))
+            })
+        })
     }
     let candidate = find_weekly(value)?;
     let map = candidate.as_object()?;
@@ -871,8 +903,28 @@ fn parse_quota_window(value: &Value) -> Option<NormalizedEvent> {
     Some(NormalizedEvent::QuotaWindow {
         window: QuotaWindowKind::Weekly,
         used_percent: used.clamp(0.0, 100.0),
-        reset_at: None,
+        reset_at: map
+            .get("reset_at")
+            .or_else(|| map.get("resetAt"))
+            .or_else(|| map.get("resets_at"))
+            .or_else(|| map.get("resetsAt"))
+            .and_then(parse_reset_at),
     })
+}
+
+fn parse_reset_at(value: &Value) -> Option<DateTime<Utc>> {
+    if let Some(text) = value.as_str() {
+        return DateTime::parse_from_rfc3339(text)
+            .ok()
+            .map(|value| value.with_timezone(&Utc));
+    }
+    let seconds = value.as_f64()?;
+    let seconds = if seconds > 10_000_000_000.0 {
+        seconds / 1_000.0
+    } else {
+        seconds
+    };
+    DateTime::from_timestamp(seconds as i64, 0)
 }
 
 fn truncate(s: &str, max: usize) -> String {
@@ -1065,13 +1117,17 @@ mod tests {
             "primary": {
                 "window": "7d",
                 "usedPercent": 18.5,
-                "remainingPercent": 81.5
+                "remainingPercent": 81.5,
+                "resetAt": 1785000000_i64
             }
         }));
         assert!(matches!(
             event,
-            Some(NormalizedEvent::QuotaWindow { used_percent, .. })
-                if (used_percent - 18.5).abs() < f64::EPSILON
+            Some(NormalizedEvent::QuotaWindow {
+                used_percent,
+                reset_at: Some(_),
+                ..
+            }) if (used_percent - 18.5).abs() < f64::EPSILON
         ));
     }
 

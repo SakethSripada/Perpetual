@@ -2785,20 +2785,11 @@ function ProviderUsageSummary(props: {
 
   return (
     <section className="usage-summary" aria-label="Current provider usage">
-      <div className="usage-summary-head">
-        <span>Current usage</span>
-        <small>Provider-reported</small>
-      </div>
       <div className="usage-summary-grid">
         {windows.map(({ key, label, window }) => (
           <UsageWindowCard key={key} label={label} window={window} />
         ))}
       </div>
-      <p className="usage-summary-note">
-        {props.agent === "codex"
-          ? "Shows the Codex account 7-day window when it is reported."
-          : "Claude subscription windows can appear independently after the first response."}
-      </p>
     </section>
   );
 }
@@ -2814,7 +2805,6 @@ function UsageWindowCard(props: {
           <span className="usage-window-label">{props.label}</span>
           <span className="usage-window-missing">Not reported yet</span>
         </div>
-        <span className="usage-window-reset">Available after a Host response</span>
       </div>
     );
   }
@@ -2943,10 +2933,6 @@ function BudgetMenu(props: {
   return (
     <div className="menu budget-menu" role="listbox" aria-label="Session budget">
       <div className="menu-head">Session budget</div>
-      <p className="budget-helper">
-        Approximate target across this session. The agent wraps up near it; one
-        provider response may overshoot.
-      </p>
       {props.isRunning && (
         <div className="budget-note">Stop the session to adjust its cap.</div>
       )}
@@ -3165,7 +3151,7 @@ function BudgetMenu(props: {
           window.
         </div>
       )}
-      {hostSupported && props.agent === "claude_code" && (
+      {hostSupported && props.agent === "claude_code" && claudeBudget && (
         <div className="budget-note">
           Claude percentages use rolling 5-hour and 7-day subscription windows;
           each selected window is enforced independently.
