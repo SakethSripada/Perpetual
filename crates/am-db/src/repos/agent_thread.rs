@@ -156,7 +156,15 @@ fn parse_model_target(value: Option<String>) -> Result<Option<ModelTargetKind>, 
 }
 
 fn parse_task_budget(value: String) -> Result<TaskBudget, DbError> {
-    serde_json::from_str(&value).map_err(|err| DbError::Serde(err.to_string()))
+    let raw: serde_json::Value =
+        serde_json::from_str(&value).map_err(|err| DbError::Serde(err.to_string()))?;
+    // Older local databases may still contain the experimental Claude
+    // percentage shape. Claude subscription windows are not a reliable host
+    // contract, so safely migrate that legacy setting to no limit.
+    if raw.get("mode").and_then(serde_json::Value::as_str) == Some("claude_percent") {
+        return Ok(TaskBudget::Unlimited);
+    }
+    serde_json::from_value(raw).map_err(|err| DbError::Serde(err.to_string()))
 }
 
 const SELECT: &str = "SELECT id, project_id, group_id, title, status, active_agent, preferred_agent, \

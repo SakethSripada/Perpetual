@@ -1119,7 +1119,6 @@ impl AppCore {
         let mut limit_reset_at = None;
         let mut budget_exhausted = false;
         let mut saw_token_telemetry = false;
-        let mut saw_five_hour_telemetry = false;
         let mut saw_weekly_telemetry = false;
         let mut usage_reconciler = crate::budget::UsageReconciler::default();
         let mut streaming_assistant: Option<AgentThreadEvent> = None;
@@ -1269,9 +1268,8 @@ impl AppCore {
                     used_percent,
                     reset_at,
                 } => {
-                    match window {
-                        QuotaWindowKind::FiveHour => saw_five_hour_telemetry = true,
-                        QuotaWindowKind::Weekly => saw_weekly_telemetry = true,
+                    if *window == QuotaWindowKind::Weekly {
+                        saw_weekly_telemetry = true;
                     }
                     let provider_usage =
                         self.update_provider_usage(agent, *window, *used_percent, *reset_at);
@@ -1424,13 +1422,6 @@ impl AppCore {
                             TaskBudget::Unlimited => true,
                             TaskBudget::Tokens { .. } => saw_token_telemetry,
                             TaskBudget::WeeklyPercent { .. } => saw_weekly_telemetry,
-                            TaskBudget::ClaudePercent {
-                                five_hour_percent,
-                                weekly_percent,
-                            } => {
-                                five_hour_percent.is_none_or(|_| saw_five_hour_telemetry)
-                                    && weekly_percent.is_none_or(|_| saw_weekly_telemetry)
-                            }
                         };
                         thread.status = if budget_exhausted
                             || (!usage_budget.is_unlimited()
@@ -1544,13 +1535,6 @@ impl AppCore {
             TaskBudget::Unlimited => true,
             TaskBudget::Tokens { .. } => saw_token_telemetry,
             TaskBudget::WeeklyPercent { .. } => saw_weekly_telemetry,
-            TaskBudget::ClaudePercent {
-                five_hour_percent,
-                weekly_percent,
-            } => {
-                five_hour_percent.is_none_or(|_| saw_five_hour_telemetry)
-                    && weekly_percent.is_none_or(|_| saw_weekly_telemetry)
-            }
         };
         if budget_exhausted
             || (!usage_budget.is_unlimited()
@@ -2825,11 +2809,6 @@ fn validate_runtime_budget(
     if matches!(budget, TaskBudget::WeeklyPercent { .. }) && agent != AgentKind::Codex {
         return Err(CoreError::Other(
             "Weekly % budgets currently require Codex with ChatGPT account usage telemetry.".into(),
-        ));
-    }
-    if matches!(budget, TaskBudget::ClaudePercent { .. }) && agent != AgentKind::ClaudeCode {
-        return Err(CoreError::Other(
-            "Claude percentage budgets require Claude with rolling 5-hour or 7-day usage telemetry.".into(),
         ));
     }
     Ok(())

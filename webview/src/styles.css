@@ -1420,53 +1420,6 @@ textarea {
   width: 13px;
   height: 13px;
 }
-.budget-windows {
-  display: grid;
-  gap: 7px;
-  padding: 0 10px 7px 38px;
-}
-.budget-window-card {
-  padding: 8px;
-  border: 1px solid var(--am-border-soft);
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--am-surface-2) 62%, transparent);
-}
-.budget-window-toggle {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  cursor: pointer;
-}
-.budget-window-toggle input {
-  accent-color: var(--am-accent);
-}
-.budget-window-toggle > span {
-  display: grid;
-  gap: 1px;
-  min-width: 0;
-}
-.budget-window-toggle strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
-}
-.budget-window-toggle small {
-  color: var(--am-muted);
-  font-size: 10px;
-}
-.budget-window-toggle b {
-  color: var(--vscode-foreground);
-  font-size: 11px;
-  white-space: nowrap;
-}
-.budget-presets.compact {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  padding: 8px 0 0;
-}
-
 @container (max-width: 460px) {
   .usage-summary-grid {
     grid-template-columns: 1fr;

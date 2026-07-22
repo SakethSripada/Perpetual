@@ -56,24 +56,12 @@ pub(crate) fn quota_limit(budget: &TaskBudget, window: QuotaWindowKind) -> Optio
         (TaskBudget::WeeklyPercent { limit_percent }, QuotaWindowKind::Weekly) => {
             Some(f64::from(*limit_percent))
         }
-        (
-            TaskBudget::ClaudePercent {
-                five_hour_percent, ..
-            },
-            QuotaWindowKind::FiveHour,
-        ) => five_hour_percent.map(f64::from),
-        (TaskBudget::ClaudePercent { weekly_percent, .. }, QuotaWindowKind::Weekly) => {
-            weekly_percent.map(f64::from)
-        }
         _ => None,
     }
 }
 
 pub(crate) fn is_percentage_budget(budget: &TaskBudget) -> bool {
-    matches!(
-        budget,
-        TaskBudget::WeeklyPercent { .. } | TaskBudget::ClaudePercent { .. }
-    )
+    matches!(budget, TaskBudget::WeeklyPercent { .. })
 }
 
 pub(crate) fn validate_change(
@@ -105,32 +93,10 @@ pub(crate) fn validate_change(
                 limit_percent: after,
             },
         ) if after >= before => Ok(()),
-        (
-            TaskBudget::ClaudePercent {
-                five_hour_percent: before_five_hour,
-                weekly_percent: before_weekly,
-            },
-            TaskBudget::ClaudePercent {
-                five_hour_percent: after_five_hour,
-                weekly_percent: after_weekly,
-            },
-        ) if percent_cap_is_increased(*before_five_hour, *after_five_hour)
-            && percent_cap_is_increased(*before_weekly, *after_weekly) =>
-        {
-            Ok(())
-        }
         _ => Err(
             "After the first turn, a task budget can only be increased or turned off while stopped."
                 .into(),
         ),
-    }
-}
-
-fn percent_cap_is_increased(before: Option<u8>, after: Option<u8>) -> bool {
-    match (before, after) {
-        (None, _) => true,
-        (Some(before), Some(after)) => after >= before,
-        (Some(_), None) => false,
     }
 }
 
@@ -177,22 +143,6 @@ pub(crate) fn launch_instruction(budget: &TaskBudget) -> Option<String> {
         TaskBudget::WeeklyPercent { limit_percent } => Some(format!(
             "Session task budget: allow this session to increase the account's 7-day usage by approximately {limit_percent} percentage points across all turns and provider changes. Prioritize the highest-value work and reserve capacity for validation plus a concise completed/remaining/current-state response. This is a graceful response-boundary target, so provider accounting may vary by one response."
         )),
-        TaskBudget::ClaudePercent {
-            five_hour_percent,
-            weekly_percent,
-        } => {
-            let mut windows = Vec::new();
-            if let Some(value) = five_hour_percent {
-                windows.push(format!("Claude rolling 5-hour usage by approximately {value} percentage points"));
-            }
-            if let Some(value) = weekly_percent {
-                windows.push(format!("Claude 7-day usage by approximately {value} percentage points"));
-            }
-            Some(format!(
-                "Session task budget: allow this session to increase {} across all turns. Prioritize the highest-value work and reserve capacity for validation plus a concise completed/remaining/current-state response. This is a graceful response-boundary target, so provider accounting may vary by one response.",
-                windows.join(" and ")
-            ))
-        }
     }
 }
 
@@ -247,31 +197,5 @@ mod tests {
         assert_eq!(state.observe(QuotaWindowKind::Weekly, 43.5, "codex"), 3.5);
         assert_eq!(state.observe(QuotaWindowKind::Weekly, 41.0, "codex"), 3.5);
         assert_eq!(state.observe(QuotaWindowKind::Weekly, 45.0, "codex"), 5.0);
-    }
-
-    #[test]
-    fn claude_caps_can_be_topped_up_independently() {
-        let current = TaskBudget::ClaudePercent {
-            five_hour_percent: Some(5),
-            weekly_percent: Some(10),
-        };
-        assert!(validate_change(
-            &current,
-            &TaskBudget::ClaudePercent {
-                five_hour_percent: Some(8),
-                weekly_percent: Some(10),
-            },
-            true
-        )
-        .is_ok());
-        assert!(validate_change(
-            &current,
-            &TaskBudget::ClaudePercent {
-                five_hour_percent: Some(5),
-                weekly_percent: None,
-            },
-            true
-        )
-        .is_err());
     }
 }

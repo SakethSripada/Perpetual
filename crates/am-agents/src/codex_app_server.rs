@@ -195,10 +195,11 @@ async fn drive(
         },
     };
 
-    // Codex may update account limits only after the response completes. Read
-    // them once more so unlimited runs also populate the usage menu.
+    // Codex may update account limits only after the response completes. Make
+    // this a short best-effort refresh so a simple response is not held open
+    // by an optional usage lookup.
     let _ = tokio::time::timeout(
-        Duration::from_secs(2),
+        Duration::from_millis(750),
         refresh_quota(&rpc, &events_tx, false),
     )
     .await;
@@ -305,7 +306,12 @@ async fn run_turn(
             .and_then(|policy| policy.task_budget.as_ref()),
         Some(am_proto::TaskBudget::WeeklyPercent { .. })
     );
-    refresh_quota(rpc, events_tx, requires_weekly_quota).await?;
+    if requires_weekly_quota {
+        // Weekly budgets must have a usable account window before their prompt
+        // is sent. Unlimited and token-targeted turns do not need this extra
+        // synchronous RPC on the critical path.
+        refresh_quota(rpc, events_tx, true).await?;
+    }
 
     let turn = rpc
         .request(

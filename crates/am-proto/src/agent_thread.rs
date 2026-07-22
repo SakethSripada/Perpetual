@@ -20,13 +20,6 @@ pub enum TaskBudget {
     WeeklyPercent {
         limit_percent: u8,
     },
-    /// Claude subscription usage is exposed as separate rolling five-hour
-    /// and seven-day windows. Either window may be selected, or both may be
-    /// selected together.
-    ClaudePercent {
-        five_hour_percent: Option<u8>,
-        weekly_percent: Option<u8>,
-    },
 }
 
 impl TaskBudget {
@@ -49,26 +42,6 @@ impl TaskBudget {
             Self::WeeklyPercent { limit_percent } if (1..=100).contains(limit_percent) => Ok(()),
             Self::WeeklyPercent { .. } => {
                 Err("Weekly budgets must be a whole percentage from 1% through 100%.".into())
-            }
-            Self::ClaudePercent {
-                five_hour_percent,
-                weekly_percent,
-            } => {
-                if five_hour_percent.is_none() && weekly_percent.is_none() {
-                    return Err("Select a Claude 5-hour budget, weekly budget, or both.".into());
-                }
-                if five_hour_percent
-                    .as_ref()
-                    .is_some_and(|value| !(1..=100).contains(value))
-                    || weekly_percent
-                        .as_ref()
-                        .is_some_and(|value| !(1..=100).contains(value))
-                {
-                    return Err(
-                        "Claude budgets must be whole percentages from 1% through 100%.".into(),
-                    );
-                }
-                Ok(())
             }
         }
     }

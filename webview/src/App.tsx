@@ -2533,6 +2533,10 @@ function Composer(props: ComposerProps) {
                   props.snapshot?.agents.find((item) => item.kind === props.agent)
                     ?.usage ?? null
                 }
+                hasMessages={
+                  props.snapshot?.details?.events.some((event) => event.role === "user") ??
+                  false
+                }
                 backend={props.backend}
                 localOn={localOn}
                 authenticated={
@@ -2766,28 +2770,25 @@ function Composer(props: ComposerProps) {
 function ProviderUsageSummary(props: {
   agent: AgentKind;
   usage: ProviderUsage | null;
+  hasMessages: boolean;
 }) {
-  const windows: { key: string; label: string; window: ProviderUsageWindow | null }[] =
-    props.agent === "codex"
-      ? [{ key: "weekly", label: "Codex · 7-day", window: props.usage?.weekly ?? null }]
-      : [
-          {
-            key: "five_hour",
-            label: "Claude · 5-hour",
-            window: props.usage?.five_hour ?? null,
-          },
-          {
-            key: "weekly",
-            label: "Claude · 7-day",
-            window: props.usage?.weekly ?? null,
-          },
-        ];
+  if (props.agent !== "codex") return null;
+  const windows: { key: string; label: string; window: ProviderUsageWindow | null }[] = [
+    { key: "weekly", label: "Codex · 7-day", window: props.usage?.weekly ?? null },
+  ];
 
   return (
     <section className="usage-summary" aria-label="Current provider usage">
       <div className="usage-summary-grid">
         {windows.map(({ key, label, window }) => (
-          <UsageWindowCard key={key} label={label} window={window} />
+          <UsageWindowCard
+            key={key}
+            label={label}
+            window={window}
+            missingLabel={
+              props.hasMessages ? "Not reported yet" : "Send a message to see usage"
+            }
+          />
         ))}
       </div>
     </section>
@@ -2797,13 +2798,16 @@ function ProviderUsageSummary(props: {
 function UsageWindowCard(props: {
   label: string;
   window: ProviderUsageWindow | null;
+  missingLabel?: string;
 }) {
   if (!props.window) {
     return (
       <div className="usage-window missing">
         <div className="usage-window-head">
           <span className="usage-window-label">{props.label}</span>
-          <span className="usage-window-missing">Not reported yet</span>
+          <span className="usage-window-missing">
+            {props.missingLabel ?? "Not reported yet"}
+          </span>
         </div>
       </div>
     );
@@ -2857,6 +2861,7 @@ function BudgetMenu(props: {
   budget: TaskBudget;
   agent: AgentKind;
   usage: ProviderUsage | null;
+  hasMessages: boolean;
   backend: ExecutionBackend;
   localOn: boolean;
   authenticated: boolean;
@@ -2868,18 +2873,6 @@ function BudgetMenu(props: {
 }) {
   const hostSupported = props.backend === "host" && !props.localOn;
   const weeklySupported = hostSupported && props.agent === "codex" && props.authenticated;
-  const claudeSupported = hostSupported && props.agent === "claude_code";
-  const claudeBudget =
-    props.budget.mode === "claude_percent" ? props.budget : null;
-  const [claudeCustomWindow, setClaudeCustomWindow] = useState<
-    "five_hour" | "weekly"
-  >(claudeBudget?.five_hour_percent === null ? "weekly" : "five_hour");
-  const customWindow =
-    claudeBudget?.five_hour_percent === null && claudeCustomWindow === "five_hour"
-      ? "weekly"
-      : claudeBudget?.weekly_percent === null && claudeCustomWindow === "weekly"
-        ? "five_hour"
-        : claudeCustomWindow;
   const selectedTokenBudget =
     props.budget.mode === "tokens" ? props.budget.limit_tokens : null;
   const selectedWeeklyBudget =
@@ -2888,26 +2881,7 @@ function BudgetMenu(props: {
     ? "Budgets require a hosted agent; local model runs are not metered here."
     : props.backend !== "host"
       ? "Budgets require Host execution."
-      : props.agent === "claude_code"
-        ? "Claude percentage budgets require Claude.ai subscription rate-limit telemetry. API-key runs support token targets only."
-        : "Weekly % requires Codex Host with a reported 7-day account usage window.";
-  const updateClaudeWindow = (
-    window: "five_hour" | "weekly",
-    value: number | null,
-    close = false,
-  ) => {
-    if (!claudeBudget) return;
-    props.onSelect(
-      {
-        mode: "claude_percent",
-        five_hour_percent:
-          window === "five_hour" ? value : claudeBudget.five_hour_percent,
-        weekly_percent:
-          window === "weekly" ? value : claudeBudget.weekly_percent,
-      },
-      close,
-    );
-  };
+      : "Weekly % requires Codex Host with a reported 7-day account usage window.";
   const applyCustom = () => {
     const normalized = props.customValue.replace(/[,\s]/g, "");
     if (!/^\d+$/.test(normalized)) {
@@ -2923,14 +2897,6 @@ function BudgetMenu(props: {
       props.onSelect({ mode: "weekly_percent", limit_percent: value });
       return;
     }
-    if (props.budget.mode === "claude_percent") {
-      if (value < 1 || value > 100) {
-        props.onNotice("Claude budgets must be between 1% and 100%.");
-        return;
-      }
-      updateClaudeWindow(customWindow, value);
-      return;
-    }
     if (value < 10_000 || value > 10_000_000) {
       props.onNotice("Token budgets must be between 10k and 10m tokens.");
       return;
@@ -2943,7 +2909,11 @@ function BudgetMenu(props: {
       {props.isRunning && (
         <div className="budget-note">Stop the session to adjust its cap.</div>
       )}
-      <ProviderUsageSummary agent={props.agent} usage={props.usage} />
+      <ProviderUsageSummary
+        agent={props.agent}
+        usage={props.usage}
+        hasMessages={props.hasMessages}
+      />
       <button
         type="button"
         role="option"
@@ -3029,128 +2999,6 @@ function BudgetMenu(props: {
           )}
         </>
       )}
-      {(props.agent === "claude_code" || props.budget.mode === "claude_percent") && (
-      <button
-        type="button"
-        role="option"
-        aria-selected={props.budget.mode === "claude_percent"}
-        disabled={!claudeSupported}
-        className={
-          props.budget.mode === "claude_percent"
-            ? "menu-item selected"
-            : "menu-item"
-        }
-        title={!claudeSupported ? unsupportedReason : undefined}
-        onClick={() =>
-          props.onSelect(
-            {
-              mode: "claude_percent",
-              five_hour_percent: 5,
-              weekly_percent: null,
-            },
-            false,
-          )
-        }
-      >
-        <Icon name="gauge" />
-        <span>Claude windows</span>
-        {props.budget.mode === "claude_percent" && <Icon name="check" />}
-      </button>
-      )}
-      {claudeBudget && claudeSupported && (
-        <div className="budget-windows" aria-label="Claude usage windows">
-          <div className="budget-window-card">
-            <label className="budget-window-toggle">
-              <input
-                type="checkbox"
-                checked={claudeBudget.five_hour_percent !== null}
-                onChange={(event) => {
-                  const value = event.target.checked
-                    ? claudeBudget.five_hour_percent ?? 5
-                    : null;
-                  if (value === null && claudeBudget.weekly_percent === null) {
-                    props.onNotice("Keep one Claude usage window selected.");
-                    return;
-                  }
-                  updateClaudeWindow("five_hour", value, false);
-                }}
-              />
-              <span>
-                <strong>Rolling 5-hour</strong>
-                <small>Short-session allowance</small>
-              </span>
-              <b>
-                {claudeBudget.five_hour_percent === null
-                  ? "Off"
-                  : `${claudeBudget.five_hour_percent}%`}
-              </b>
-            </label>
-            {claudeBudget.five_hour_percent !== null && (
-              <div className="budget-presets compact">
-                {[1, 2, 5, 10].map((value) => (
-                  <button
-                    key={value}
-                    type="button"
-                    className={
-                      claudeBudget.five_hour_percent === value
-                        ? "budget-preset selected"
-                        : "budget-preset"
-                    }
-                    onClick={() => updateClaudeWindow("five_hour", value, false)}
-                  >
-                    {value}%
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          <div className="budget-window-card">
-            <label className="budget-window-toggle">
-              <input
-                type="checkbox"
-                checked={claudeBudget.weekly_percent !== null}
-                onChange={(event) => {
-                  const value = event.target.checked
-                    ? claudeBudget.weekly_percent ?? 5
-                    : null;
-                  if (value === null && claudeBudget.five_hour_percent === null) {
-                    props.onNotice("Keep one Claude usage window selected.");
-                    return;
-                  }
-                  updateClaudeWindow("weekly", value, false);
-                }}
-              />
-              <span>
-                <strong>7-day weekly</strong>
-                <small>Longer account allowance</small>
-              </span>
-              <b>
-                {claudeBudget.weekly_percent === null
-                  ? "Off"
-                  : `${claudeBudget.weekly_percent}%`}
-              </b>
-            </label>
-            {claudeBudget.weekly_percent !== null && (
-              <div className="budget-presets compact">
-                {[1, 2, 5, 10].map((value) => (
-                  <button
-                    key={value}
-                    type="button"
-                    className={
-                      claudeBudget.weekly_percent === value
-                        ? "budget-preset selected"
-                        : "budget-preset"
-                    }
-                    onClick={() => updateClaudeWindow("weekly", value, false)}
-                  >
-                    {value}%
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
       {!hostSupported && <div className="budget-note">{unsupportedReason}</div>}
       {hostSupported && props.agent === "codex" && !weeklySupported && (
         <div className="budget-note">
@@ -3159,27 +3007,7 @@ function BudgetMenu(props: {
         </div>
       )}
       {props.budget.mode !== "unlimited" && hostSupported && (
-        <div className={`budget-custom${claudeBudget ? " with-window" : ""}`}>
-          {claudeBudget && claudeSupported && (
-            <div className="budget-custom-window" role="group" aria-label="Custom Claude window">
-              <button
-                type="button"
-                className={customWindow === "five_hour" ? "selected" : ""}
-                onClick={() => setClaudeCustomWindow("five_hour")}
-                disabled={claudeBudget.five_hour_percent === null}
-              >
-                5h
-              </button>
-              <button
-                type="button"
-                className={customWindow === "weekly" ? "selected" : ""}
-                onClick={() => setClaudeCustomWindow("weekly")}
-                disabled={claudeBudget.weekly_percent === null}
-              >
-                7d
-              </button>
-            </div>
-          )}
+        <div className="budget-custom">
           <input
             type="text"
             inputMode="numeric"
@@ -3192,13 +3020,7 @@ function BudgetMenu(props: {
             aria-label={
               props.budget.mode === "tokens"
                 ? "Custom token budget"
-                : `Custom ${
-                    props.budget.mode === "claude_percent"
-                      ? customWindow === "five_hour"
-                        ? "Claude 5-hour"
-                        : "Claude weekly"
-                      : "weekly"
-                  } percentage`
+                : "Custom weekly percentage"
             }
             onChange={(event) => props.setCustomValue(event.target.value)}
             onKeyDown={(event) => {
@@ -3637,13 +3459,6 @@ function permissionComposerLabel(permission: PermissionPolicy): string {
 function taskBudgetComposerLabel(budget: TaskBudget): string {
   if (budget.mode === "unlimited") return "No limit";
   if (budget.mode === "weekly_percent") return `${budget.limit_percent}%`;
-  if (budget.mode === "claude_percent") {
-    const windows = [
-      budget.five_hour_percent === null ? null : `5h ${budget.five_hour_percent}%`,
-      budget.weekly_percent === null ? null : `wk ${budget.weekly_percent}%`,
-    ].filter(Boolean);
-    return windows.join(" + ");
-  }
   if (budget.limit_tokens >= 1_000_000) {
     return `${Math.round(budget.limit_tokens / 1_000_000)}m`;
   }

@@ -20,12 +20,7 @@ export type LocalModelProvider = "ollama" | "lm_studio";
 export type TaskBudget =
   | { mode: "unlimited" }
   | { mode: "tokens"; limit_tokens: number }
-  | { mode: "weekly_percent"; limit_percent: number }
-  | {
-      mode: "claude_percent";
-      five_hour_percent: number | null;
-      weekly_percent: number | null;
-    };
+  | { mode: "weekly_percent"; limit_percent: number };
 
 export interface Project {
   id: string;
