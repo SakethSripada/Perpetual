@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.2.1
+
+- Start new-thread runs immediately instead of waiting for a full refresh.
+- Remember the last agent, model, and reasoning selection for new sessions.
+- Keep the Working indicator visually consistent from its first frame.
+- Keep provider task budgets aligned with reliable telemetry: Claude token-only
+  budgets and Codex weekly-usage budgets.
+
 ## 0.2.0
 
 - Add graceful per-session token targets and Codex weekly-usage percentage
