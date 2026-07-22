@@ -123,6 +123,7 @@ async function copyDir(source, destination) {
 }
 
 async function findInstalledExtensions(prefix) {
+  const normalizedPrefix = prefix.toLowerCase();
   const roots = [
     path.join(os.homedir(), ".vscode", "extensions"),
     path.join(os.homedir(), ".vscode-insiders", "extensions"),
@@ -137,7 +138,9 @@ async function findInstalledExtensions(prefix) {
       continue;
     }
     for (const entry of entries) {
-      if (entry.startsWith(prefix)) found.push(path.join(extensionRoot, entry));
+      if (entry.toLowerCase().startsWith(normalizedPrefix)) {
+        found.push(path.join(extensionRoot, entry));
+      }
     }
   }
   return found;
