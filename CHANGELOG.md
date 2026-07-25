@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.2.2
+
+- Document token and weekly-percentage task budgets in the README and
+  Marketplace listing, and add the session budget screenshot.
+
 ## 0.2.1
 
 - Start new-thread runs immediately instead of waiting for a full refresh.
