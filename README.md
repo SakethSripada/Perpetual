@@ -7,6 +7,8 @@ reviewable changes, durable transcripts, and optional cloud continuity.
 
 ![Perpetual workbench preview](media/PerpetualDemoImage.png)
 
+![Perpetual session budget](media/PerpetualBudgetImage.png)
+
 ## Keep your work moving
 
 Perpetual is built for the moment when an agent stops being available but the
@@ -111,12 +113,15 @@ provider failures.
 
 ### Graceful session task budgets
 
-Set an approximate token target from the composer gauge. Codex also exposes its
-reliably reported 7-day account window; Claude supports token targets. Budgets
-include follow-up turns, wrap up near the target, and pause cleanly without
-draining queued work or silently switching to another quota. See [the task
-budget guarantees and limitations](docs/task-budgets.md) for the provider
-matrix and percentage-window semantics.
+Set a budget for each task or session from the composer gauge. You can choose no
+limit, a token target, or a percentage of your provider's weekly limit. Pick a
+preset such as 1%, 2%, 5%, or 10%, or type your own value.
+
+Budgets count follow-up turns, wrap up near the target, and pause cleanly
+without draining queued work or silently switching to another quota. Codex uses
+its reliably reported 7-day account window for percentage budgets, and Claude
+supports token targets. See [the task budget guarantees and limitations](docs/task-budgets.md)
+for the provider matrix and percentage-window semantics.
 
 ### Cloud continuity
 

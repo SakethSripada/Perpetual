@@ -9,6 +9,8 @@ same task instead of getting lost in a new chat or a copied prompt.
 
 ![Perpetual workbench preview](media/PerpetualDemoImage.png)
 
+![Perpetual session budget](media/PerpetualBudgetImage.png)
+
 ## Why install Perpetual?
 
 ### Switch providers when limits hit
@@ -35,6 +37,13 @@ into the local managed worktree for review.
 Every task has durable transcripts, checkpoints, managed worktrees, diffs, and
 approval state. Changes return as a reviewable local result instead of silently
 replacing your checkout.
+
+### Budget each task or session
+
+Set a budget for every task from the composer gauge. Choose no limit, a token
+target, or a percentage of your provider's weekly limit. Perpetual counts
+follow-up turns, wraps up near the target, and pauses cleanly instead of
+draining your quota.
 
 ## More than a provider switcher
 
