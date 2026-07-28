@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Add encrypted LAN collaboration across multiple Perpetual installations and
+  independent Claude Code or Codex accounts, with simple invite pairing,
+  persistent device credentials, revocation, presence, and device-aware agent
+  selection.
+- Share bounded handoff prompts, live progress, follow-up turns, and Codex
+  approvals without additional model calls.
+- Run remote work in isolated managed worktrees with fenced leases,
+  coordinator-side repository writer locks, host review, conflict detection,
+  and recoverable explicit overwrite.
+
 ## 0.2.2
 
 - Document token and weekly-percentage task budgets in the README and
