@@ -82,6 +82,82 @@ export interface AgentStatus {
   usage: ProviderUsage | null;
 }
 
+export interface CollaborationAgentCapability {
+  agent: AgentKind;
+  installed: boolean;
+  authenticated: boolean;
+  version: string | null;
+}
+
+export interface CollaborationDevice {
+  id: string;
+  name: string;
+  hostname: string;
+  platform: string;
+  extension_version: string;
+  capabilities: CollaborationAgentCapability[];
+  last_seen_at: string;
+  paired_at: string;
+  revoked_at: string | null;
+  active_assignments: number;
+}
+
+export type CollaborationAssignmentStatus =
+  | "queued"
+  | "running"
+  | "review"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "lease_expired";
+
+export interface CollaborationAssignment {
+  id: string;
+  thread_id: string;
+  turn_id: string;
+  device_id: string;
+  device_name: string;
+  agent: AgentKind;
+  permission: PermissionPolicy;
+  execution_backend: ExecutionBackend;
+  prompt: string;
+  status: CollaborationAssignmentStatus;
+  lease_expires_at: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+}
+
+export interface CollaborationChangeSet {
+  id: string;
+  assignment_id: string;
+  thread_id: string;
+  device_id: string;
+  repo_id: string;
+  repo_name: string;
+  base_ref: string | null;
+  files: FileChange[];
+  patch: string;
+  patch_sha256: string;
+  status: "pending" | "applied" | "applied_with_overwrite" | "conflict" | "rejected";
+  conflict_files: string[];
+  created_at: string;
+  applied_at: string | null;
+}
+
+export interface WorkbenchCollaboration {
+  role: "standalone" | "host" | "member";
+  connected: boolean;
+  host_name: string | null;
+  device_id: string;
+  device_name: string;
+  devices: CollaborationDevice[];
+  assignments: CollaborationAssignment[];
+  change_sets: CollaborationChangeSet[];
+  server_time: string;
+}
+
 export interface AgentRunDefaults {
   kind: AgentKind;
   model: string | null;
@@ -419,6 +495,7 @@ export interface WorkbenchSnapshot {
   cloudAvailability: CloudAvailability[];
   details: ThreadDetails | null;
   github: GithubAuthStatus | null;
+  collaboration: WorkbenchCollaboration;
   error: string | null;
 }
 
@@ -441,5 +518,6 @@ export type ExtensionMessage =
   | { type: "repoConnected"; repo: Repo }
   | { type: "repoAssignmentFailed"; threadId: string; message: string }
   | { type: "sandboxLoginPrompt"; prompt: { code: string; url: string }; codex: boolean }
+  | { type: "collaborationInvite"; invite: string }
   | { type: "notice"; message: string }
   | { type: "error"; message: string };

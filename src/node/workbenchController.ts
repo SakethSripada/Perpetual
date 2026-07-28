@@ -17,6 +17,7 @@ import type {
   ApprovalDecision,
   CloudAvailability,
   CloudPolicy,
+  CollaborationAssignment,
   ExecutionBackend,
   GithubAuthStatus,
   GithubRepository,
@@ -54,6 +55,7 @@ type SubmitMessage = {
   localProvider?: LocalModelProvider | null;
   localBaseUrl?: string | null;
   taskBudget?: TaskBudget;
+  deviceId?: string | null;
 };
 
 type WebviewMessage =
@@ -91,7 +93,14 @@ type WebviewMessage =
   | { type: "deleteQueuedTurn"; id: string }
   | { type: "updateQueuedTurn"; id: string; message: string }
   | { type: "reorderQueuedTurns"; threadId: string; orderedIds: string[] }
-  | { type: "resolveApproval"; id: string; decision: ApprovalDecision };
+  | { type: "resolveApproval"; id: string; decision: ApprovalDecision }
+  | { type: "hostCollaboration" | "copyCollaborationInvite" }
+  | { type: "joinCollaboration"; invite: string }
+  | { type: "leaveCollaboration" }
+  | { type: "revokeCollaborationDevice"; deviceId: string }
+  | { type: "cancelCollaborationAssignment"; assignmentId: string }
+  | { type: "applyCollaborationChangeSet"; changeSetId: string; overwrite?: boolean }
+  | { type: "rejectCollaborationChangeSet"; changeSetId: string };
 
 // Agent/sandbox detection shells out to CLIs, so we cache it briefly to keep the
 // frequent event-driven refreshes from re-probing on every tick.
@@ -207,9 +216,16 @@ export class WorkbenchController implements vscode.Disposable {
           await this.refresh();
           return;
         case "stopThread":
-          await this.withClient((client) =>
-            client.stopAgentThread(message.threadId),
-          );
+          await this.withClient(async (client) => {
+            const remote = (await client.listCollaborationAssignments(null, true))
+              .find(
+                (assignment) =>
+                  assignment.thread_id === message.threadId &&
+                  (assignment.status === "queued" || assignment.status === "running"),
+              );
+            if (remote) await client.cancelCollaborationAssignment(remote.id);
+            else await client.stopAgentThread(message.threadId);
+          });
           this.notice(reply, "Stopped the active run.");
           await this.refresh();
           return;
@@ -272,7 +288,7 @@ export class WorkbenchController implements vscode.Disposable {
         case "setLimitPolicy":
           {
             const policy = normalizeLimitPolicy(message.policy);
-            const applied = await this.withClient((client) =>
+            const applied = await this.withLocalClient((client) =>
               client.setLimitPolicy(policy),
             );
             await this.mirrorLimitPolicyToConfig(applied);
@@ -283,7 +299,7 @@ export class WorkbenchController implements vscode.Disposable {
           return;
         case "setSandboxPolicy":
           {
-            const applied = await this.withClient((client) =>
+            const applied = await this.withLocalClient((client) =>
               client.setSandboxPolicy(message.policy),
             );
             await this.mirrorSandboxPolicyToConfig(applied);
@@ -294,7 +310,7 @@ export class WorkbenchController implements vscode.Disposable {
           return;
         case "setCloudPolicy":
           {
-            const applied = await this.withClient((client) =>
+            const applied = await this.withLocalClient((client) =>
               client.setCloudPolicy(message.policy),
             );
           // Mirror into VS Code settings so the next settings sync doesn't undo
@@ -307,7 +323,7 @@ export class WorkbenchController implements vscode.Disposable {
           return;
         case "setLocalModelPolicy":
           {
-            const applied = await this.withClient((client) =>
+            const applied = await this.withLocalClient((client) =>
               client.setLocalModelPolicy(
                 normalizeLocalModelPolicy(message.policy),
               ),
@@ -396,6 +412,84 @@ export class WorkbenchController implements vscode.Disposable {
           );
           await this.refresh();
           return;
+        case "hostCollaboration":
+        case "copyCollaborationInvite": {
+          this.assertTrusted();
+          const invite = await this.daemon.createCollaborationInvite();
+          await vscode.env.clipboard.writeText(invite);
+          reply?.({ type: "collaborationInvite", invite });
+          this.notice(reply, "Encrypted invite copied. It expires in 15 minutes.");
+          await this.refresh();
+          return;
+        }
+        case "joinCollaboration":
+          this.assertTrusted();
+          await this.daemon.joinCollaboration(message.invite.trim());
+          this.workspaceReposReady = null;
+          this.detectionCache = null;
+          this.notice(reply, "Connected to the shared workspace.");
+          await this.refresh();
+          return;
+        case "leaveCollaboration": {
+          const status = await this.daemon.collaborationStatus();
+          if (status.role === "host") await this.daemon.stopCollaborationHost();
+          else await this.daemon.leaveCollaboration();
+          this.workspaceReposReady = null;
+          this.notice(reply, status.role === "host" ? "Stopped sharing." : "Left the shared workspace.");
+          await this.refresh();
+          return;
+        }
+        case "revokeCollaborationDevice": {
+          const confirm = await vscode.window.showWarningMessage(
+            "Remove this device from the shared workspace?",
+            { modal: true, detail: "Its encrypted credential is revoked immediately and active work is cancelled." },
+            "Remove Device",
+          );
+          if (confirm !== "Remove Device") return;
+          await this.daemon.revokeCollaborationDevice(message.deviceId);
+          this.notice(reply, "Device access revoked.");
+          await this.refresh();
+          return;
+        }
+        case "cancelCollaborationAssignment":
+          await this.withClient((client) =>
+            client.cancelCollaborationAssignment(message.assignmentId),
+          );
+          this.notice(reply, "Stopped the device assignment.");
+          await this.refresh();
+          return;
+        case "applyCollaborationChangeSet": {
+          if (message.overwrite) {
+            const confirm = await vscode.window.showWarningMessage(
+              "Replace overlapping local files with the device version?",
+              {
+                modal: true,
+                detail:
+                  "Perpetual keeps a recovery copy under its app data. Unrelated local files are not touched.",
+              },
+              "Overwrite & Keep Backup",
+            );
+            if (confirm !== "Overwrite & Keep Backup") return;
+          }
+          const change = await this.withClient((client) =>
+            client.applyCollaborationChangeSet(message.changeSetId, !!message.overwrite),
+          );
+          this.notice(
+            reply,
+            change.status === "conflict"
+              ? "Overlapping local edits found. Review them before choosing overwrite."
+              : "Applied the device changes to the coordinator checkout.",
+          );
+          await this.refresh();
+          return;
+        }
+        case "rejectCollaborationChangeSet":
+          await this.withClient((client) =>
+            client.rejectCollaborationChangeSet(message.changeSetId),
+          );
+          this.notice(reply, "Rejected the returned changes.");
+          await this.refresh();
+          return;
       }
     } catch (err) {
       const text = err instanceof Error ? err.message : String(err);
@@ -462,6 +556,11 @@ export class WorkbenchController implements vscode.Disposable {
 
   async connectLocalRepoInteractive(reply?: WebviewReply): Promise<void> {
     this.assertTrusted();
+    if ((await this.daemon.collaborationStatus()).role === "member") {
+      throw new Error(
+        "Repositories are managed by the shared-workspace host. Keep a matching clone open locally so this device can run assignments.",
+      );
+    }
     const picked = await vscode.window.showOpenDialog({
       canSelectFiles: false,
       canSelectFolders: true,
@@ -518,18 +617,22 @@ export class WorkbenchController implements vscode.Disposable {
 
     try {
       const client = await this.daemon.getClient();
-      await this.syncSettings(client);
+      const localClient = await this.daemon.getLocalClient();
+      const collaborationStatus = await this.daemon.collaborationStatus();
+      await this.syncSettings(localClient);
       const project = await client.ensureWorkbenchProject();
       // Connecting workspace repos shells out to git and rarely changes mid-session;
       // do it once rather than on every event-driven refresh.
-      await this.ensureWorkspaceRepos(client, project.id);
+      if (collaborationStatus.role !== "member") {
+        await this.ensureWorkspaceRepos(client, project.id);
+      }
 
       // Fast path: threads/repos are cheap DB reads; agent + sandbox detection is
       // expensive (CLI probes) so it comes from a short-lived cache.
       const [allThreads, repos, detection] = await Promise.all([
         client.listAgentThreads(project.id),
         client.listRepos(project.id),
-        this.detect(client),
+        this.detect(localClient),
       ]);
       const threads = filterAgentThreads(allThreads);
       const {
@@ -566,15 +669,18 @@ export class WorkbenchController implements vscode.Disposable {
         );
       }
 
-      const details = selectedThreadId
-        ? await loadThreadDetails(
-            client,
-            selectedThreadId,
-            this.output,
-            this.diffCache.get(selectedThreadId) ?? null,
-            this.applyResults.get(selectedThreadId) ?? null,
-          )
-        : null;
+      const [details, collaborationSnapshot] = await Promise.all([
+        selectedThreadId
+          ? loadThreadDetails(
+              client,
+              selectedThreadId,
+              this.output,
+              this.diffCache.get(selectedThreadId) ?? null,
+              this.applyResults.get(selectedThreadId) ?? null,
+            )
+          : Promise.resolve(null),
+        client.collaborationSnapshot(null, false),
+      ]);
 
       const defaultRepoIds = pickDefaultRepoIds(repos);
       return {
@@ -598,6 +704,14 @@ export class WorkbenchController implements vscode.Disposable {
         cloudAvailability,
         details,
         github: null,
+        collaboration: {
+          ...collaborationSnapshot,
+          role: collaborationStatus.role,
+          connected: collaborationStatus.connected,
+          host_name: collaborationStatus.hostName,
+          device_id: collaborationStatus.deviceId,
+          device_name: collaborationStatus.deviceName,
+        },
         error,
       };
     } catch (err) {
@@ -611,11 +725,14 @@ export class WorkbenchController implements vscode.Disposable {
     if (!text) return;
 
     const client = await this.daemon.getClient();
+    const collaborationStatus = await this.daemon.collaborationStatus();
     // The user can change extension settings and submit immediately; mirror
     // the effective values before admitting this turn to the daemon.
-    await this.syncSettings(client);
+    await this.syncSettings(await this.daemon.getLocalClient());
     const project = await client.ensureWorkbenchProject();
-    await this.ensureWorkspaceRepos(client, project.id);
+    if (collaborationStatus.role !== "member") {
+      await this.ensureWorkspaceRepos(client, project.id);
+    }
     const defaults = getDefaults();
     const agent = message.agent ?? defaults.agent;
     const permission = message.permission ?? defaults.permission;
@@ -644,6 +761,11 @@ export class WorkbenchController implements vscode.Disposable {
 
     const repos = await client.listRepos(project.id).catch(() => []);
     const repoIds = resolveSubmittedRepoIds(message.repoIds, repos);
+    const targetDeviceId =
+      message.deviceId ??
+      (collaborationStatus.role === "member"
+        ? collaborationStatus.deviceId
+        : null);
     if (message.threadId) {
       const currentRepos = await client
         .listThreadRepos(message.threadId)
@@ -665,13 +787,39 @@ export class WorkbenchController implements vscode.Disposable {
         task_budget: message.taskBudget,
       });
       await this.selectThread(message.threadId);
-      void this.sendThreadMessageInBackground(
-        message.threadId,
-        agent,
-        permission,
-        text,
-        blankToNull(message.clientMessageId ?? null),
+      const activeAssignments = await client
+        .listCollaborationAssignments(null, true)
+        .catch(() => []);
+      const activeRemote = activeAssignments.find(
+        (assignment: CollaborationAssignment) => assignment.thread_id === message.threadId,
       );
+      if (activeRemote) {
+        void this.sendThreadMessageInBackground(
+          message.threadId,
+          agent,
+          permission,
+          text,
+          blankToNull(message.clientMessageId ?? null),
+        );
+      } else if (targetDeviceId) {
+        void this.createRemoteAssignmentInBackground(
+          message.threadId,
+          targetDeviceId,
+          agent,
+          permission,
+          text,
+          executionBackend,
+          blankToNull(message.clientMessageId ?? null),
+        );
+      } else {
+        void this.sendThreadMessageInBackground(
+          message.threadId,
+          agent,
+          permission,
+          text,
+          blankToNull(message.clientMessageId ?? null),
+        );
+      }
       return;
     }
 
@@ -694,14 +842,26 @@ export class WorkbenchController implements vscode.Disposable {
     // (agent detection, model catalogs, and workspace reads). The webview has
     // already rendered the optimistic message; the daemon events and the final
     // run refresh will fill in the new thread while the provider starts.
-    void this.runThreadInBackground(
-      thread.id,
-      agent,
-      permission,
-      text,
-      executionBackend,
-      blankToNull(message.clientMessageId ?? null),
-    );
+    if (targetDeviceId) {
+      void this.createRemoteAssignmentInBackground(
+        thread.id,
+        targetDeviceId,
+        agent,
+        permission,
+        text,
+        executionBackend,
+        blankToNull(message.clientMessageId ?? null),
+      );
+    } else {
+      void this.runThreadInBackground(
+        thread.id,
+        agent,
+        permission,
+        text,
+        executionBackend,
+        blankToNull(message.clientMessageId ?? null),
+      );
+    }
     void this.refresh();
   }
 
@@ -749,8 +909,41 @@ export class WorkbenchController implements vscode.Disposable {
     }
   }
 
+  private async createRemoteAssignmentInBackground(
+    threadId: string,
+    deviceId: string,
+    agent: AgentKind,
+    permission: PermissionPolicy,
+    text: string,
+    executionBackend: ExecutionBackend,
+    clientMessageId: string | null,
+  ): Promise<void> {
+    try {
+      const client = await this.daemon.getClient();
+      await client.createCollaborationAssignment({
+        thread_id: threadId,
+        device_id: deviceId,
+        agent,
+        permission,
+        execution_backend: executionBackend,
+        message: text,
+        client_message_id: clientMessageId,
+      });
+      await this.refresh();
+    } catch (err) {
+      const message = formatError(err);
+      this.output.appendLine(`[workbench] remote assignment failed: ${message}`);
+      await this.refresh(message);
+    }
+  }
+
   private async connectWorkspaceRepos(): Promise<void> {
     this.assertTrusted();
+    if ((await this.daemon.collaborationStatus()).role === "member") {
+      throw new Error(
+        "The host owns the shared repository list. Open matching local clones for device assignments.",
+      );
+    }
     const client = await this.daemon.getClient();
     const project = await client.ensureWorkbenchProject();
     this.autoConnectSuspended = false;
@@ -951,6 +1144,13 @@ export class WorkbenchController implements vscode.Disposable {
     this.assertTrusted();
     const client = await this.daemon.getClient();
     return fn(client);
+  }
+
+  private async withLocalClient<T>(
+    fn: (client: DaemonApi) => Promise<T>,
+  ): Promise<T> {
+    this.assertTrusted();
+    return fn(await this.daemon.getLocalClient());
   }
 
   private detectInflight: Promise<DetectionCache> | null = null;
@@ -1457,8 +1657,19 @@ function emptySnapshot(
     cloudPolicy: null,
     cloudAvailability: [],
     details: null,
-    github: null,
-    error,
+      github: null,
+      collaboration: {
+        role: "standalone",
+        connected: false,
+        host_name: null,
+        device_id: "",
+        device_name: "This device",
+        devices: [],
+        assignments: [],
+        change_sets: [],
+        server_time: new Date().toISOString(),
+      },
+      error,
   };
 }
 

@@ -26,6 +26,11 @@ type WorkbenchControlsModule = {
     current: string,
   ): string;
   sameStringSet(a: readonly string[], b: readonly string[]): boolean;
+  collaborationExecutionTargets(
+    snapshot: any,
+    agent: "claude_code" | "codex",
+    active: any,
+  ): { value: string; label: string }[];
 };
 
 let modulePromise: Promise<WorkbenchControlsModule> | null = null;
@@ -218,6 +223,49 @@ test("repo snapshot acknowledgement compares repository sets", async () => {
   assert.equal(sameStringSet(["repo-a", "repo-b"], ["repo-b", "repo-a"]), true);
   assert.equal(sameStringSet(["repo-a"], ["repo-a", "repo-b"]), false);
   assert.equal(sameStringSet([], []), true);
+});
+
+test("shared-workspace execution targets route members through their device", async () => {
+  const { collaborationExecutionTargets } = await loadWorkbenchControls();
+  const now = new Date().toISOString();
+  const device = (id: string, name: string) => ({
+    id,
+    name,
+    revoked_at: null,
+    last_seen_at: now,
+    capabilities: [
+      { agent: "codex", installed: true, authenticated: true, version: null },
+    ],
+  });
+  const member = {
+    collaboration: {
+      connected: true,
+      role: "member",
+      device_id: "laptop",
+      server_time: now,
+      devices: [device("desktop", "Desktop"), device("laptop", "Laptop")],
+    },
+  };
+  assert.deepEqual(
+    collaborationExecutionTargets(member, "codex", null).map((item) => item.value),
+    ["desktop", "laptop"],
+  );
+  assert.equal(
+    collaborationExecutionTargets(member, "codex", null)[1].label,
+    "Laptop · this device",
+  );
+
+  const host = {
+    collaboration: {
+      ...member.collaboration,
+      role: "host",
+      device_id: "desktop",
+    },
+  };
+  assert.deepEqual(
+    collaborationExecutionTargets(host, "codex", null).map((item) => item.value),
+    ["local", "laptop"],
+  );
 });
 
 test("repo assignment UI retains the serialized write and lock guidance", () => {
