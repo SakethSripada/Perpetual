@@ -17,6 +17,13 @@ import type {
   CloudAvailability,
   CloudPolicy,
   CloudRun,
+  ClaimedCollaborationAssignment,
+  CollaborationAssignment,
+  CollaborationApprovalDecision,
+  CollaborationChangeSet,
+  CollaborationDevice,
+  CollaborationEventInput,
+  CollaborationSnapshot,
   ExecutionBackend,
   GithubAuthStatus,
   GithubRepository,
@@ -25,6 +32,7 @@ import type {
   LocalModelStatus,
   ContextPacket,
   NewAgentThread,
+  NewCollaborationAssignment,
   NewGithubRepo,
   NewLocalRepo,
   NewWorkEdge,
@@ -33,6 +41,7 @@ import type {
   Project,
   QueuedTurn,
   Repo,
+  RegisterCollaborationDevice,
   SandboxLoginPrompt,
   SandboxPolicy,
   SandboxRuntimeStatus,
@@ -128,6 +137,7 @@ export interface DaemonApi {
   previewContextPacket(nodeId: string): Promise<ContextPacket>;
   workNodeDiff(nodeId: string): Promise<WorkNodeDiff>;
   listAgentThreads(projectId?: string): Promise<AgentThread[]>;
+  getAgentThread(id: string): Promise<AgentThread | null>;
   createAgentThread(input: NewAgentThread): Promise<AgentThread>;
   updateAgentThread(id: string, patch: AgentThreadUpdate): Promise<AgentThread>;
   deleteAgentThread(id: string, force: boolean): Promise<void>;
@@ -159,5 +169,65 @@ export interface DaemonApi {
   deleteQueuedTurn(id: string): Promise<void>;
   updateQueuedTurn(id: string, message: string): Promise<void>;
   reorderQueuedTurns(threadId: string, orderedIds: string[]): Promise<void>;
+  registerCollaborationDevice(input: RegisterCollaborationDevice): Promise<CollaborationDevice>;
+  heartbeatCollaborationDevice(input: RegisterCollaborationDevice): Promise<CollaborationDevice>;
+  listCollaborationDevices(): Promise<CollaborationDevice[]>;
+  revokeCollaborationDevice(deviceId: string): Promise<void>;
+  collaborationSnapshot(
+    threadId?: string | null,
+    includePatches?: boolean
+  ): Promise<CollaborationSnapshot>;
+  createCollaborationAssignment(
+    input: NewCollaborationAssignment
+  ): Promise<CollaborationAssignment>;
+  retryCollaborationAssignment(assignmentId: string): Promise<CollaborationAssignment>;
+  listCollaborationAssignments(
+    deviceId?: string | null,
+    activeOnly?: boolean
+  ): Promise<CollaborationAssignment[]>;
+  claimCollaborationAssignment(
+    assignmentId: string,
+    deviceId: string
+  ): Promise<ClaimedCollaborationAssignment>;
+  renewCollaborationLease(
+    assignmentId: string,
+    leaseToken: string
+  ): Promise<CollaborationAssignment>;
+  reportCollaborationEvent(input: CollaborationEventInput): Promise<void>;
+  reportCollaborationApproval(input: {
+    assignment_id: string;
+    lease_token: string;
+    approval: ApprovalRequest;
+  }): Promise<void>;
+  listCollaborationApprovalDecisions(
+    assignmentId: string,
+    leaseToken: string
+  ): Promise<CollaborationApprovalDecision[]>;
+  acknowledgeCollaborationApprovalDecision(
+    assignmentId: string,
+    leaseToken: string,
+    approvalId: string
+  ): Promise<void>;
+  reportCollaborationChangeSet(input: {
+    assignment_id: string;
+    lease_token: string;
+    repo_id: string;
+    base_ref?: string | null;
+    files: import("./types").FileChange[];
+    patch: string;
+  }): Promise<CollaborationChangeSet>;
+  finishCollaborationAssignment(input: {
+    assignment_id: string;
+    lease_token: string;
+    state: "completed" | "interrupted" | "failed";
+    error?: string | null;
+  }): Promise<CollaborationAssignment>;
+  cancelCollaborationAssignment(assignmentId: string): Promise<CollaborationAssignment>;
+  applyCollaborationChangeSet(
+    changeSetId: string,
+    overwrite?: boolean
+  ): Promise<CollaborationChangeSet>;
+  rejectCollaborationChangeSet(changeSetId: string): Promise<CollaborationChangeSet>;
+  importCollaborationPatch(threadId: string, repoId: string, patch: string): Promise<void>;
   prepareShutdown(): Promise<void>;
 }

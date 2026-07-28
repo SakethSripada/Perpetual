@@ -33,7 +33,8 @@ type IconName =
   | "clock"
   | "gauge"
   | "terminal"
-  | "alert";
+  | "alert"
+  | "devices";
 
 const PATHS: Record<IconName, string> = {
   plus: "M8 2.5v11M2.5 8h11",
@@ -73,6 +74,7 @@ const PATHS: Record<IconName, string> = {
   gauge: "M2.2 10.8a6 6 0 1 1 11.6 0M8 8l2.6-2.6M3.7 12.4h8.6",
   terminal: "M3 3.5h10v9H3zM5 6.3l2 1.7-2 1.7M8.5 10h2.5",
   alert: "M8 2.5 14.5 13.5h-13zM8 6.5v3.2M8 11.6v.1",
+  devices: "M2.2 3.2h7.2v7.1H2.2zM4.4 12.8h2.8M11.2 5.2h2.6v7.6h-2.6zM12 11.5h1",
 };
 
 const FILLED: Partial<Record<IconName, boolean>> = {

@@ -11,13 +11,18 @@ use am_agents::PermissionPolicy;
 use am_proto::{
     ActivityEvent, AgentKind, AgentModelCatalog, AgentRunDefaults, AgentStatus, AgentThread,
     AgentThreadApplyResult, AgentThreadDiff, AgentThreadEvent, AgentThreadRepo, AgentThreadUpdate,
-    AgentTurn, AppEvent, ApprovalDecision, ApprovalRequest, CloudAvailability, CloudPolicy,
-    CloudRun, ContextPacket, EventReplay, ExecutionBackend, GithubAuthStatus, GithubRepository,
-    KnowledgeDoc, KnowledgeDocUpdate, LimitPolicy, LocalModelPolicy, LocalModelStatus, MemoryNote,
-    MemoryNoteUpdate, NewAgentThread, NewGithubRepo, NewKnowledgeDoc, NewLocalRepo, NewMemoryNote,
-    NewProject, NewTask, NewWorkEdge, NewWorkNode, Project, QueuedTurn, Repo, SandboxLoginPrompt,
-    SandboxPolicy, SandboxRuntimeStatus, SearchHit, SequencedEvent, Task, TaskDiff, TaskUpdate,
-    WorkEdge, WorkGraph, WorkNode, WorkNodeDiff, WorkNodeRepoBinding, WorkNodeUpdate,
+    AgentTurn, AppEvent, ApprovalDecision, ApprovalRequest, ClaimedCollaborationAssignment,
+    CloudAvailability, CloudPolicy, CloudRun, CollaborationApprovalDecision,
+    CollaborationAssignment, CollaborationChangeSet, CollaborationDevice, CollaborationEventInput,
+    CollaborationSnapshot, ContextPacket, EventReplay, ExecutionBackend,
+    FinishCollaborationAssignment, GithubAuthStatus, GithubRepository, KnowledgeDoc,
+    KnowledgeDocUpdate, LimitPolicy, LocalModelPolicy, LocalModelStatus, MemoryNote,
+    MemoryNoteUpdate, NewAgentThread, NewCollaborationAssignment, NewCollaborationChangeSet,
+    NewGithubRepo, NewKnowledgeDoc, NewLocalRepo, NewMemoryNote, NewProject, NewTask, NewWorkEdge,
+    NewWorkNode, Project, QueuedTurn, RegisterCollaborationDevice, Repo,
+    ReportCollaborationApproval, SandboxLoginPrompt, SandboxPolicy, SandboxRuntimeStatus,
+    SearchHit, SequencedEvent, Task, TaskDiff, TaskUpdate, WorkEdge, WorkGraph, WorkNode,
+    WorkNodeDiff, WorkNodeRepoBinding, WorkNodeUpdate,
 };
 use serde::{Deserialize, Serialize};
 
@@ -318,6 +323,65 @@ pub enum DaemonRequest {
         ordered_ids: Vec<String>,
     },
 
+    // Multi-device collaboration
+    RegisterCollaborationDevice(RegisterCollaborationDevice),
+    HeartbeatCollaborationDevice(RegisterCollaborationDevice),
+    ListCollaborationDevices,
+    RevokeCollaborationDevice {
+        device_id: String,
+    },
+    CollaborationSnapshot {
+        thread_id: Option<String>,
+        #[serde(default)]
+        include_patches: bool,
+    },
+    CreateCollaborationAssignment(NewCollaborationAssignment),
+    RetryCollaborationAssignment {
+        assignment_id: String,
+    },
+    ListCollaborationAssignments {
+        device_id: Option<String>,
+        #[serde(default)]
+        active_only: bool,
+    },
+    ClaimCollaborationAssignment {
+        assignment_id: String,
+        device_id: String,
+    },
+    RenewCollaborationLease {
+        assignment_id: String,
+        lease_token: String,
+    },
+    ReportCollaborationEvent(CollaborationEventInput),
+    ReportCollaborationApproval(ReportCollaborationApproval),
+    ListCollaborationApprovalDecisions {
+        assignment_id: String,
+        lease_token: String,
+    },
+    AcknowledgeCollaborationApprovalDecision {
+        assignment_id: String,
+        lease_token: String,
+        approval_id: String,
+    },
+    ReportCollaborationChangeSet(NewCollaborationChangeSet),
+    FinishCollaborationAssignment(FinishCollaborationAssignment),
+    CancelCollaborationAssignment {
+        assignment_id: String,
+    },
+    ApplyCollaborationChangeSet {
+        change_set_id: String,
+        #[serde(default)]
+        overwrite: bool,
+    },
+    RejectCollaborationChangeSet {
+        change_set_id: String,
+    },
+    ImportCollaborationPatch {
+        thread_id: String,
+        repo_id: String,
+        patch: String,
+    },
+
     // Event stream recovery (additive; requires no capability)
     ReplayEvents {
         since_seq: u64,
@@ -381,6 +445,14 @@ pub enum DaemonResponse {
     QueuedTurns(Vec<QueuedTurn>),
     TurnId(String),
     TurnIdOpt(Option<String>),
+    CollaborationDevice(CollaborationDevice),
+    CollaborationDevices(Vec<CollaborationDevice>),
+    CollaborationAssignment(CollaborationAssignment),
+    CollaborationAssignments(Vec<CollaborationAssignment>),
+    ClaimedCollaborationAssignment(ClaimedCollaborationAssignment),
+    CollaborationApprovalDecisions(Vec<CollaborationApprovalDecision>),
+    CollaborationChangeSet(CollaborationChangeSet),
+    CollaborationSnapshot(CollaborationSnapshot),
     EventReplay(EventReplay),
     EventSeq(u64),
 }

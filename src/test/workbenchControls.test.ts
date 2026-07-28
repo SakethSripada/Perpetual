@@ -26,6 +26,18 @@ type WorkbenchControlsModule = {
     current: string,
   ): string;
   sameStringSet(a: readonly string[], b: readonly string[]): boolean;
+  collaborationExecutionTargets(
+    snapshot: any,
+    agent: "claude_code" | "codex",
+    active: any,
+  ): { value: string; label: string }[];
+  collaborationAssignmentIssue(assignment: any): {
+    kind: string;
+    title: string;
+    message: string;
+    missingRepos: string[];
+  };
+  unresolvedCollaborationIssues(assignments: any[]): any[];
 };
 
 let modulePromise: Promise<WorkbenchControlsModule> | null = null;
@@ -218,6 +230,115 @@ test("repo snapshot acknowledgement compares repository sets", async () => {
   assert.equal(sameStringSet(["repo-a", "repo-b"], ["repo-b", "repo-a"]), true);
   assert.equal(sameStringSet(["repo-a"], ["repo-a", "repo-b"]), false);
   assert.equal(sameStringSet([], []), true);
+});
+
+test("shared-workspace execution targets route members through their device", async () => {
+  const { collaborationExecutionTargets } = await loadWorkbenchControls();
+  const now = new Date().toISOString();
+  const device = (id: string, name: string) => ({
+    id,
+    name,
+    revoked_at: null,
+    last_seen_at: now,
+    capabilities: [
+      { agent: "codex", installed: true, authenticated: true, version: null },
+    ],
+  });
+  const member = {
+    collaboration: {
+      connected: true,
+      role: "member",
+      device_id: "laptop",
+      server_time: now,
+      devices: [device("desktop", "Desktop"), device("laptop", "Laptop")],
+    },
+  };
+  assert.deepEqual(
+    collaborationExecutionTargets(member, "codex", null).map((item) => item.value),
+    ["desktop", "laptop"],
+  );
+  assert.equal(
+    collaborationExecutionTargets(member, "codex", null)[1].label,
+    "Laptop · this device",
+  );
+
+  const host = {
+    collaboration: {
+      ...member.collaboration,
+      role: "host",
+      device_id: "desktop",
+    },
+  };
+  assert.deepEqual(
+    collaborationExecutionTargets(host, "codex", null).map((item) => item.value),
+    ["local", "laptop"],
+  );
+});
+
+test("collaboration failures stay actionable until a newer attempt exists", async () => {
+  const { collaborationAssignmentIssue, unresolvedCollaborationIssues } =
+    await loadWorkbenchControls();
+  const failed = {
+    id: "failed-1",
+    thread_id: "thread-1",
+    device_id: "laptop",
+    device_name: "Laptop",
+    agent: "codex",
+    status: "failed",
+    error:
+      "Repository mapping failed on this device. Missing: api, web.",
+    created_at: "2026-07-28T10:00:00Z",
+  };
+  assert.deepEqual(collaborationAssignmentIssue(failed), {
+    kind: "missing_repo",
+    title: "Repository clone needed",
+    message: "Open a matching clone on Laptop, then retry this work.",
+    missingRepos: ["api", "web"],
+  });
+  assert.deepEqual(
+    unresolvedCollaborationIssues([failed]).map((assignment) => assignment.id),
+    ["failed-1"],
+  );
+  assert.deepEqual(
+    unresolvedCollaborationIssues([
+      failed,
+      {
+        ...failed,
+        id: "retry-1",
+        status: "queued",
+        error: null,
+        created_at: "2026-07-28T10:01:00Z",
+      },
+    ]),
+    [],
+  );
+});
+
+test("ambiguous repository clones are not selected arbitrarily", async () => {
+  const { collaborationAssignmentIssue } = await loadWorkbenchControls();
+  const issue = collaborationAssignmentIssue({
+    device_name: "Laptop",
+    agent: "codex",
+    status: "failed",
+    error:
+      "Repository mapping failed on this device. Multiple open clones match: api. Keep only the intended clone open.",
+  });
+  assert.equal(issue.kind, "ambiguous_repo");
+  assert.deepEqual(issue.missingRepos, ["api"]);
+  assert.match(issue.message, /keep only the intended clone open/i);
+});
+
+test("expired collaboration leases explain fencing and recovery", async () => {
+  const { collaborationAssignmentIssue } = await loadWorkbenchControls();
+  const issue = collaborationAssignmentIssue({
+    device_name: "Desktop",
+    agent: "claude_code",
+    status: "lease_expired",
+    error: "device lease expired",
+  });
+  assert.equal(issue.kind, "connection");
+  assert.match(issue.message, /No late changes were accepted/);
+  assert.match(issue.message, /Bring Desktop online and retry/);
 });
 
 test("repo assignment UI retains the serialized write and lock guidance", () => {

@@ -39,6 +39,7 @@ mod budget;
 mod bus;
 mod capacity;
 mod cloud_handoff;
+mod collaboration;
 mod context_index;
 mod context_scoring;
 mod error;

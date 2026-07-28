@@ -18,6 +18,9 @@ import type {
   ApprovalRequest,
   CloudPolicy,
   CloudRun,
+  CollaborationAssignment,
+  CollaborationChangeSet,
+  CollaborationDevice,
   ExecutionBackend,
   ExtensionMessage,
   GithubRepository,
@@ -115,6 +118,9 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [monitorOpen, setMonitorOpen] = useState(false);
+  const [collaborationOpen, setCollaborationOpen] = useState(false);
+  const [collaborationInvite, setCollaborationInvite] = useState<string | null>(null);
+  const [executionDeviceId, setExecutionDeviceId] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [githubOpen, setGithubOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState<{
@@ -147,6 +153,7 @@ export default function App() {
     pendingCount: number;
   }>({ threadId: null, pendingCount: 0 });
   const runControlsKeyRef = useRef<string>("");
+  const executionDeviceKeyRef = useRef<string>("");
   // Repository choices are session UI state, not a reason to suppress the
   // current VS Code workspace defaults after the webview is reopened.
   const repoTouchedRef = useRef(false);
@@ -300,6 +307,11 @@ export default function App() {
       }
       if (incoming.type === "sandboxLoginPrompt") {
         setNotice(`Sandbox code: ${incoming.prompt.code}`);
+        return;
+      }
+      if (incoming.type === "collaborationInvite") {
+        setCollaborationInvite(incoming.invite);
+        setCollaborationOpen(true);
       }
     };
     window.addEventListener("message", onMessage);
@@ -339,6 +351,15 @@ export default function App() {
       snapshot?.threads.find((thread) => thread.id === effectiveSelectedId) ??
       null,
     [snapshot, effectiveSelectedId],
+  );
+  const activeCollaborationAssignment = useMemo(
+    () =>
+      snapshot?.collaboration.assignments.find(
+        (assignment) =>
+          assignment.thread_id === effectiveSelectedId &&
+          ["queued", "running", "review"].includes(assignment.status),
+      ) ?? null,
+    [snapshot?.collaboration.assignments, effectiveSelectedId],
   );
   // Details belong to the daemon's current selection; while navigating to a
   // different thread they're stale, so we show a loading state instead.
@@ -459,6 +480,42 @@ export default function App() {
       lastReasoning: reasoning,
     });
   }, [agent, model, reasoning]);
+
+  useEffect(() => {
+    if (!snapshot) return;
+    const collaboration = snapshot.collaboration;
+    const key = [
+      effectiveSelectedId ?? "new",
+      collaboration.role,
+      collaboration.device_id,
+      activeCollaborationAssignment?.device_id ?? "",
+    ].join("|");
+    if (executionDeviceKeyRef.current === key) return;
+    executionDeviceKeyRef.current = key;
+    setExecutionDeviceId(
+      activeCollaborationAssignment?.device_id ??
+        (collaboration.role === "member" ? collaboration.device_id : null),
+    );
+  }, [
+    snapshot?.collaboration.role,
+    snapshot?.collaboration.device_id,
+    activeCollaborationAssignment?.device_id,
+    effectiveSelectedId,
+  ]);
+
+  useEffect(() => {
+    if (!snapshot?.collaboration.connected || activeCollaborationAssignment) return;
+    const targets = collaborationExecutionTargets(snapshot, agent, null);
+    const encoded = executionDeviceId ?? "local";
+    if (targets.some((target) => target.value === encoded)) return;
+    const fallback = targets[0]?.value;
+    setExecutionDeviceId(fallback && fallback !== "local" ? fallback : null);
+  }, [
+    snapshot?.collaboration,
+    agent,
+    activeCollaborationAssignment?.id,
+    executionDeviceId,
+  ]);
 
   // Catalog refreshes may reveal that a persisted effort does not belong to
   // the selected model. Repair it immediately to the model's advertised
@@ -749,6 +806,7 @@ export default function App() {
       localProvider: submittedLocalProvider,
       localBaseUrl: submittedLocalProvider ? localBaseUrl.trim() || null : null,
       taskBudget,
+      deviceId: executionDeviceId,
     });
     return true;
   };
@@ -856,6 +914,18 @@ export default function App() {
           <IconButton title="Settings" onClick={() => setSettingsOpen(true)}>
             <Icon name="settings" />
           </IconButton>
+          <button
+            type="button"
+            className={`collaboration-trigger${snapshot?.collaboration.connected ? " connected" : ""}${snapshot?.collaboration.change_sets.some((change) => change.status === "pending" || change.status === "conflict") ? " attention" : ""}`}
+            title="Devices and shared workspace"
+            aria-label="Devices and shared workspace"
+            onClick={() => setCollaborationOpen(true)}
+          >
+            <Icon name="devices" />
+            {snapshot?.collaboration.connected && (
+              <span>{onlineCollaborationDevices(snapshot).length}</span>
+            )}
+          </button>
           <IconButton title="Status monitor" onClick={() => setMonitorOpen(true)}>
             <Icon name="clock" />
           </IconButton>
@@ -1010,6 +1080,9 @@ export default function App() {
         setRepoIds={setDraftRepoIds}
         reposLocked={reposLocked}
         isRunning={isRunning}
+        executionDeviceId={executionDeviceId}
+        setExecutionDeviceId={setExecutionDeviceId}
+        activeCollaborationAssignment={activeCollaborationAssignment}
         onSend={send}
         editDraft={editDraft}
         onEditDraftConsumed={() => setEditDraft(null)}
@@ -1124,6 +1197,47 @@ export default function App() {
               type: "reclaimCloudRun",
               threadId: selectedThread.id,
             })
+          }
+        />
+      )}
+
+      {collaborationOpen && snapshot && (
+        <CollaborationSheet
+          snapshot={snapshot}
+          invite={collaborationInvite}
+          onClose={() => setCollaborationOpen(false)}
+          onHost={() => vscode.postMessage({ type: "hostCollaboration" })}
+          onJoin={(invite) =>
+            vscode.postMessage({ type: "joinCollaboration", invite })
+          }
+          onCopyInvite={() =>
+            vscode.postMessage({ type: "copyCollaborationInvite" })
+          }
+          onLeave={() => vscode.postMessage({ type: "leaveCollaboration" })}
+          onRevoke={(deviceId) =>
+            vscode.postMessage({ type: "revokeCollaborationDevice", deviceId })
+          }
+          onCancelAssignment={(assignmentId) =>
+            vscode.postMessage({ type: "cancelCollaborationAssignment", assignmentId })
+          }
+          onRetryAssignment={(assignmentId) =>
+            vscode.postMessage({ type: "retryCollaborationAssignment", assignmentId })
+          }
+          onDismissIssue={(assignmentId) =>
+            vscode.postMessage({ type: "dismissCollaborationAssignmentIssue", assignmentId })
+          }
+          onAddRepoAndRetry={(assignmentId) =>
+            vscode.postMessage({ type: "addCollaborationRepoAndRetry", assignmentId })
+          }
+          onApplyChange={(changeSetId, overwrite = false) =>
+            vscode.postMessage({
+              type: "applyCollaborationChangeSet",
+              changeSetId,
+              overwrite,
+            })
+          }
+          onRejectChange={(changeSetId) =>
+            vscode.postMessage({ type: "rejectCollaborationChangeSet", changeSetId })
           }
         />
       )}
@@ -1294,10 +1408,17 @@ const MessageView = memo(function MessageView({
   }
   const streaming =
     event.role === "assistant" && (asRecord(event.data) ?? {}).streaming === true;
+  const remoteDevice = (asRecord(event.data) ?? {}).remote_device_name;
   return (
     <article
       className={`msg ${messageClass(event.role)}${firstTurn ? " first-turn-settled" : ""}`}
     >
+      {typeof remoteDevice === "string" && remoteDevice && (
+        <div className="remote-message-origin">
+          <Icon name="devices" />
+          <span>{remoteDevice}</span>
+        </div>
+      )}
       <div className="msg-body">
         {event.text ? (
           event.role === "assistant" ? (
@@ -1706,6 +1827,7 @@ function Dropdown(props: {
   className?: string;
   placement?: "auto" | "above" | "below";
   fullWidth?: boolean;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const selected = props.options.find((option) => option.value === props.value);
@@ -1724,6 +1846,7 @@ function Dropdown(props: {
           aria-label={props.ariaLabel}
           aria-haspopup="listbox"
           aria-expanded={open}
+          disabled={props.disabled}
           onClick={toggle}
         >
           {props.icon}
@@ -2157,6 +2280,9 @@ type ComposerProps = {
   setRepoIds(value: string[]): void;
   reposLocked: boolean;
   isRunning: boolean;
+  executionDeviceId: string | null;
+  setExecutionDeviceId(value: string | null): void;
+  activeCollaborationAssignment: CollaborationAssignment | null;
   onSend(text: string): boolean;
   editDraft: { text: string; nonce: number } | null;
   onEditDraftConsumed(): void;
@@ -2204,7 +2330,14 @@ function Composer(props: ComposerProps) {
   const sandboxOn = props.backend === "docker_sandbox";
   const sandbox = props.snapshot?.sandboxRuntime;
   const repos = props.snapshot?.repos ?? [];
+  const sharedRepoMember = props.snapshot?.collaboration.role === "member";
+  const repoSelectionLocked = props.reposLocked || sharedRepoMember;
   const selectedRepos = repos.filter((repo) => props.repoIds.includes(repo.id));
+  const executionTargets = collaborationExecutionTargets(
+    props.snapshot,
+    props.agent,
+    props.activeCollaborationAssignment,
+  );
   const noRepoSelected = repos.length > 0 && selectedRepos.length === 0;
   const draftCommand = resolveAppCommand(draft, props.agent);
   const isAppOnlyCommand =
@@ -2382,7 +2515,7 @@ function Composer(props: ComposerProps) {
               <div className="menu repo-menu">
                 <div className="repo-menu-head">
                   <span className="menu-head">Connected Repos</span>
-                  {repos.length > 0 && !props.reposLocked && (
+                  {repos.length > 0 && !repoSelectionLocked && (
                     <button
                       type="button"
                       className="repo-clear"
@@ -2398,10 +2531,11 @@ function Composer(props: ComposerProps) {
                 {repos.length === 0 && (
                   <div className="menu-empty">No repositories connected</div>
                 )}
-                {props.reposLocked && (
+                {repoSelectionLocked && (
                   <div className="menu-empty repo-lock-note">
-                    Repositories are fixed after this session creates a managed
-                    workspace. Start a new session to use a different set.
+                    {sharedRepoMember
+                      ? "The host manages the shared repository list. Keep matching clones open on this device."
+                      : "Repositories are fixed after this session creates a managed workspace. Start a new session to use a different set."}
                   </div>
                 )}
                 {repos.map((repo) => {
@@ -2415,7 +2549,7 @@ function Composer(props: ComposerProps) {
                             : "menu-item check"
                         }
                         title={
-                          props.reposLocked
+                          repoSelectionLocked
                             ? "Start a new session to change repositories"
                             : undefined
                         }
@@ -2423,7 +2557,7 @@ function Composer(props: ComposerProps) {
                         <input
                           type="checkbox"
                           checked={checked}
-                          disabled={props.reposLocked}
+                          disabled={repoSelectionLocked}
                           onChange={(event) => {
                             const next = event.target.checked
                               ? [...props.repoIds, repo.id]
@@ -2442,12 +2576,12 @@ function Composer(props: ComposerProps) {
                         type="button"
                         className="history-del"
                         title={
-                          props.reposLocked
+                          repoSelectionLocked
                             ? "Start a new session to change repositories"
                             : `Disconnect ${repo.name}`
                         }
                         aria-label={`Disconnect ${repo.name}`}
-                        disabled={props.reposLocked}
+                        disabled={repoSelectionLocked}
                         onClick={() => props.onRemoveRepo(repo.id)}
                       >
                         <Icon name="trash" />
@@ -2455,8 +2589,8 @@ function Composer(props: ComposerProps) {
                     </div>
                   );
                 })}
-                <div className="menu-sep" />
-                <button
+                {!sharedRepoMember && <div className="menu-sep" />}
+                {!sharedRepoMember && <button
                   type="button"
                   className="menu-item"
                   onClick={() => {
@@ -2466,8 +2600,8 @@ function Composer(props: ComposerProps) {
                 >
                   <Icon name="folder" />
                   <span>Add local folder</span>
-                </button>
-                <button
+                </button>}
+                {!sharedRepoMember && <button
                   type="button"
                   className="menu-item"
                   onClick={() => {
@@ -2477,7 +2611,7 @@ function Composer(props: ComposerProps) {
                 >
                   <Icon name="github" />
                   <span>Add from GitHub</span>
-                </button>
+                </button>}
               </div>
             </Popover>
 
@@ -2495,6 +2629,27 @@ function Composer(props: ComposerProps) {
                 { value: "codex", label: "Codex" },
               ]}
             />
+
+            {props.snapshot?.collaboration.connected && (
+              <Dropdown
+                ariaLabel="Execution device"
+                title={
+                  props.activeCollaborationAssignment
+                    ? `Running on ${props.activeCollaborationAssignment.device_name}`
+                    : "Choose where this agent runs"
+                }
+                className="chip-btn device-chip"
+                icon={<Icon name="devices" />}
+                value={props.executionDeviceId ?? "local"}
+                placement="above"
+                fullWidth
+                disabled={!!props.activeCollaborationAssignment}
+                onChange={(value) =>
+                  props.setExecutionDeviceId(value === "local" ? null : value)
+                }
+                options={executionTargets}
+              />
+            )}
 
             <Popover
               open={permOpen}
@@ -3468,6 +3623,144 @@ function verifyPrompt(scope: string): string {
   return `Verify ${requestedScope} end to end. Determine the relevant build, test, lint, type-check, and runtime checks from repository guidance and package configuration; run the focused checks that materially prove the behavior; fix in-scope failures; and report concrete results rather than assumptions.`;
 }
 
+export function onlineCollaborationDevices(snapshot: WorkbenchSnapshot): CollaborationDevice[] {
+  const serverTime = Date.parse(snapshot.collaboration.server_time);
+  const now = Number.isFinite(serverTime) ? serverTime : Date.now();
+  return snapshot.collaboration.devices.filter(
+    (device) =>
+      !device.revoked_at &&
+      now - Date.parse(device.last_seen_at) <= 45_000,
+  );
+}
+
+export function collaborationExecutionTargets(
+  snapshot: WorkbenchSnapshot | null,
+  agent: AgentKind,
+  active: CollaborationAssignment | null,
+): { value: string; label: string }[] {
+  if (!snapshot?.collaboration.connected) {
+    return [{ value: "local", label: "This device" }];
+  }
+  const collaboration = snapshot.collaboration;
+  const options: { value: string; label: string }[] = [];
+  if (collaboration.role !== "member") {
+    options.push({ value: "local", label: "This device" });
+  }
+  const online = new Set(onlineCollaborationDevices(snapshot).map((device) => device.id));
+  for (const device of collaboration.devices) {
+    if (device.revoked_at) continue;
+    if (device.id === collaboration.device_id && collaboration.role !== "member") continue;
+    if (!online.has(device.id) && device.id !== active?.device_id) continue;
+    const ready = device.capabilities.some(
+      (capability) =>
+        capability.agent === agent &&
+        capability.installed &&
+        capability.authenticated,
+    );
+    if (!ready && device.id !== collaboration.device_id && device.id !== active?.device_id) {
+      continue;
+    }
+    const suffix = device.id === collaboration.device_id ? " · this device" : "";
+    options.push({
+      value: device.id,
+      label: ready
+        ? `${device.name}${suffix}`
+        : `${device.name}${suffix} · ${labelAgent(agent)} not ready`,
+    });
+  }
+  if (active && !options.some((option) => option.value === active.device_id)) {
+    options.push({ value: active.device_id, label: active.device_name });
+  }
+  return options;
+}
+
+export type CollaborationAssignmentIssue = {
+  kind: "missing_repo" | "ambiguous_repo" | "connection" | "agent" | "changes" | "unknown";
+  title: string;
+  message: string;
+  missingRepos: string[];
+};
+
+export function collaborationAssignmentIssue(
+  assignment: CollaborationAssignment,
+): CollaborationAssignmentIssue {
+  const error = assignment.error?.trim() ?? "";
+  const missingMatch =
+    error.match(/repository mapping failed.*?missing:\s*([^.]+)\./i) ??
+    error.match(/connect matching local repositories.*?:\s*(.+)$/i);
+  if (missingMatch) {
+    const missingRepos = missingMatch[1]
+      .split(",")
+      .map((repo) => repo.trim())
+      .filter(Boolean);
+    return {
+      kind: "missing_repo",
+      title: "Repository clone needed",
+      message: `Open a matching clone on ${assignment.device_name}, then retry this work.`,
+      missingRepos,
+    };
+  }
+  const ambiguousMatch = error.match(/multiple open clones match:\s*([^.]+)\./i);
+  if (ambiguousMatch) {
+    return {
+      kind: "ambiguous_repo",
+      title: "More than one clone matches",
+      message: `On ${assignment.device_name}, keep only the intended clone open in this VS Code workspace, then retry.`,
+      missingRepos: ambiguousMatch[1].split(",").map((repo) => repo.trim()).filter(Boolean),
+    };
+  }
+  if (assignment.status === "lease_expired" || /lease|offline|disconnected/i.test(error)) {
+    return {
+      kind: "connection",
+      title: "Device connection was lost",
+      message: `No late changes were accepted. Bring ${assignment.device_name} online and retry.`,
+      missingRepos: [],
+    };
+  }
+  if (/not ready|not installed|sign.?in|authenticated|local worker ended/i.test(error)) {
+    return {
+      kind: "agent",
+      title: `${labelAgent(assignment.agent)} stopped`,
+      message: `Check ${labelAgent(assignment.agent)} on ${assignment.device_name}, then retry.`,
+      missingRepos: [],
+    };
+  }
+  if (/patch|changes|miB|worktree|git/i.test(error)) {
+    return {
+      kind: "changes",
+      title: "Changes could not be returned",
+      message: "Review the technical details, reduce or fix the repository change, then retry.",
+      missingRepos: [],
+    };
+  }
+  return {
+    kind: "unknown",
+    title: "Device work stopped",
+    message: `Check the details from ${assignment.device_name}, then retry when the issue is resolved.`,
+    missingRepos: [],
+  };
+}
+
+export function unresolvedCollaborationIssues(
+  assignments: CollaborationAssignment[],
+): CollaborationAssignment[] {
+  return assignments
+    .filter((assignment) =>
+      assignment.status === "failed" || assignment.status === "lease_expired",
+    )
+    .filter(
+      (assignment) =>
+        !assignments.some(
+          (newer) =>
+            newer.thread_id === assignment.thread_id &&
+            newer.device_id === assignment.device_id &&
+            Date.parse(newer.created_at) > Date.parse(assignment.created_at),
+        ),
+    )
+    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
+    .slice(0, 5);
+}
+
 const PERMISSIONS: {
   value: PermissionPolicy;
   label: string;
@@ -3651,6 +3944,418 @@ function isManagedThreadWorkspace(
   repo: NonNullable<WorkbenchSnapshot["details"]>["repos"][number],
 ): boolean {
   return Boolean(repo.worktree_path && repo.branch?.startsWith("am/thread-"));
+}
+
+function CollaborationSheet(props: {
+  snapshot: WorkbenchSnapshot;
+  invite: string | null;
+  onClose(): void;
+  onHost(): void;
+  onJoin(invite: string): void;
+  onCopyInvite(): void;
+  onLeave(): void;
+  onRevoke(deviceId: string): void;
+  onCancelAssignment(assignmentId: string): void;
+  onRetryAssignment(assignmentId: string): void;
+  onDismissIssue(assignmentId: string): void;
+  onAddRepoAndRetry(assignmentId: string): void;
+  onApplyChange(changeSetId: string, overwrite?: boolean): void;
+  onRejectChange(changeSetId: string): void;
+}) {
+  const [joinInvite, setJoinInvite] = useState("");
+  const collaboration = props.snapshot.collaboration;
+  const onlineIds = new Set(
+    onlineCollaborationDevices(props.snapshot).map((device) => device.id),
+  );
+  const devices = collaboration.devices.filter((device) => !device.revoked_at);
+  const activeAssignments = collaboration.assignments.filter((assignment) =>
+    ["queued", "running", "review"].includes(assignment.status),
+  );
+  const recentIssues = unresolvedCollaborationIssues(collaboration.assignments);
+  const unresolvedChanges = collaboration.change_sets.filter((change) =>
+    change.status === "pending" || change.status === "conflict",
+  );
+  const threadNames = new Map(
+    props.snapshot.threads.map((thread) => [thread.id, thread.title]),
+  );
+
+  return (
+    <div className="sheet-backdrop" onMouseDown={props.onClose}>
+      <section
+        className="sheet collaboration-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Shared workspace devices"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header>
+          <div className="collaboration-heading">
+            <strong>Shared workspace</strong>
+            <small>
+              {collaboration.connected
+                ? `${collaboration.role === "host" ? "Hosting" : "Connected to"} ${collaboration.host_name ?? "Perpetual"}`
+                : "Run your agents together across devices"}
+            </small>
+          </div>
+          <IconButton title="Close" onClick={props.onClose}>
+            <Icon name="close" />
+          </IconButton>
+        </header>
+
+        <div className="sheet-body collaboration-body">
+          {props.snapshot.error && (
+            <div className="collaboration-inline-error" role="alert">
+              <Icon name="alert" />
+              <span>
+                <strong>Could not complete that action</strong>
+                <small>{props.snapshot.error}</small>
+              </span>
+            </div>
+          )}
+          {!collaboration.connected ? (
+            <div className="collaboration-onboarding">
+              <div className="collaboration-hero">
+                <span className="collaboration-hero-icon"><Icon name="devices" /></span>
+                <strong>Coordinate agents on different devices</strong>
+                <p>
+                  Pair over your local network. Prompts and progress stay synchronized between agents on different devices.
+                </p>
+              </div>
+              <button type="button" className="collaboration-choice" onClick={props.onHost}>
+                <span className="choice-icon"><Icon name="lock" /></span>
+                <span>
+                  <strong>Share from this device</strong>
+                  <small>Creates an encrypted, 15-minute invite and copies it.</small>
+                </span>
+                <Icon name="caret" />
+              </button>
+              <div className="collaboration-join">
+                <label htmlFor="collaboration-invite">Join with an invite</label>
+                <div>
+                  <input
+                    id="collaboration-invite"
+                    value={joinInvite}
+                    placeholder="Paste perpetual://join/…"
+                    onChange={(event) => setJoinInvite(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && joinInvite.trim()) {
+                        props.onJoin(joinInvite.trim());
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="primary-btn"
+                    disabled={!joinInvite.trim()}
+                    onClick={() => props.onJoin(joinInvite.trim())}
+                  >
+                    Join
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="collaboration-secure-bar">
+                <span><Icon name="lock" /> End-to-end encrypted on your LAN</span>
+                <span>{onlineIds.size} online</span>
+              </div>
+
+              {collaboration.role === "host" && (
+                <div className="invite-panel">
+                  <div>
+                    <strong>Add another device</strong>
+                    <small>
+                      Open Perpetual there and paste the invite. No account matching required.
+                    </small>
+                  </div>
+                  <button type="button" className="primary-btn" onClick={props.onCopyInvite}>
+                    <Icon name="paperclip" />
+                    {props.invite ? "Copy New Invite" : "Copy Invite"}
+                  </button>
+                </div>
+              )}
+
+              <section className="collaboration-section">
+                <div className="collaboration-section-title">
+                  <strong>Devices</strong>
+                  <span>{devices.length}</span>
+                </div>
+                <div className="device-list">
+                  {devices.map((device) => {
+                    const online = onlineIds.has(device.id);
+                    return (
+                      <article className="device-card" key={device.id}>
+                        <span className={`presence-dot${online ? " online" : ""}`} />
+                        <div className="device-main">
+                          <strong>
+                            {device.name}
+                            {device.id === collaboration.device_id && <em>This device</em>}
+                          </strong>
+                          <small>
+                            {online ? "Online" : relativeDeviceSeen(device.last_seen_at)} · {device.platform}
+                          </small>
+                          <div className="agent-badges">
+                            {device.capabilities.map((capability) => (
+                              <span
+                                key={capability.agent}
+                                className={
+                                  capability.installed && capability.authenticated
+                                    ? "ready"
+                                    : "not-ready"
+                                }
+                              >
+                                <AgentMark agent={capability.agent} />
+                                {labelAgent(capability.agent)}
+                                {capability.installed && capability.authenticated ? " ready" : " unavailable"}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                        {collaboration.role === "host" && device.id !== collaboration.device_id && (
+                          <button
+                            type="button"
+                            className="device-remove"
+                            title={`Remove ${device.name}`}
+                            onClick={() => props.onRevoke(device.id)}
+                          >
+                            <Icon name="trash" />
+                          </button>
+                        )}
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+
+              {activeAssignments.length > 0 && (
+                <section className="collaboration-section">
+                  <div className="collaboration-section-title">
+                    <strong>Shared work</strong>
+                    <span>{activeAssignments.length}</span>
+                  </div>
+                  <div className="assignment-list">
+                    {activeAssignments.map((assignment) => (
+                      <article className="assignment-card" key={assignment.id}>
+                        <div className="assignment-head">
+                          <span className={`assignment-status ${assignment.status}`}>
+                            {humanize(assignment.status)}
+                          </span>
+                          <span>{assignment.device_name} · {labelAgent(assignment.agent)}</span>
+                        </div>
+                        <strong>{threadNames.get(assignment.thread_id) ?? "Shared session"}</strong>
+                        <details>
+                          <summary>View the prompt this agent received</summary>
+                          <pre>{assignment.prompt.slice(0, 4_000)}</pre>
+                        </details>
+                        {(assignment.status === "queued" || assignment.status === "running") && (
+                          <button
+                            type="button"
+                            className="secondary-btn assignment-stop"
+                            onClick={() => props.onCancelAssignment(assignment.id)}
+                          >
+                            <Icon name="stop" /> Stop
+                          </button>
+                        )}
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {recentIssues.length > 0 && (
+                <section className="collaboration-section">
+                  <div className="collaboration-section-title">
+                    <strong>Needs attention</strong>
+                    <span>{recentIssues.length}</span>
+                  </div>
+                  <div className="assignment-list">
+                    {recentIssues.map((assignment) => {
+                      const issue = collaborationAssignmentIssue(assignment);
+                      const device = devices.find((item) => item.id === assignment.device_id);
+                      const online = onlineIds.has(assignment.device_id);
+                      const ready = device?.capabilities.some(
+                        (capability) =>
+                          capability.agent === assignment.agent &&
+                          capability.installed &&
+                          capability.authenticated,
+                      ) ?? false;
+                      const localMissingRepo =
+                        issue.kind === "missing_repo" &&
+                        assignment.device_id === collaboration.device_id;
+                      const retryDisabledReason = !online
+                        ? `Open Perpetual on ${assignment.device_name} before retrying.`
+                        : !ready
+                          ? `Sign in to ${labelAgent(assignment.agent)} on ${assignment.device_name} before retrying.`
+                          : null;
+                      return (
+                        <article className="assignment-card assignment-issue" key={assignment.id} role="alert">
+                          <div className="assignment-head">
+                            <span className={`assignment-status ${assignment.status}`}>
+                              {assignment.status === "lease_expired" ? "Disconnected" : "Stopped"}
+                            </span>
+                            <span>{assignment.device_name} · {labelAgent(assignment.agent)}</span>
+                          </div>
+                          <strong>{issue.title}</strong>
+                          <p>{issue.message}</p>
+                          {issue.missingRepos.length > 0 && (
+                            <div className="missing-repo-list">
+                              {issue.missingRepos.map((repo) => <code key={repo}>{repo}</code>)}
+                            </div>
+                          )}
+                          {assignment.error && (
+                            <details>
+                              <summary>Technical details</summary>
+                              <pre>{assignment.error}</pre>
+                            </details>
+                          )}
+                          <div className="assignment-actions">
+                            {localMissingRepo ? (
+                              <button
+                                type="button"
+                                className="primary-btn"
+                                onClick={() => props.onAddRepoAndRetry(assignment.id)}
+                              >
+                                <Icon name="folder" /> Choose clone and retry
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                className="primary-btn"
+                                disabled={!!retryDisabledReason}
+                                title={retryDisabledReason ?? "Queue this work again"}
+                                onClick={() => props.onRetryAssignment(assignment.id)}
+                              >
+                                Retry
+                              </button>
+                            )}
+                            {retryDisabledReason && <small>{retryDisabledReason}</small>}
+                            <button
+                              type="button"
+                              className="secondary-btn"
+                              onClick={() => props.onDismissIssue(assignment.id)}
+                            >
+                              Dismiss
+                            </button>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
+
+              {unresolvedChanges.length > 0 && (
+                <section className="collaboration-section">
+                  <div className="collaboration-section-title">
+                    <strong>Returned changes</strong>
+                    <span>{unresolvedChanges.length}</span>
+                  </div>
+                  <div className="remote-change-list">
+                    {unresolvedChanges.map((change) => (
+                      <RemoteChangeCard
+                        key={change.id}
+                        change={change}
+                        assignment={collaboration.assignments.find(
+                          (assignment) => assignment.id === change.assignment_id,
+                        )}
+                        canResolve={collaboration.role === "host"}
+                        onApply={() => props.onApplyChange(change.id)}
+                        onOverwrite={() => props.onApplyChange(change.id, true)}
+                        onReject={() => props.onRejectChange(change.id)}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
+            </>
+          )}
+        </div>
+
+        {collaboration.connected && (
+          <footer>
+            <span className="collaboration-footnote">
+              Provider credentials and native session IDs never leave each device.
+            </span>
+            <button type="button" onClick={props.onLeave}>
+              {collaboration.role === "host" ? "Stop Sharing" : "Leave Workspace"}
+            </button>
+          </footer>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function RemoteChangeCard(props: {
+  change: CollaborationChangeSet;
+  assignment: CollaborationAssignment | undefined;
+  canResolve: boolean;
+  onApply(): void;
+  onOverwrite(): void;
+  onReject(): void;
+}) {
+  const additions = props.change.files.reduce((sum, file) => sum + file.additions, 0);
+  const deletions = props.change.files.reduce((sum, file) => sum + file.deletions, 0);
+  const conflict = props.change.status === "conflict";
+  return (
+    <article className={`remote-change-card${conflict ? " conflict" : ""}`}>
+      <div className="remote-change-head">
+        <span><Icon name={conflict ? "alert" : "repo"} /></span>
+        <div>
+          <strong>{props.change.repo_name}</strong>
+          <small>
+            From {props.assignment?.device_name ?? "paired device"} · {props.change.files.length} files
+          </small>
+        </div>
+        <span className="changes-stats">
+          <span className="diff-add">+{additions}</span>
+          <span className="diff-del">-{deletions}</span>
+        </span>
+      </div>
+      {conflict && (
+        <div className="conflict-note">
+          Local edits overlap: {props.change.conflict_files.slice(0, 5).join(", ")}
+          {props.change.conflict_files.length > 5 ? ", …" : ""}
+        </div>
+      )}
+      <div className="remote-file-list">
+        {props.change.files.slice(0, 6).map((file) => (
+          <span key={file.path}>{file.path}</span>
+        ))}
+        {props.change.files.length > 6 && <small>+{props.change.files.length - 6} more</small>}
+      </div>
+      {props.canResolve ? (
+        <div className="remote-change-actions">
+          {!conflict && (
+            <button type="button" className="primary-btn" onClick={props.onApply}>
+              <Icon name="check" /> Apply
+            </button>
+          )}
+          {conflict && (
+            <button type="button" className="primary-btn overwrite-btn" onClick={props.onOverwrite}>
+              Overwrite Local Files
+            </button>
+          )}
+          <button type="button" className="secondary-btn" onClick={props.onReject}>
+            Reject
+          </button>
+        </div>
+      ) : (
+        <div className="conflict-note neutral">Waiting for the host to review these changes.</div>
+      )}
+    </article>
+  );
+}
+
+function relativeDeviceSeen(value: string): string {
+  const elapsed = Date.now() - Date.parse(value);
+  if (!Number.isFinite(elapsed) || elapsed < 60_000) return "Seen moments ago";
+  const minutes = Math.floor(elapsed / 60_000);
+  if (minutes < 60) return `Seen ${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `Seen ${hours}h ago`;
+  return `Seen ${Math.floor(hours / 24)}d ago`;
 }
 
 function MonitorSheet(props: {

@@ -368,6 +368,12 @@ impl AppCore {
         message: Option<PendingThreadMessage>,
         execution_backend: Option<ExecutionBackend>,
     ) -> Result<String, CoreError> {
+        if self.has_active_collaboration_assignment(thread_id).await? {
+            return Err(CoreError::Other(
+                "This session is assigned to another device. Cancel or finish that assignment before starting a local run."
+                    .into(),
+            ));
+        }
         if self.sessions.is_active(thread_id).await {
             return Err(CoreError::Other("agent thread is already running".into()));
         }
@@ -733,7 +739,26 @@ impl AppCore {
         let cloud_active = am_db::repos::cloud_run::active_for_thread(&self.db.pool, thread_id)
             .await?
             .is_some();
-        if self.sessions.is_active(thread_id).await || cloud_active {
+        let collaboration_assignments =
+            am_db::repos::collaboration::list_assignments(&self.db.pool, None, true).await?;
+        if collaboration_assignments.iter().any(|assignment| {
+            assignment.thread_id == thread_id
+                && assignment.status == am_proto::CollaborationAssignmentStatus::Review
+        }) {
+            return Err(CoreError::Other(
+                "Apply or reject the returned device changes before sending the next request."
+                    .into(),
+            ));
+        }
+        let collaboration_active = collaboration_assignments.iter().any(|assignment| {
+            assignment.thread_id == thread_id
+                && matches!(
+                    assignment.status,
+                    am_proto::CollaborationAssignmentStatus::Queued
+                        | am_proto::CollaborationAssignmentStatus::Running
+                )
+        });
+        if self.sessions.is_active(thread_id).await || cloud_active || collaboration_active {
             let queued = am_db::repos::queued_turn::enqueue_with_echo(
                 &self.db.pool,
                 thread_id,
@@ -805,6 +830,9 @@ impl AppCore {
     }
 
     pub async fn thread_diff(&self, thread_id: &str) -> Result<AgentThreadDiff, CoreError> {
+        let full_managed_patch = am_db::repos::agent_thread::get(&self.db.pool, thread_id)
+            .await?
+            .is_some_and(|thread| thread.force_managed_workspace);
         let links =
             am_db::repos::agent_thread_repo::list_for_thread(&self.db.pool, thread_id).await?;
         let mut repos = Vec::new();
@@ -821,6 +849,7 @@ impl AppCore {
                 .and_then(|repo| repo.local_path.as_deref())
                 .is_some_and(|path| same_path(Path::new(&worktree), Path::new(path)));
             let base_for_diff = base_ref.clone();
+            let base_for_full_patch = base_ref.clone();
             let worktree_for_diff = worktree.clone();
             let mut diff = tokio::task::spawn_blocking(move || {
                 if uses_visible_repo {
@@ -842,6 +871,19 @@ impl AppCore {
             })
             .await
             .map_err(|e| CoreError::Other(e.to_string()))??;
+            if full_managed_patch && !uses_visible_repo {
+                let worktree_for_patch = PathBuf::from(&worktree);
+                diff.patch = tokio::task::spawn_blocking(move || {
+                    am_vcs::worktree_patch_with_excludes(
+                        &worktree_for_patch,
+                        &base_for_full_patch,
+                        GENERATED_CONTEXT_FILES,
+                    )
+                })
+                .await
+                .map_err(|error| CoreError::Other(error.to_string()))?
+                .map_err(|error| CoreError::Other(error.to_string()))?;
+            }
             let remote_url = repo.as_ref().and_then(|repo| repo.remote_url.clone());
             repos.push(AgentThreadRepoDiff {
                 repo_id: link.repo_id,
@@ -1099,6 +1141,62 @@ impl AppCore {
             repos,
             blockers,
         })
+    }
+
+    /// Apply coordinator-approved peer work into a mirrored device thread's
+    /// managed worktree before its provider starts. Visible checkouts are never
+    /// accepted here, which keeps cross-device synchronization isolated.
+    pub async fn import_collaboration_patch(
+        &self,
+        thread_id: &str,
+        repo_id: &str,
+        patch: &str,
+    ) -> Result<(), CoreError> {
+        if patch.len() > 16 * 1024 * 1024 {
+            return Err(CoreError::Other(
+                "Collaboration patch exceeds the 16 MiB safety limit.".into(),
+            ));
+        }
+        let thread = am_db::repos::agent_thread::get(&self.db.pool, thread_id)
+            .await?
+            .ok_or(CoreError::NotFound)?;
+        if !thread.force_managed_workspace {
+            return Err(CoreError::Other(
+                "Peer patches may only be imported into managed collaboration workspaces.".into(),
+            ));
+        }
+        self.ensure_thread_workspace(
+            &thread,
+            thread.execution_backend,
+            PermissionPolicy::WorkspaceWrite,
+        )
+        .await?;
+        let link = am_db::repos::agent_thread_repo::list_for_thread(&self.db.pool, thread_id)
+            .await?
+            .into_iter()
+            .find(|link| link.repo_id == repo_id)
+            .ok_or_else(|| CoreError::Other("Repository is not attached to the mirror.".into()))?;
+        let worktree = link
+            .worktree_path
+            .ok_or_else(|| CoreError::Other("Managed workspace was not created.".into()))?;
+        let worktree = PathBuf::from(worktree);
+        let check_path = worktree.clone();
+        let check_patch = patch.to_string();
+        tokio::task::spawn_blocking(move || am_vcs::check_patch_applies(&check_path, &check_patch))
+            .await
+            .map_err(|err| CoreError::Other(err.to_string()))?
+            .map_err(|err| {
+                CoreError::Other(format!(
+                    "This device's repository is not aligned with the shared workspace: {err}"
+                ))
+            })?;
+        let apply_path = worktree;
+        let apply_patch = patch.to_string();
+        tokio::task::spawn_blocking(move || am_vcs::apply_patch_to_repo(&apply_path, &apply_patch))
+            .await
+            .map_err(|err| CoreError::Other(err.to_string()))?
+            .map_err(|err| CoreError::Other(err.to_string()))?;
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2261,9 +2359,12 @@ impl AppCore {
     ) -> Result<ThreadWorkspace, CoreError> {
         let links =
             am_db::repos::agent_thread_repo::list_for_thread(&self.db.pool, &thread.id).await?;
-        let visible_repo_workspace = self
-            .visible_repo_workspace(&links, backend, permission)
-            .await?;
+        let visible_repo_workspace = if thread.force_managed_workspace {
+            None
+        } else {
+            self.visible_repo_workspace(&links, backend, permission)
+                .await?
+        };
         let workspace = visible_repo_workspace
             .clone()
             .unwrap_or_else(|| self.thread_workspace_path(&thread.id, backend));
@@ -3231,6 +3332,7 @@ mod tests {
             preferred_agent: Some(AgentKind::ClaudeCode),
             permission: permission_to_string(PermissionPolicy::WorkspaceWrite),
             execution_backend: ExecutionBackend::Host,
+            force_managed_workspace: false,
             model: None,
             reasoning: None,
             local_provider: None,

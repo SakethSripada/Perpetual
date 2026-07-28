@@ -33,6 +33,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
+sha2 = "0.10"
 
 # Errors + logging
 thiserror = "2"

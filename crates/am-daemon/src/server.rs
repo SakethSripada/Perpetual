@@ -539,6 +539,134 @@ async fn dispatch(core: &AppCore, req: DaemonRequest) -> Result<DaemonResponse, 
             A::Unit
         }
 
+        Q::RegisterCollaborationDevice(input) => {
+            A::CollaborationDevice(core.register_collaboration_device(input).await.map_err(s)?)
+        }
+        Q::HeartbeatCollaborationDevice(input) => A::CollaborationDevice(
+            core.heartbeat_collaboration_device(input)
+                .await
+                .map_err(s)?,
+        ),
+        Q::ListCollaborationDevices => {
+            A::CollaborationDevices(core.list_collaboration_devices().await.map_err(s)?)
+        }
+        Q::RevokeCollaborationDevice { device_id } => {
+            core.revoke_collaboration_device(&device_id)
+                .await
+                .map_err(s)?;
+            A::Unit
+        }
+        Q::CollaborationSnapshot {
+            thread_id,
+            include_patches,
+        } => A::CollaborationSnapshot(
+            core.collaboration_snapshot(thread_id.as_deref(), include_patches)
+                .await
+                .map_err(s)?,
+        ),
+        Q::CreateCollaborationAssignment(input) => A::CollaborationAssignment(
+            core.create_collaboration_assignment(input)
+                .await
+                .map_err(s)?,
+        ),
+        Q::RetryCollaborationAssignment { assignment_id } => A::CollaborationAssignment(
+            core.retry_collaboration_assignment(&assignment_id)
+                .await
+                .map_err(s)?,
+        ),
+        Q::ListCollaborationAssignments {
+            device_id,
+            active_only,
+        } => A::CollaborationAssignments(
+            core.list_collaboration_assignments(device_id.as_deref(), active_only)
+                .await
+                .map_err(s)?,
+        ),
+        Q::ClaimCollaborationAssignment {
+            assignment_id,
+            device_id,
+        } => A::ClaimedCollaborationAssignment(
+            core.claim_collaboration_assignment(&assignment_id, &device_id)
+                .await
+                .map_err(s)?,
+        ),
+        Q::RenewCollaborationLease {
+            assignment_id,
+            lease_token,
+        } => A::CollaborationAssignment(
+            core.renew_collaboration_lease(&assignment_id, &lease_token)
+                .await
+                .map_err(s)?,
+        ),
+        Q::ReportCollaborationEvent(input) => {
+            core.report_collaboration_event(input).await.map_err(s)?;
+            A::Unit
+        }
+        Q::ReportCollaborationApproval(input) => {
+            core.report_collaboration_approval(input).await.map_err(s)?;
+            A::Unit
+        }
+        Q::ListCollaborationApprovalDecisions {
+            assignment_id,
+            lease_token,
+        } => A::CollaborationApprovalDecisions(
+            core.list_collaboration_approval_decisions(&assignment_id, &lease_token)
+                .await
+                .map_err(s)?,
+        ),
+        Q::AcknowledgeCollaborationApprovalDecision {
+            assignment_id,
+            lease_token,
+            approval_id,
+        } => {
+            core.acknowledge_collaboration_approval_decision(
+                &assignment_id,
+                &lease_token,
+                &approval_id,
+            )
+            .await
+            .map_err(s)?;
+            A::Unit
+        }
+        Q::ReportCollaborationChangeSet(input) => A::CollaborationChangeSet(
+            core.report_collaboration_change_set(input)
+                .await
+                .map_err(s)?,
+        ),
+        Q::FinishCollaborationAssignment(input) => A::CollaborationAssignment(
+            core.finish_collaboration_assignment(input)
+                .await
+                .map_err(s)?,
+        ),
+        Q::CancelCollaborationAssignment { assignment_id } => A::CollaborationAssignment(
+            core.cancel_collaboration_assignment(&assignment_id)
+                .await
+                .map_err(s)?,
+        ),
+        Q::ApplyCollaborationChangeSet {
+            change_set_id,
+            overwrite,
+        } => A::CollaborationChangeSet(
+            core.apply_collaboration_change_set(&change_set_id, overwrite)
+                .await
+                .map_err(s)?,
+        ),
+        Q::RejectCollaborationChangeSet { change_set_id } => A::CollaborationChangeSet(
+            core.reject_collaboration_change_set(&change_set_id)
+                .await
+                .map_err(s)?,
+        ),
+        Q::ImportCollaborationPatch {
+            thread_id,
+            repo_id,
+            patch,
+        } => {
+            core.import_collaboration_patch(&thread_id, &repo_id, &patch)
+                .await
+                .map_err(s)?;
+            A::Unit
+        }
+
         Q::ReplayEvents { since_seq } => A::EventReplay(core.events.replay_since(since_seq)),
         Q::LatestEventSeq => A::EventSeq(core.events.latest_seq()),
         Q::PrepareShutdown => {

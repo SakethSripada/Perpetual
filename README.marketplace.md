@@ -38,6 +38,19 @@ Every task has durable transcripts, checkpoints, managed worktrees, diffs, and
 approval state. Changes return as a reviewable local result instead of silently
 replacing your checkout.
 
+### Coordinate agents across your computers
+
+Connect desktop, laptop, and other Perpetual installations with a short-lived
+encrypted LAN invite, even when they use different Claude Code or Codex
+accounts. Pick a device and agent from the composer, then see the exact handoff
+prompt, live progress, follow-ups, and approval requests in one workbench.
+
+Remote agents work in isolated worktrees. Repository writer leases prevent
+accidental overlap, and returned patches wait for host-side apply, reject, or
+conflict review. An explicit overwrite keeps a recovery backup. The coordination
+layer uses bounded state and no extra model calls, so it does not consume
+provider usage by itself.
+
 ### Budget each task or session
 
 Set a budget for every task from the composer gauge. Choose no limit, a token
@@ -54,6 +67,8 @@ draining your quota.
 - Local model fallback through Ollama or LM Studio.
 - Optional Docker Sandbox execution for Codex.
 - GitHub repository sign-in, selection, cloning, diffs, and change review.
+- Encrypted multi-device execution with shared prompts, progress, approvals,
+  repository locks, and returned-change review.
 
 ## Get started
 

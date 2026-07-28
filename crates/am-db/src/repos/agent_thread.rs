@@ -19,6 +19,7 @@ struct AgentThreadRow {
     preferred_agent: Option<String>,
     permission: String,
     execution_backend: String,
+    force_managed_workspace: bool,
     model: Option<String>,
     reasoning: Option<String>,
     local_provider: Option<String>,
@@ -108,6 +109,7 @@ impl TryFrom<AgentThreadRow> for AgentThread {
             permission: r.permission,
             execution_backend: ExecutionBackend::parse(&r.execution_backend)
                 .ok_or_else(|| DbError::InvalidEnum(r.execution_backend.clone()))?,
+            force_managed_workspace: r.force_managed_workspace,
             model: r.model,
             reasoning: r.reasoning,
             local_provider: parse_provider(r.local_provider)?,
@@ -168,7 +170,7 @@ fn parse_task_budget(value: String) -> Result<TaskBudget, DbError> {
 }
 
 const SELECT: &str = "SELECT id, project_id, group_id, title, status, active_agent, preferred_agent, \
-    permission, execution_backend, model, reasoning, local_provider, local_base_url, \
+    permission, execution_backend, force_managed_workspace, model, reasoning, local_provider, local_base_url, \
     model_target, compute_lease_id, compute_provider, estimated_compute_cost_usd, fallback_model_target, \
     original_agent, fallback_agent, original_model, fallback_model, original_local_provider, \
     fallback_local_provider, original_local_base_url, fallback_local_base_url, \
@@ -192,6 +194,7 @@ pub async fn create(pool: &SqlitePool, input: NewAgentThread) -> Result<AgentThr
             .permission
             .unwrap_or_else(|| "workspace_write".to_string()),
         execution_backend: input.execution_backend.unwrap_or_default(),
+        force_managed_workspace: input.force_managed_workspace,
         model: input.model,
         reasoning: input.reasoning,
         local_provider: input.local_provider,
@@ -232,13 +235,13 @@ pub async fn create(pool: &SqlitePool, input: NewAgentThread) -> Result<AgentThr
 
     sqlx::query(
         "INSERT INTO agent_threads (id, project_id, group_id, title, status, active_agent, preferred_agent, \
-         permission, execution_backend, model, reasoning, local_provider, local_base_url, \
+         permission, execution_backend, force_managed_workspace, model, reasoning, local_provider, local_base_url, \
          model_target, compute_lease_id, compute_provider, estimated_compute_cost_usd, fallback_model_target, \
          original_agent, fallback_agent, original_model, fallback_model, original_local_provider, \
          fallback_local_provider, original_local_base_url, fallback_local_base_url, \
          switch_back_pending, limit_reset_at, switch_back, handoff_state, objective, decisions, \
          progress, open_questions, next_actions, task_budget, sort_order, created_at, updated_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&thread.id)
     .bind(&thread.project_id)
@@ -249,6 +252,7 @@ pub async fn create(pool: &SqlitePool, input: NewAgentThread) -> Result<AgentThr
     .bind(thread.preferred_agent.map(|a| a.as_str()))
     .bind(&thread.permission)
     .bind(thread.execution_backend.as_str())
+    .bind(thread.force_managed_workspace)
     .bind(&thread.model)
     .bind(&thread.reasoning)
     .bind(thread.local_provider.map(|provider| provider.as_str()))

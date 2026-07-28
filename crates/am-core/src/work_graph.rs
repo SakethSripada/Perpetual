@@ -168,6 +168,7 @@ impl AppCore {
                         preferred_agent: input.primary_agent,
                         permission: None,
                         execution_backend: None,
+                        force_managed_workspace: false,
                         model: input.model.clone(),
                         reasoning: None,
                         local_provider: None,

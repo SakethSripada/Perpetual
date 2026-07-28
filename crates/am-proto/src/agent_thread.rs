@@ -64,6 +64,10 @@ pub struct AgentThread {
     pub preferred_agent: Option<AgentKind>,
     pub permission: String,
     pub execution_backend: ExecutionBackend,
+    /// Force an app-managed worktree even when a single host repository could
+    /// otherwise run directly in the visible checkout.
+    #[serde(default)]
+    pub force_managed_workspace: bool,
     /// Optional model override passed to the agent CLI (e.g. `sonnet`,
     /// `opus`, `gpt-5.5`). `None` uses the CLI default.
     pub model: Option<String>,
@@ -154,6 +158,8 @@ pub struct NewAgentThread {
     pub permission: Option<String>,
     #[serde(default)]
     pub execution_backend: Option<ExecutionBackend>,
+    #[serde(default)]
+    pub force_managed_workspace: bool,
     #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]

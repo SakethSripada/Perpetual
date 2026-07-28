@@ -1,7 +1,7 @@
 {
   "name": "perpetual-for-vscode",
   "displayName": "Perpetual for VS Code",
-  "description": "Run Codex and Claude Code sessions from VS Code with model switching, handoffs, GitHub repos, and Docker Sandbox support.",
+  "description": "Coordinate Codex and Claude Code across devices with shared sessions, safe Git worktrees, handoffs, and review.",
   "version": "0.2.2",
   "publisher": "SakethSripada",
   "license": "MIT",
@@ -28,7 +28,9 @@
     "ai",
     "github",
     "docker",
-    "handoff"
+    "handoff",
+    "collaboration",
+    "multi-device"
   ],
   "icon": "media/icon.png",
   "galleryBanner": {
@@ -199,6 +201,12 @@
           "type": "string",
           "default": "medium",
           "description": "Optional reasoning-effort override for new sessions."
+        },
+        "perpetual.collaboration.deviceName": {
+          "type": "string",
+          "default": "",
+          "maxLength": 80,
+          "description": "Friendly name shown to paired Perpetual devices. Empty uses this computer's hostname."
         },
         "perpetual.defaultLocalProvider": {
           "type": "string",
@@ -418,13 +426,13 @@
     "@types/react-dom": "^18.3.1",
     "@types/vscode": "^1.99.0",
     "@vitejs/plugin-react": "^4.3.4",
-    "@vscode/test-cli": "^0.0.11",
+    "@vscode/test-cli": "^0.0.15",
     "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^3.6.0",
     "esbuild": "^0.25.5",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "typescript": "^5.6.3",
-    "vite": "^5.4.11"
+    "vite": "^7.3.6"
   }
 }

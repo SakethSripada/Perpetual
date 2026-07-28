@@ -63,6 +63,22 @@ You can:
 - Organize longer tasks with plans, work nodes, handoffs, and durable progress
   markers.
 
+### Multi-device agent collaboration
+
+Share a Perpetual workspace across computers on the same LAN, even when their
+Claude Code or Codex installations use different provider accounts. An
+encrypted invite connects each device, and the shared workbench shows exact
+handoff prompts, live progress, follow-up turns, approvals, and returned
+changes. Select the computer and agent for each turn directly from the
+composer.
+
+Remote runs use isolated worktrees and coordinator-side repository writer
+leases. Their changes return to the host for apply, reject, conflict review, or
+an explicit recoverable overwrite; Perpetual never silently replaces the host
+checkout. Coordination uses compact bounded handoffs and no additional model
+calls. See [Multi-device collaboration](docs/multi-device-collaboration.md) for
+setup, security, repository matching, and recovery details.
+
 ### Repository-aware workspaces
 
 Attach one or more repositories to a session from the local machine or through
@@ -211,10 +227,11 @@ and start a session.
 
 ## Permissions and safety
 
-Perpetual keeps its daemon local to the extension host. The bundled
+Perpetual keeps its daemon on a loopback-only authenticated socket. The bundled
 `am-daemon` process owns the SQLite database, agent subprocesses, worktrees,
-and local authenticated JSON-RPC socket used by the extension. It does not
-expose a public network service.
+and local JSON-RPC transport. Multi-device collaboration adds a separate,
+opt-in encrypted LAN proxy while the user is hosting; that proxy exposes only
+an allowlisted collaboration RPC surface and can be stopped at any time.
 
 Permission choices are explicit:
 
@@ -293,6 +310,11 @@ am-daemon -- am-core -- am-agents -- Claude Code / Codex
     +-- SQLite state, worktrees, process lifecycle, local/cloud/sandbox runtime
 ```
 
+When multi-device sharing is enabled, the extension host also runs the
+encrypted, RPC-allowlisted LAN proxy. Every worker keeps its own daemon,
+provider credentials, CLI process, and isolated worktree; the coordinator
+stores only shared task state and review artifacts.
+
 The repository is intentionally split into small Rust crates:
 
 | Crate | Responsibility |
@@ -333,6 +355,8 @@ Code settings search. Important groups include:
 - `perpetual.local.*` for local fallback, cloud recovery, and probe timing.
 - `perpetual.sandbox.*` for Docker Sandbox concurrency and resource/network
   limits.
+- `perpetual.collaboration.deviceName` for the name shown to other paired
+  devices.
 - `perpetual.daemonPath` to use a custom daemon binary during development.
 
 ## Troubleshooting
