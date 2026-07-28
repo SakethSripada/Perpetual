@@ -6,6 +6,7 @@ pub mod agent_thread_message;
 pub mod agent_thread_repo;
 pub mod agent_turn;
 pub mod cloud_run;
+pub mod collaboration;
 pub mod event;
 pub mod knowledge;
 pub mod memory;

@@ -368,6 +368,12 @@ impl AppCore {
         message: Option<PendingThreadMessage>,
         execution_backend: Option<ExecutionBackend>,
     ) -> Result<String, CoreError> {
+        if self.has_active_collaboration_assignment(thread_id).await? {
+            return Err(CoreError::Other(
+                "This session is assigned to another device. Cancel or finish that assignment before starting a local run."
+                    .into(),
+            ));
+        }
         if self.sessions.is_active(thread_id).await {
             return Err(CoreError::Other("agent thread is already running".into()));
         }

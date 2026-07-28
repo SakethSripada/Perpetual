@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     AgentKind, AgentThread, AgentThreadEvent, ApprovalDecision, ApprovalRequest,
-    ApprovalResolution, CloudRun, Project, ProviderUsage, Repo, SessionEvent, Task, WorkNode,
-    WorkPlanRun,
+    ApprovalResolution, CloudRun, CollaborationAssignment, CollaborationChangeSet,
+    CollaborationDevice, Project, ProviderUsage, Repo, SessionEvent, Task, WorkNode, WorkPlanRun,
 };
 
 /// A persisted activity-log entry. Everything that happens inside a project is
@@ -54,6 +54,12 @@ pub enum AppEvent {
     Session(SessionEvent),
     /// A live event streamed from a Workbench agent thread.
     AgentThreadEvent(AgentThreadEvent),
+    /// A paired installation connected, changed capability, or went offline.
+    CollaborationDeviceUpdated(CollaborationDevice),
+    /// A distributed turn was queued, claimed, completed, or lost its lease.
+    CollaborationAssignmentUpdated(CollaborationAssignment),
+    /// A worker published changes or their integration state changed.
+    CollaborationChangeSetUpdated(CollaborationChangeSet),
     /// A cloud continuation run was launched, made progress, or closed out.
     /// The full row is carried so caches can upsert without a refetch.
     CloudRunUpdated(CloudRun),
