@@ -2,7 +2,7 @@
   "name": "perpetual-for-vscode",
   "displayName": "Perpetual for VS Code",
   "description": "Coordinate Codex and Claude Code across devices with shared sessions, safe Git worktrees, handoffs, and review.",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "publisher": "SakethSripada",
   "license": "MIT",
   "author": {

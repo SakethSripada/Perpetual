@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.0
+
 - Add encrypted LAN collaboration across multiple Perpetual installations and
   independent Claude Code or Codex accounts, with simple invite pairing,
   persistent device credentials, revocation, presence, and device-aware agent
