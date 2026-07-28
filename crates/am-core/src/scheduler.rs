@@ -738,6 +738,7 @@ mod tests {
             preferred_agent: Some(active_agent),
             permission: "workspace_write".into(),
             execution_backend: am_proto::ExecutionBackend::Host,
+            force_managed_workspace: false,
             model: None,
             reasoning: None,
             local_provider: None,

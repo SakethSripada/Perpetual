@@ -10,6 +10,7 @@ import {
   decodeCollaborationInvite,
   type SavedCollaborationPeer,
 } from "./collaborationTransport";
+import { CollaborationWorker } from "./collaborationWorker";
 import { DaemonClient } from "./daemonClient";
 import type { AgentStatus, AppEvent, RegisterCollaborationDevice } from "./types";
 
@@ -22,6 +23,7 @@ export class DaemonManager implements vscode.Disposable {
   private client: DaemonClient | null = null;
   private coordinatorClient: DaemonClient | null = null;
   private collaborationHost: CollaborationHost | null = null;
+  private collaborationWorker: CollaborationWorker | null = null;
   private child: ChildProcessWithoutNullStreams | null = null;
   private startPromise: Promise<DaemonClient> | null = null;
   private restorePromise: Promise<void> | null = null;
@@ -58,6 +60,9 @@ export class DaemonManager implements vscode.Disposable {
 
   async createCollaborationInvite(): Promise<string> {
     const local = await this.getLocalClient();
+    if (this.coordinatorClient) {
+      throw new Error("Leave the current shared workspace before hosting a new one.");
+    }
     const identity = await this.deviceIdentity();
     if (!this.collaborationHost) {
       const hostId = this.context.globalState.get<string>(HOST_ID_KEY) ?? randomUUID();
@@ -88,6 +93,7 @@ export class DaemonManager implements vscode.Disposable {
         this.context.globalState.update(HOST_PORT_KEY, port),
       ]);
       await this.registerThisDevice(local);
+      await this.startCollaborationWorker(local);
       this.startHeartbeat();
       this.output.appendLine(`[collaboration] hosting encrypted workspace on port ${port}`);
     }
@@ -95,6 +101,9 @@ export class DaemonManager implements vscode.Disposable {
   }
 
   async joinCollaboration(inviteText: string): Promise<void> {
+    if (this.collaborationHost) {
+      throw new Error("Stop hosting the current shared workspace before joining another one.");
+    }
     const invite = decodeCollaborationInvite(inviteText);
     const local = await this.getLocalClient();
     const identity = await this.deviceIdentity();
@@ -118,6 +127,7 @@ export class DaemonManager implements vscode.Disposable {
     };
     await this.context.secrets.store(PEER_SECRET_KEY, JSON.stringify(saved));
     this.useCoordinatorClient(coordinator);
+    await this.startCollaborationWorker(coordinator);
     this.collaborationRestored = true;
     this.startHeartbeat();
     this.output.appendLine(`[collaboration] joined ${invite.hostName}`);
@@ -126,6 +136,8 @@ export class DaemonManager implements vscode.Disposable {
   async leaveCollaboration(): Promise<void> {
     this.coordinatorClient?.dispose();
     this.coordinatorClient = null;
+    this.collaborationWorker?.dispose();
+    this.collaborationWorker = null;
     await this.context.secrets.delete(PEER_SECRET_KEY);
     this.collaborationRestored = true;
     if (!this.collaborationHost && this.heartbeatTimer) {
@@ -138,6 +150,8 @@ export class DaemonManager implements vscode.Disposable {
   async stopCollaborationHost(): Promise<void> {
     this.collaborationHost?.dispose();
     this.collaborationHost = null;
+    this.collaborationWorker?.dispose();
+    this.collaborationWorker = null;
     await this.context.globalState.update(HOST_ENABLED_KEY, false);
     if (!this.coordinatorClient && this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
@@ -200,6 +214,8 @@ export class DaemonManager implements vscode.Disposable {
     this.coordinatorClient = null;
     this.collaborationHost?.dispose();
     this.collaborationHost = null;
+    this.collaborationWorker?.dispose();
+    this.collaborationWorker = null;
     this.client?.dispose();
     this.client = null;
     if (this.child && !this.child.killed) {
@@ -369,6 +385,7 @@ export class DaemonManager implements vscode.Disposable {
       }
       await this.registerThisDevice(coordinator);
       this.useCoordinatorClient(coordinator);
+      await this.startCollaborationWorker(coordinator);
       this.startHeartbeat();
       this.output.appendLine(`[collaboration] reconnected to ${saved.hostName}`);
     } catch (error) {
@@ -390,12 +407,28 @@ export class DaemonManager implements vscode.Disposable {
       if (this.coordinatorClient !== client || this.disposed) return;
       this.output.appendLine(`[collaboration] coordinator disconnected: ${error.message}`);
       this.coordinatorClient = null;
+      this.collaborationWorker?.dispose();
+      this.collaborationWorker = null;
     });
   }
 
   private async registerThisDevice(client: DaemonClient): Promise<void> {
     const input = await this.deviceRegistration();
     await client.registerCollaborationDevice(input);
+  }
+
+  private async startCollaborationWorker(coordinator: DaemonClient): Promise<void> {
+    const identity = await this.deviceIdentity();
+    this.collaborationWorker?.dispose();
+    const local = await this.getLocalClient();
+    const worker = new CollaborationWorker(
+      coordinator,
+      local,
+      identity.id,
+      this.output,
+    );
+    this.collaborationWorker = worker;
+    worker.start();
   }
 
   private startHeartbeat(): void {

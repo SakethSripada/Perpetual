@@ -352,6 +352,7 @@ class HostSession {
     }
     this.pending += 1;
     try {
+      authorizeCollaborationRequest(request.request, this.deviceId);
       const ok = await this.localClient.requestRaw(request.request);
       this.send(JSON.stringify({ response: { id: request.id, ok } }));
     } catch (error) {
@@ -366,6 +367,73 @@ class HostSession {
     } finally {
       this.pending -= 1;
     }
+  }
+}
+
+const COLLABORATION_RPC_ALLOWLIST = new Set([
+  "ping",
+  "ensure_workbench_project",
+  "list_agent_threads",
+  "get_agent_thread",
+  "create_agent_thread",
+  "update_agent_thread",
+  "delete_agent_thread",
+  "assign_thread_repos",
+  "list_thread_repos",
+  "thread_diff",
+  "list_thread_events",
+  "list_thread_turns",
+  "send_thread_message",
+  "list_queued_turns",
+  "delete_queued_turn",
+  "update_queued_turn",
+  "reorder_queued_turns",
+  "list_repos",
+  "list_activity",
+  "list_cloud_runs",
+  "list_pending_approvals",
+  "resolve_approval",
+  "register_collaboration_device",
+  "heartbeat_collaboration_device",
+  "list_collaboration_devices",
+  "collaboration_snapshot",
+  "create_collaboration_assignment",
+  "list_collaboration_assignments",
+  "claim_collaboration_assignment",
+  "renew_collaboration_lease",
+  "report_collaboration_event",
+  "report_collaboration_approval",
+  "list_collaboration_approval_decisions",
+  "acknowledge_collaboration_approval_decision",
+  "report_collaboration_change_set",
+  "finish_collaboration_assignment",
+  "cancel_collaboration_assignment",
+]);
+
+function authorizeCollaborationRequest(
+  request: string | Record<string, unknown>,
+  authenticatedDeviceId: string,
+): void {
+  const name = typeof request === "string" ? request : Object.keys(request)[0];
+  if (!name || !COLLABORATION_RPC_ALLOWLIST.has(name)) {
+    throw new Error("This operation is not available through a paired device.");
+  }
+  if (typeof request === "string") return;
+  const payload = request[name];
+  if (!payload || typeof payload !== "object") return;
+  const body = payload as Record<string, unknown>;
+  if (
+    (name === "register_collaboration_device" ||
+      name === "heartbeat_collaboration_device") &&
+    body.id !== authenticatedDeviceId
+  ) {
+    throw new Error("Device identity does not match the encrypted session.");
+  }
+  if (
+    name === "claim_collaboration_assignment" &&
+    body.device_id !== authenticatedDeviceId
+  ) {
+    throw new Error("A paired device may only claim its own assignments.");
   }
 }
 

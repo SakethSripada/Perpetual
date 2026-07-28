@@ -190,6 +190,12 @@ export interface CollaborationEventInput {
   ts: string;
 }
 
+export interface CollaborationApprovalDecision {
+  id: string;
+  local_approval_id: string;
+  decision: ApprovalDecision;
+}
+
 export interface CollaborationChangeSet {
   id: string;
   assignment_id: string;
@@ -387,6 +393,7 @@ export interface AgentThread {
   preferred_agent: AgentKind | null;
   permission: PermissionPolicy;
   execution_backend: ExecutionBackend;
+  force_managed_workspace?: boolean;
   model: string | null;
   reasoning: string | null;
   local_provider: LocalModelProvider | null;
@@ -420,6 +427,7 @@ export interface NewAgentThread {
   preferred_agent?: AgentKind | null;
   permission?: PermissionPolicy | null;
   execution_backend?: ExecutionBackend | null;
+  force_managed_workspace?: boolean;
   model?: string | null;
   reasoning?: string | null;
   local_provider?: LocalModelProvider | null;
@@ -745,7 +753,16 @@ export interface WorkbenchSnapshot {
   cloudAvailability: CloudAvailability[];
   details: ThreadDetails | null;
   github: GithubAuthStatus | null;
+  collaboration: WorkbenchCollaboration;
   error: string | null;
+}
+
+export interface WorkbenchCollaboration extends CollaborationSnapshot {
+  role: "standalone" | "host" | "member";
+  connected: boolean;
+  host_name: string | null;
+  device_id: string;
+  device_name: string;
 }
 
 export interface WorkbenchDefaults {

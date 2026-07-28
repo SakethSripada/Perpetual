@@ -1,5 +1,6 @@
 use am_proto::{
-    now, CollaborationAgentCapability, CollaborationAssignment, CollaborationAssignmentStatus,
+    now, ApprovalDecision, ApprovalRequest, CollaborationAgentCapability,
+    CollaborationApprovalDecision, CollaborationAssignment, CollaborationAssignmentStatus,
     CollaborationChangeSet, CollaborationChangeStatus, CollaborationDevice, ExecutionBackend,
 };
 use chrono::{DateTime, Utc};
@@ -52,6 +53,7 @@ const DEVICE_SELECT: &str = "SELECT d.id, d.name, d.hostname, d.platform, d.exte
 pub async fn upsert_device(
     pool: &SqlitePool,
     input: &am_proto::RegisterCollaborationDevice,
+    reactivate: bool,
 ) -> Result<CollaborationDevice, DbError> {
     let ts = now();
     let capabilities_json = serde_json::to_string(&input.capabilities)
@@ -62,7 +64,8 @@ pub async fn upsert_device(
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL) \
          ON CONFLICT(id) DO UPDATE SET name = excluded.name, hostname = excluded.hostname, \
          platform = excluded.platform, extension_version = excluded.extension_version, \
-         capabilities_json = excluded.capabilities_json, last_seen_at = excluded.last_seen_at",
+         capabilities_json = excluded.capabilities_json, last_seen_at = excluded.last_seen_at, \
+         revoked_at = CASE WHEN ? THEN NULL ELSE collaboration_devices.revoked_at END",
     )
     .bind(&input.id)
     .bind(&input.name)
@@ -72,6 +75,7 @@ pub async fn upsert_device(
     .bind(capabilities_json)
     .bind(ts)
     .bind(ts)
+    .bind(reactivate)
     .execute(pool)
     .await?;
     get_device(pool, &input.id).await?.ok_or(DbError::NotFound)
@@ -81,7 +85,7 @@ pub async fn heartbeat_device(
     pool: &SqlitePool,
     input: &am_proto::RegisterCollaborationDevice,
 ) -> Result<CollaborationDevice, DbError> {
-    upsert_device(pool, input).await
+    upsert_device(pool, input, false).await
 }
 
 pub async fn get_device(
@@ -120,6 +124,13 @@ pub async fn revoke_device(pool: &SqlitePool, device_id: &str) -> Result<(), DbE
          WHERE device_id = ? AND status IN ('queued', 'running')",
     )
     .bind(ts)
+    .bind(device_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "DELETE FROM collaboration_repo_leases WHERE assignment_id IN \
+         (SELECT id FROM collaboration_assignments WHERE device_id = ? AND status = 'cancelled')",
+    )
     .bind(device_id)
     .execute(&mut *tx)
     .await?;
@@ -181,7 +192,9 @@ const ASSIGNMENT_SELECT: &str = "SELECT a.id, a.thread_id, a.turn_id, a.device_i
 pub async fn insert_assignment(
     pool: &SqlitePool,
     assignment: &CollaborationAssignment,
+    repo_ids: &[String],
 ) -> Result<(), DbError> {
+    let mut tx = pool.begin().await?;
     sqlx::query(
         "INSERT INTO collaboration_assignments \
          (id, thread_id, turn_id, device_id, agent_kind, permission, execution_backend, prompt, \
@@ -197,8 +210,49 @@ pub async fn insert_assignment(
     .bind(&assignment.prompt)
     .bind(assignment.status.as_str())
     .bind(assignment.created_at)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    for repo_id in repo_ids {
+        sqlx::query(
+            "INSERT INTO collaboration_repo_leases (repo_id, assignment_id, acquired_at) \
+             VALUES (?, ?, ?)",
+        )
+        .bind(repo_id)
+        .bind(&assignment.id)
+        .bind(now())
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+pub async fn locked_repo_names(
+    pool: &SqlitePool,
+    repo_ids: &[String],
+) -> Result<Vec<String>, DbError> {
+    if repo_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = std::iter::repeat_n("?", repo_ids.len())
+        .collect::<Vec<_>>()
+        .join(",");
+    let query = format!(
+        "SELECT r.name FROM collaboration_repo_leases l JOIN repos r ON r.id = l.repo_id \
+         WHERE l.repo_id IN ({placeholders}) ORDER BY r.name"
+    );
+    let mut q = sqlx::query_scalar::<_, String>(&query);
+    for repo_id in repo_ids {
+        q = q.bind(repo_id);
+    }
+    Ok(q.fetch_all(pool).await?)
+}
+
+pub async fn release_repo_leases(pool: &SqlitePool, assignment_id: &str) -> Result<(), DbError> {
+    sqlx::query("DELETE FROM collaboration_repo_leases WHERE assignment_id = ?")
+        .bind(assignment_id)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -312,6 +366,7 @@ pub async fn finish_assignment(
     status: CollaborationAssignmentStatus,
     error: Option<&str>,
 ) -> Result<Option<CollaborationAssignment>, DbError> {
+    let mut tx = pool.begin().await?;
     let result = sqlx::query(
         "UPDATE collaboration_assignments SET status = ?, finished_at = ?, error = ?, \
          lease_token_hash = NULL, lease_expires_at = NULL \
@@ -323,11 +378,18 @@ pub async fn finish_assignment(
     .bind(assignment_id)
     .bind(lease_token_hash)
     .bind(now())
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
     if result.rows_affected() == 0 {
         return Ok(None);
     }
+    if status != CollaborationAssignmentStatus::Review {
+        sqlx::query("DELETE FROM collaboration_repo_leases WHERE assignment_id = ?")
+            .bind(assignment_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
     get_assignment(pool, assignment_id).await
 }
 
@@ -335,6 +397,7 @@ pub async fn cancel_assignment(
     pool: &SqlitePool,
     assignment_id: &str,
 ) -> Result<Option<CollaborationAssignment>, DbError> {
+    let mut tx = pool.begin().await?;
     let result = sqlx::query(
         "UPDATE collaboration_assignments SET status = 'cancelled', finished_at = ?, \
          lease_token_hash = NULL, lease_expires_at = NULL, error = 'cancelled by user' \
@@ -342,11 +405,16 @@ pub async fn cancel_assignment(
     )
     .bind(now())
     .bind(assignment_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
     if result.rows_affected() == 0 {
         return Ok(None);
     }
+    sqlx::query("DELETE FROM collaboration_repo_leases WHERE assignment_id = ?")
+        .bind(assignment_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
     get_assignment(pool, assignment_id).await
 }
 
@@ -364,6 +432,7 @@ pub async fn expire_stale_assignments(
         return Ok(Vec::new());
     }
     for id in &ids {
+        let mut tx = pool.begin().await?;
         sqlx::query(
             "UPDATE collaboration_assignments SET status = 'lease_expired', finished_at = ?, \
              lease_token_hash = NULL, lease_expires_at = NULL, error = 'device lease expired' \
@@ -371,8 +440,13 @@ pub async fn expire_stale_assignments(
         )
         .bind(now())
         .bind(id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+        sqlx::query("DELETE FROM collaboration_repo_leases WHERE assignment_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
     }
     let mut out = Vec::new();
     for id in ids {
@@ -495,6 +569,47 @@ pub async fn list_change_sets(
         .collect()
 }
 
+pub async fn list_change_sets_for_assignment(
+    pool: &SqlitePool,
+    assignment_id: &str,
+) -> Result<Vec<CollaborationChangeSet>, DbError> {
+    let rows = sqlx::query_as::<_, ChangeSetRow>(&format!(
+        "{CHANGE_SELECT} WHERE c.assignment_id = ? ORDER BY c.created_at"
+    ))
+    .bind(assignment_id)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter()
+        .map(CollaborationChangeSet::try_from)
+        .collect()
+}
+
+pub async fn complete_assignment_review(
+    pool: &SqlitePool,
+    assignment_id: &str,
+) -> Result<Option<CollaborationAssignment>, DbError> {
+    let mut tx = pool.begin().await?;
+    let result = sqlx::query(
+        "UPDATE collaboration_assignments SET status = 'completed' \
+         WHERE id = ? AND status = 'review' AND NOT EXISTS (\
+           SELECT 1 FROM collaboration_change_sets c WHERE c.assignment_id = ? \
+           AND c.status IN ('pending', 'conflict'))",
+    )
+    .bind(assignment_id)
+    .bind(assignment_id)
+    .execute(&mut *tx)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Ok(None);
+    }
+    sqlx::query("DELETE FROM collaboration_repo_leases WHERE assignment_id = ?")
+        .bind(assignment_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    get_assignment(pool, assignment_id).await
+}
+
 pub async fn update_change_status(
     pool: &SqlitePool,
     id: &str,
@@ -519,4 +634,117 @@ pub async fn update_change_status(
     .execute(pool)
     .await?;
     get_change_set(pool, id).await
+}
+
+pub async fn insert_approval(
+    pool: &SqlitePool,
+    id: &str,
+    assignment_id: &str,
+    local_approval_id: &str,
+    request: &ApprovalRequest,
+) -> Result<ApprovalRequest, DbError> {
+    let request_json =
+        serde_json::to_string(request).map_err(|error| DbError::Serde(error.to_string()))?;
+    sqlx::query(
+        "INSERT INTO collaboration_approvals \
+         (id, assignment_id, local_approval_id, request_json, created_at) \
+         VALUES (?, ?, ?, ?, ?) ON CONFLICT(assignment_id, local_approval_id) DO NOTHING",
+    )
+    .bind(id)
+    .bind(assignment_id)
+    .bind(local_approval_id)
+    .bind(request_json)
+    .bind(request.created_at)
+    .execute(pool)
+    .await?;
+    get_approval(pool, id).await?.ok_or(DbError::NotFound)
+}
+
+async fn get_approval(pool: &SqlitePool, id: &str) -> Result<Option<ApprovalRequest>, DbError> {
+    let json = sqlx::query_scalar::<_, String>(
+        "SELECT request_json FROM collaboration_approvals WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+    json.map(|value| {
+        serde_json::from_str(&value).map_err(|error| DbError::Serde(error.to_string()))
+    })
+    .transpose()
+}
+
+pub async fn list_pending_approvals(pool: &SqlitePool) -> Result<Vec<ApprovalRequest>, DbError> {
+    let rows = sqlx::query_scalar::<_, String>(
+        "SELECT ca.request_json FROM collaboration_approvals ca \
+         JOIN collaboration_assignments a ON a.id = ca.assignment_id \
+         WHERE ca.decision IS NULL AND a.status = 'running' ORDER BY ca.created_at",
+    )
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter()
+        .map(|value| {
+            serde_json::from_str(&value).map_err(|error| DbError::Serde(error.to_string()))
+        })
+        .collect()
+}
+
+pub async fn resolve_approval(
+    pool: &SqlitePool,
+    id: &str,
+    decision: ApprovalDecision,
+) -> Result<Option<ApprovalRequest>, DbError> {
+    let result = sqlx::query(
+        "UPDATE collaboration_approvals SET decision = ?, resolved_at = ? \
+         WHERE id = ? AND decision IS NULL",
+    )
+    .bind(decision.as_str())
+    .bind(now())
+    .bind(id)
+    .execute(pool)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Ok(None);
+    }
+    get_approval(pool, id).await
+}
+
+pub async fn list_approval_decisions(
+    pool: &SqlitePool,
+    assignment_id: &str,
+) -> Result<Vec<CollaborationApprovalDecision>, DbError> {
+    let rows = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT id, local_approval_id, decision FROM collaboration_approvals \
+         WHERE assignment_id = ? AND decision IS NOT NULL AND delivered_at IS NULL \
+         ORDER BY resolved_at",
+    )
+    .bind(assignment_id)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter()
+        .map(|(id, local_approval_id, decision)| {
+            Ok(CollaborationApprovalDecision {
+                id,
+                local_approval_id,
+                decision: ApprovalDecision::parse(&decision)
+                    .ok_or_else(|| DbError::InvalidEnum(decision.clone()))?,
+            })
+        })
+        .collect()
+}
+
+pub async fn acknowledge_approval_decision(
+    pool: &SqlitePool,
+    assignment_id: &str,
+    id: &str,
+) -> Result<bool, DbError> {
+    let result = sqlx::query(
+        "UPDATE collaboration_approvals SET delivered_at = ? \
+         WHERE id = ? AND assignment_id = ? AND decision IS NOT NULL",
+    )
+    .bind(now())
+    .bind(id)
+    .bind(assignment_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
 }

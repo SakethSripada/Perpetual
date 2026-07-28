@@ -156,12 +156,22 @@ impl AppCore {
         id: &str,
         decision: ApprovalDecision,
     ) -> Result<(), CoreError> {
-        let pending = self
-            .approvals
-            .lock()
-            .await
-            .remove(id)
-            .ok_or(CoreError::NotFound)?;
+        let pending = self.approvals.lock().await.remove(id);
+        let Some(pending) = pending else {
+            let request =
+                am_db::repos::collaboration::resolve_approval(&self.db.pool, id, decision)
+                    .await?
+                    .ok_or(CoreError::NotFound)?;
+            self.publish_resolution(
+                id,
+                ApprovalResolution::Decided,
+                Some(decision),
+                request.project_id.as_deref(),
+                request.task_id.as_deref(),
+            )
+            .await;
+            return Ok(());
+        };
         let request = pending.request;
         // Receiver may be gone if the run ended in the same instant; that's fine.
         let _ = pending.tx.send(decision);
@@ -186,6 +196,12 @@ impl AppCore {
             .map(|p| p.request.clone())
             .collect();
         items.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
+        if let Ok(mut remote) =
+            am_db::repos::collaboration::list_pending_approvals(&self.db.pool).await
+        {
+            items.append(&mut remote);
+            items.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
+        }
         items
     }
 

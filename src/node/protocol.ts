@@ -19,6 +19,7 @@ import type {
   CloudRun,
   ClaimedCollaborationAssignment,
   CollaborationAssignment,
+  CollaborationApprovalDecision,
   CollaborationChangeSet,
   CollaborationDevice,
   CollaborationEventInput,
@@ -136,6 +137,7 @@ export interface DaemonApi {
   previewContextPacket(nodeId: string): Promise<ContextPacket>;
   workNodeDiff(nodeId: string): Promise<WorkNodeDiff>;
   listAgentThreads(projectId?: string): Promise<AgentThread[]>;
+  getAgentThread(id: string): Promise<AgentThread | null>;
   createAgentThread(input: NewAgentThread): Promise<AgentThread>;
   updateAgentThread(id: string, patch: AgentThreadUpdate): Promise<AgentThread>;
   deleteAgentThread(id: string, force: boolean): Promise<void>;
@@ -171,7 +173,10 @@ export interface DaemonApi {
   heartbeatCollaborationDevice(input: RegisterCollaborationDevice): Promise<CollaborationDevice>;
   listCollaborationDevices(): Promise<CollaborationDevice[]>;
   revokeCollaborationDevice(deviceId: string): Promise<void>;
-  collaborationSnapshot(threadId?: string | null): Promise<CollaborationSnapshot>;
+  collaborationSnapshot(
+    threadId?: string | null,
+    includePatches?: boolean
+  ): Promise<CollaborationSnapshot>;
   createCollaborationAssignment(
     input: NewCollaborationAssignment
   ): Promise<CollaborationAssignment>;
@@ -188,6 +193,20 @@ export interface DaemonApi {
     leaseToken: string
   ): Promise<CollaborationAssignment>;
   reportCollaborationEvent(input: CollaborationEventInput): Promise<void>;
+  reportCollaborationApproval(input: {
+    assignment_id: string;
+    lease_token: string;
+    approval: ApprovalRequest;
+  }): Promise<void>;
+  listCollaborationApprovalDecisions(
+    assignmentId: string,
+    leaseToken: string
+  ): Promise<CollaborationApprovalDecision[]>;
+  acknowledgeCollaborationApprovalDecision(
+    assignmentId: string,
+    leaseToken: string,
+    approvalId: string
+  ): Promise<void>;
   reportCollaborationChangeSet(input: {
     assignment_id: string;
     lease_token: string;
@@ -203,5 +222,11 @@ export interface DaemonApi {
     error?: string | null;
   }): Promise<CollaborationAssignment>;
   cancelCollaborationAssignment(assignmentId: string): Promise<CollaborationAssignment>;
+  applyCollaborationChangeSet(
+    changeSetId: string,
+    overwrite?: boolean
+  ): Promise<CollaborationChangeSet>;
+  rejectCollaborationChangeSet(changeSetId: string): Promise<CollaborationChangeSet>;
+  importCollaborationPatch(threadId: string, repoId: string, patch: string): Promise<void>;
   prepareShutdown(): Promise<void>;
 }

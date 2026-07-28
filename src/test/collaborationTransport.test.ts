@@ -75,6 +75,19 @@ test("encrypted collaboration proxy supports RPC and per-device reconnect creden
   const first = await connectCollaborationPeer(created.invite, deviceId);
   const client = await DaemonClient.connectStream(first.stream, first.credential);
   assert.equal(await client.requestRaw("ping"), "pong");
+  await assert.rejects(
+    client.requestRaw("prepare_shutdown"),
+    /not available through a paired device/,
+  );
+  await assert.rejects(
+    client.requestRaw({
+      register_collaboration_device: {
+        id: randomUUID(),
+        name: "Impersonated device",
+      },
+    }),
+    /identity does not match/,
+  );
   client.dispose();
   host.dispose();
 

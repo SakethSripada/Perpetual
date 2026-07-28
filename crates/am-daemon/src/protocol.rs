@@ -12,14 +12,15 @@ use am_proto::{
     ActivityEvent, AgentKind, AgentModelCatalog, AgentRunDefaults, AgentStatus, AgentThread,
     AgentThreadApplyResult, AgentThreadDiff, AgentThreadEvent, AgentThreadRepo, AgentThreadUpdate,
     AgentTurn, AppEvent, ApprovalDecision, ApprovalRequest, ClaimedCollaborationAssignment,
-    CloudAvailability, CloudPolicy, CloudRun, CollaborationAssignment, CollaborationChangeSet,
-    CollaborationDevice, CollaborationEventInput, CollaborationSnapshot, ContextPacket,
-    EventReplay, ExecutionBackend, FinishCollaborationAssignment, GithubAuthStatus,
-    GithubRepository, KnowledgeDoc, KnowledgeDocUpdate, LimitPolicy, LocalModelPolicy,
-    LocalModelStatus, MemoryNote, MemoryNoteUpdate, NewAgentThread, NewCollaborationAssignment,
-    NewCollaborationChangeSet, NewGithubRepo, NewKnowledgeDoc, NewLocalRepo, NewMemoryNote,
-    NewProject, NewTask, NewWorkEdge, NewWorkNode, Project, QueuedTurn,
-    RegisterCollaborationDevice, Repo, SandboxLoginPrompt, SandboxPolicy, SandboxRuntimeStatus,
+    CloudAvailability, CloudPolicy, CloudRun, CollaborationApprovalDecision,
+    CollaborationAssignment, CollaborationChangeSet, CollaborationDevice, CollaborationEventInput,
+    CollaborationSnapshot, ContextPacket, EventReplay, ExecutionBackend,
+    FinishCollaborationAssignment, GithubAuthStatus, GithubRepository, KnowledgeDoc,
+    KnowledgeDocUpdate, LimitPolicy, LocalModelPolicy, LocalModelStatus, MemoryNote,
+    MemoryNoteUpdate, NewAgentThread, NewCollaborationAssignment, NewCollaborationChangeSet,
+    NewGithubRepo, NewKnowledgeDoc, NewLocalRepo, NewMemoryNote, NewProject, NewTask, NewWorkEdge,
+    NewWorkNode, Project, QueuedTurn, RegisterCollaborationDevice, Repo,
+    ReportCollaborationApproval, SandboxLoginPrompt, SandboxPolicy, SandboxRuntimeStatus,
     SearchHit, SequencedEvent, Task, TaskDiff, TaskUpdate, WorkEdge, WorkGraph, WorkNode,
     WorkNodeDiff, WorkNodeRepoBinding, WorkNodeUpdate,
 };
@@ -331,6 +332,8 @@ pub enum DaemonRequest {
     },
     CollaborationSnapshot {
         thread_id: Option<String>,
+        #[serde(default)]
+        include_patches: bool,
     },
     CreateCollaborationAssignment(NewCollaborationAssignment),
     ListCollaborationAssignments {
@@ -347,10 +350,33 @@ pub enum DaemonRequest {
         lease_token: String,
     },
     ReportCollaborationEvent(CollaborationEventInput),
+    ReportCollaborationApproval(ReportCollaborationApproval),
+    ListCollaborationApprovalDecisions {
+        assignment_id: String,
+        lease_token: String,
+    },
+    AcknowledgeCollaborationApprovalDecision {
+        assignment_id: String,
+        lease_token: String,
+        approval_id: String,
+    },
     ReportCollaborationChangeSet(NewCollaborationChangeSet),
     FinishCollaborationAssignment(FinishCollaborationAssignment),
     CancelCollaborationAssignment {
         assignment_id: String,
+    },
+    ApplyCollaborationChangeSet {
+        change_set_id: String,
+        #[serde(default)]
+        overwrite: bool,
+    },
+    RejectCollaborationChangeSet {
+        change_set_id: String,
+    },
+    ImportCollaborationPatch {
+        thread_id: String,
+        repo_id: String,
+        patch: String,
     },
 
     // Event stream recovery (additive; requires no capability)
@@ -421,6 +447,7 @@ pub enum DaemonResponse {
     CollaborationAssignment(CollaborationAssignment),
     CollaborationAssignments(Vec<CollaborationAssignment>),
     ClaimedCollaborationAssignment(ClaimedCollaborationAssignment),
+    CollaborationApprovalDecisions(Vec<CollaborationApprovalDecision>),
     CollaborationChangeSet(CollaborationChangeSet),
     CollaborationSnapshot(CollaborationSnapshot),
     EventReplay(EventReplay),

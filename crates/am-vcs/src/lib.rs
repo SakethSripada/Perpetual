@@ -7,7 +7,7 @@
 //! Diffs are computed on demand and capped in size for efficiency.
 
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -367,6 +367,176 @@ pub fn check_patch_applies(repo: &Path, patch: &str) -> Result<(), VcsError> {
     run_apply_patch(repo, patch, true)
 }
 
+/// Materialize `patch` at its advertised base and intentionally replace only
+/// the declared paths in `repo`. Existing paths are copied to `backup_dir`
+/// first and restored if any replacement fails. The retained backup makes an
+/// explicit remote-wins action recoverable without rewriting Git history.
+pub fn overwrite_patch_paths(
+    repo: &Path,
+    base_ref: &str,
+    patch: &str,
+    paths: &[String],
+    scratch_worktree: &Path,
+    backup_dir: &Path,
+) -> Result<(), VcsError> {
+    if patch.trim().is_empty() || paths.is_empty() {
+        return Ok(());
+    }
+    validate_repo_path(repo)?;
+    if scratch_worktree.exists() {
+        return Err(VcsError::InvalidPath(
+            scratch_worktree.display().to_string(),
+        ));
+    }
+    let mut safe_paths = Vec::new();
+    for path in paths {
+        let relative = safe_relative_path(path)?;
+        if !safe_paths.contains(&relative) {
+            safe_paths.push(relative);
+        }
+    }
+    if let Some(parent) = scratch_worktree.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| VcsError::Io(err.to_string()))?;
+    }
+    std::fs::create_dir_all(backup_dir).map_err(|err| VcsError::Io(err.to_string()))?;
+
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .arg("worktree")
+        .arg("add")
+        .arg("--detach")
+        .arg("--")
+        .arg(scratch_worktree)
+        .arg(base_ref)
+        .output()
+        .map_err(|err| VcsError::Io(err.to_string()))?;
+    if !output.status.success() {
+        return Err(VcsError::Git(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
+
+    let result = (|| {
+        apply_patch_to_repo(scratch_worktree, patch)?;
+        let mut processed = Vec::<(PathBuf, bool)>::new();
+        for relative in &safe_paths {
+            let target = repo.join(relative);
+            let source = scratch_worktree.join(relative);
+            let backup = backup_dir.join(relative);
+            let existed = path_exists(&target);
+            if existed {
+                copy_file_entry(&target, &backup)?;
+            }
+            let replace = (|| {
+                remove_file_entry(&target)?;
+                if path_exists(&source) {
+                    copy_file_entry(&source, &target)?;
+                }
+                Ok(())
+            })();
+            processed.push((relative.clone(), existed));
+            if let Err(error) = replace {
+                for (done, had_original) in processed.into_iter().rev() {
+                    let restore_target = repo.join(&done);
+                    let _ = remove_file_entry(&restore_target);
+                    if had_original {
+                        let _ = copy_file_entry(&backup_dir.join(done), &restore_target);
+                    }
+                }
+                return Err(error);
+            }
+        }
+        Ok(())
+    })();
+
+    let cleanup = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .arg("worktree")
+        .arg("remove")
+        .arg("--force")
+        .arg("--")
+        .arg(scratch_worktree)
+        .output();
+    if result.is_ok() {
+        if let Ok(output) = cleanup {
+            if !output.status.success() {
+                return Err(VcsError::Git(
+                    String::from_utf8_lossy(&output.stderr).trim().to_string(),
+                ));
+            }
+        }
+    }
+    result
+}
+
+fn safe_relative_path(value: &str) -> Result<PathBuf, VcsError> {
+    let path = Path::new(value);
+    if value.trim().is_empty()
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+        || path
+            .components()
+            .next()
+            .is_some_and(|component| component.as_os_str() == ".git")
+    {
+        return Err(VcsError::InvalidPath(value.to_string()));
+    }
+    Ok(path.to_path_buf())
+}
+
+fn path_exists(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok()
+}
+
+fn remove_file_entry(path: &Path) -> Result<(), VcsError> {
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return Ok(());
+    };
+    if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() {
+        return Err(VcsError::InvalidPath(format!(
+            "refusing to replace directory {}",
+            path.display()
+        )));
+    }
+    std::fs::remove_file(path).map_err(|err| VcsError::Io(err.to_string()))
+}
+
+fn copy_file_entry(source: &Path, target: &Path) -> Result<(), VcsError> {
+    let metadata =
+        std::fs::symlink_metadata(source).map_err(|err| VcsError::Io(err.to_string()))?;
+    if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() {
+        return Err(VcsError::InvalidPath(format!(
+            "refusing to copy directory {}",
+            source.display()
+        )));
+    }
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| VcsError::Io(err.to_string()))?;
+    }
+    if metadata.file_type().is_symlink() {
+        let link = std::fs::read_link(source).map_err(|err| VcsError::Io(err.to_string()))?;
+        create_symlink(&link, target)
+    } else {
+        std::fs::copy(source, target)
+            .map(|_| ())
+            .map_err(|err| VcsError::Io(err.to_string()))
+    }
+}
+
+#[cfg(unix)]
+fn create_symlink(source: &Path, target: &Path) -> Result<(), VcsError> {
+    std::os::unix::fs::symlink(source, target).map_err(|err| VcsError::Io(err.to_string()))
+}
+
+#[cfg(windows)]
+fn create_symlink(source: &Path, target: &Path) -> Result<(), VcsError> {
+    std::os::windows::fs::symlink_file(source, target).map_err(|err| VcsError::Io(err.to_string()))
+}
+
 fn run_apply_patch(repo: &Path, patch: &str, check_only: bool) -> Result<(), VcsError> {
     if patch.trim().is_empty() {
         return Ok(());
@@ -670,5 +840,53 @@ mod apply_tests {
         let _ = remove_worktree(&repo, &worktree);
         let _ = std::fs::remove_dir_all(repo);
         let _ = std::fs::remove_dir_all(worktree);
+    }
+
+    #[test]
+    fn explicit_overwrite_keeps_a_recoverable_backup() {
+        let repo = temp_repo("overwrite");
+        let producer = repo.with_file_name(format!(
+            "{}-producer",
+            repo.file_name().unwrap().to_string_lossy()
+        ));
+        let scratch = repo.with_file_name(format!(
+            "{}-scratch",
+            repo.file_name().unwrap().to_string_lossy()
+        ));
+        let backup = repo.with_file_name(format!(
+            "{}-backup",
+            repo.file_name().unwrap().to_string_lossy()
+        ));
+        init_repo(&repo);
+        let base = head_sha(&repo).unwrap();
+        create_worktree(&repo, &producer, "am-test-overwrite", &base).unwrap();
+        std::fs::write(producer.join("file.txt"), "remote\n").unwrap();
+        let patch = worktree_patch_with_excludes(&producer, &base, &[]).unwrap();
+
+        std::fs::write(repo.join("file.txt"), "local\n").unwrap();
+        overwrite_patch_paths(
+            &repo,
+            &base,
+            &patch,
+            &["file.txt".into()],
+            &scratch,
+            &backup,
+        )
+        .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(repo.join("file.txt")).unwrap(),
+            "remote\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(backup.join("file.txt")).unwrap(),
+            "local\n"
+        );
+
+        let _ = remove_worktree(&repo, &producer);
+        let _ = std::fs::remove_dir_all(repo);
+        let _ = std::fs::remove_dir_all(producer);
+        let _ = std::fs::remove_dir_all(scratch);
+        let _ = std::fs::remove_dir_all(backup);
     }
 }

@@ -1,7 +1,9 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::{AgentKind, ExecutionBackend, FileChange, SessionState};
+use crate::{
+    AgentKind, ApprovalDecision, ApprovalRequest, ExecutionBackend, FileChange, SessionState,
+};
 
 /// One locally authenticated agent installation advertised by a paired device.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -149,6 +151,20 @@ pub struct FinishCollaborationAssignment {
     pub state: SessionState,
     #[serde(default)]
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReportCollaborationApproval {
+    pub assignment_id: String,
+    pub lease_token: String,
+    pub approval: ApprovalRequest,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollaborationApprovalDecision {
+    pub id: String,
+    pub local_approval_id: String,
+    pub decision: ApprovalDecision,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

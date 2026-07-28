@@ -337,6 +337,13 @@ export class DaemonClient extends EventEmitter implements DaemonApi {
     );
   }
 
+  async getAgentThread(id: string) {
+    return responsePayload(
+      await this.requestRaw(variant("get_agent_thread", { id })),
+      "agent_thread_opt"
+    );
+  }
+
   async createAgentThread(input: Parameters<DaemonApi["createAgentThread"]>[0]) {
     return responsePayload(await this.requestRaw(variant("create_agent_thread", input)), "agent_thread");
   }
@@ -494,10 +501,13 @@ export class DaemonClient extends EventEmitter implements DaemonApi {
     );
   }
 
-  async collaborationSnapshot(threadId?: string | null) {
+  async collaborationSnapshot(threadId?: string | null, includePatches = false) {
     return responsePayload(
       await this.requestRaw(
-        variant("collaboration_snapshot", { thread_id: threadId ?? null })
+        variant("collaboration_snapshot", {
+          thread_id: threadId ?? null,
+          include_patches: includePatches,
+        })
       ),
       "collaboration_snapshot"
     );
@@ -552,6 +562,43 @@ export class DaemonClient extends EventEmitter implements DaemonApi {
     expectUnit(await this.requestRaw(variant("report_collaboration_event", input)));
   }
 
+  async reportCollaborationApproval(
+    input: Parameters<DaemonApi["reportCollaborationApproval"]>[0]
+  ) {
+    expectUnit(await this.requestRaw(variant("report_collaboration_approval", input)));
+  }
+
+  async listCollaborationApprovalDecisions(
+    assignmentId: string,
+    leaseToken: string
+  ) {
+    return responsePayload(
+      await this.requestRaw(
+        variant("list_collaboration_approval_decisions", {
+          assignment_id: assignmentId,
+          lease_token: leaseToken,
+        })
+      ),
+      "collaboration_approval_decisions"
+    );
+  }
+
+  async acknowledgeCollaborationApprovalDecision(
+    assignmentId: string,
+    leaseToken: string,
+    approvalId: string
+  ) {
+    expectUnit(
+      await this.requestRaw(
+        variant("acknowledge_collaboration_approval_decision", {
+          assignment_id: assignmentId,
+          lease_token: leaseToken,
+          approval_id: approvalId,
+        })
+      )
+    );
+  }
+
   async reportCollaborationChangeSet(
     input: Parameters<DaemonApi["reportCollaborationChangeSet"]>[0]
   ) {
@@ -576,6 +623,39 @@ export class DaemonClient extends EventEmitter implements DaemonApi {
         variant("cancel_collaboration_assignment", { assignment_id: assignmentId })
       ),
       "collaboration_assignment"
+    );
+  }
+
+  async applyCollaborationChangeSet(changeSetId: string, overwrite = false) {
+    return responsePayload(
+      await this.requestRaw(
+        variant("apply_collaboration_change_set", {
+          change_set_id: changeSetId,
+          overwrite,
+        })
+      ),
+      "collaboration_change_set"
+    );
+  }
+
+  async rejectCollaborationChangeSet(changeSetId: string) {
+    return responsePayload(
+      await this.requestRaw(
+        variant("reject_collaboration_change_set", { change_set_id: changeSetId })
+      ),
+      "collaboration_change_set"
+    );
+  }
+
+  async importCollaborationPatch(threadId: string, repoId: string, patch: string) {
+    expectUnit(
+      await this.requestRaw(
+        variant("import_collaboration_patch", {
+          thread_id: threadId,
+          repo_id: repoId,
+          patch,
+        })
+      )
     );
   }
 

@@ -99,6 +99,46 @@ test("serializes launch-quality workbench requests", () => {
   assert.deepEqual(variant("apply_thread_changes", { thread_id: "t1" }), {
     apply_thread_changes: { thread_id: "t1" },
   });
+  assert.deepEqual(
+    variant("collaboration_snapshot", {
+      thread_id: "t1",
+      include_patches: false,
+    }),
+    {
+      collaboration_snapshot: {
+        thread_id: "t1",
+        include_patches: false,
+      },
+    },
+  );
+  assert.deepEqual(
+    variant("apply_collaboration_change_set", {
+      change_set_id: "change-1",
+      overwrite: true,
+    }),
+    {
+      apply_collaboration_change_set: {
+        change_set_id: "change-1",
+        overwrite: true,
+      },
+    },
+  );
+  assert.deepEqual(
+    variant("reject_collaboration_change_set", { change_set_id: "change-1" }),
+    { reject_collaboration_change_set: { change_set_id: "change-1" } },
+  );
+  assert.deepEqual(
+    variant("list_collaboration_approval_decisions", {
+      assignment_id: "assignment-1",
+      lease_token: "lease",
+    }),
+    {
+      list_collaboration_approval_decisions: {
+        assignment_id: "assignment-1",
+        lease_token: "lease",
+      },
+    },
+  );
   assert.equal(variant("prepare_shutdown"), "prepare_shutdown");
 });
 
