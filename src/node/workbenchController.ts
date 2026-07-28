@@ -99,6 +99,9 @@ type WebviewMessage =
   | { type: "leaveCollaboration" }
   | { type: "revokeCollaborationDevice"; deviceId: string }
   | { type: "cancelCollaborationAssignment"; assignmentId: string }
+  | { type: "dismissCollaborationAssignmentIssue"; assignmentId: string }
+  | { type: "retryCollaborationAssignment"; assignmentId: string }
+  | { type: "addCollaborationRepoAndRetry"; assignmentId: string }
   | { type: "applyCollaborationChangeSet"; changeSetId: string; overwrite?: boolean }
   | { type: "rejectCollaborationChangeSet"; changeSetId: string };
 
@@ -458,6 +461,23 @@ export class WorkbenchController implements vscode.Disposable {
           this.notice(reply, "Stopped the device assignment.");
           await this.refresh();
           return;
+        case "dismissCollaborationAssignmentIssue":
+          await this.withClient((client) =>
+            client.cancelCollaborationAssignment(message.assignmentId),
+          );
+          this.notice(reply, "Removed the device issue.");
+          await this.refresh();
+          return;
+        case "retryCollaborationAssignment":
+          await this.withClient((client) =>
+            client.retryCollaborationAssignment(message.assignmentId),
+          );
+          this.notice(reply, "Device work queued again.");
+          await this.refresh();
+          return;
+        case "addCollaborationRepoAndRetry":
+          await this.addCollaborationRepoAndRetry(message.assignmentId, reply);
+          return;
         case "applyCollaborationChangeSet": {
           if (message.overwrite) {
             const confirm = await vscode.window.showWarningMessage(
@@ -579,6 +599,51 @@ export class WorkbenchController implements vscode.Disposable {
       path: root,
     });
     reply?.({ type: "repoConnected", repo });
+    await this.refresh();
+  }
+
+  private async addCollaborationRepoAndRetry(
+    assignmentId: string,
+    reply?: WebviewReply,
+  ): Promise<void> {
+    this.assertTrusted();
+    const status = await this.daemon.collaborationStatus();
+    const client = await this.daemon.getClient();
+    const assignment = (await client.listCollaborationAssignments(null, false)).find(
+      (item: CollaborationAssignment) => item.id === assignmentId,
+    );
+    if (!assignment) throw new Error("This device assignment no longer exists.");
+    if (assignment.device_id !== status.deviceId) {
+      throw new Error(`Open Perpetual on ${assignment.device_name} to add its repository clone.`);
+    }
+
+    const picked = await vscode.window.showOpenDialog({
+      canSelectFiles: false,
+      canSelectFolders: true,
+      canSelectMany: false,
+      openLabel: "Add Clone and Retry",
+      title: "Choose the Matching Repository Clone",
+    });
+    const folder = picked?.[0]?.fsPath;
+    if (!folder) return;
+    const root = await requiredGitRoot(folder);
+    const alreadyOpen = (vscode.workspace.workspaceFolders ?? []).some(
+      (workspaceFolder) => comparablePath(workspaceFolder.uri.fsPath) === comparablePath(root),
+    );
+    if (!alreadyOpen) {
+      const added = vscode.workspace.updateWorkspaceFolders(
+        vscode.workspace.workspaceFolders?.length ?? 0,
+        0,
+        { uri: vscode.Uri.file(root), name: path.basename(root) },
+      );
+      if (!added) {
+        throw new Error(
+          "VS Code could not add that clone to this workspace. Add it with File > Add Folder to Workspace, then retry.",
+        );
+      }
+    }
+    await client.retryCollaborationAssignment(assignmentId);
+    this.notice(reply, `${path.basename(root)} added. Device work queued again.`);
     await this.refresh();
   }
 
@@ -1744,6 +1809,22 @@ async function gitRoot(folder: string): Promise<string> {
   } catch {
     return folder;
   }
+}
+
+async function requiredGitRoot(folder: string): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync("git", [
+      "-C",
+      folder,
+      "rev-parse",
+      "--show-toplevel",
+    ]);
+    const root = stdout.trim();
+    if (root) return root;
+  } catch {
+    // Use the actionable message below for non-repositories and inaccessible folders.
+  }
+  throw new Error("That folder is not a Git repository. Choose a clone of the repository used by this session.");
 }
 
 function titleFromMessage(message: string): string {

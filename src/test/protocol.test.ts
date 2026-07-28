@@ -128,6 +128,10 @@ test("serializes launch-quality workbench requests", () => {
     { reject_collaboration_change_set: { change_set_id: "change-1" } },
   );
   assert.deepEqual(
+    variant("retry_collaboration_assignment", { assignment_id: "assignment-1" }),
+    { retry_collaboration_assignment: { assignment_id: "assignment-1" } },
+  );
+  assert.deepEqual(
     variant("list_collaboration_approval_decisions", {
       assignment_id: "assignment-1",
       lease_token: "lease",

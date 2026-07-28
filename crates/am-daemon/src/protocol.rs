@@ -336,6 +336,9 @@ pub enum DaemonRequest {
         include_patches: bool,
     },
     CreateCollaborationAssignment(NewCollaborationAssignment),
+    RetryCollaborationAssignment {
+        assignment_id: String,
+    },
     ListCollaborationAssignments {
         device_id: Option<String>,
         #[serde(default)]

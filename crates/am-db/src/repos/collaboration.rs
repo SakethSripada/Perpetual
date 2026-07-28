@@ -401,7 +401,7 @@ pub async fn cancel_assignment(
     let result = sqlx::query(
         "UPDATE collaboration_assignments SET status = 'cancelled', finished_at = ?, \
          lease_token_hash = NULL, lease_expires_at = NULL, error = 'cancelled by user' \
-         WHERE id = ? AND status IN ('queued', 'running', 'review')",
+         WHERE id = ? AND status IN ('queued', 'running', 'review', 'failed', 'lease_expired')",
     )
     .bind(now())
     .bind(assignment_id)
@@ -421,7 +421,7 @@ pub async fn cancel_assignment(
 pub async fn expire_stale_assignments(
     pool: &SqlitePool,
 ) -> Result<Vec<CollaborationAssignment>, DbError> {
-    let ids = sqlx::query_scalar::<_, String>(
+    let mut ids = sqlx::query_scalar::<_, String>(
         "SELECT id FROM collaboration_assignments WHERE status = 'running' \
          AND lease_expires_at <= ?",
     )
@@ -448,6 +448,32 @@ pub async fn expire_stale_assignments(
             .await?;
         tx.commit().await?;
     }
+    let offline_before = now() - chrono::Duration::seconds(45);
+    let queued_ids = sqlx::query_scalar::<_, String>(
+        "SELECT a.id FROM collaboration_assignments a \
+         JOIN collaboration_devices d ON d.id = a.device_id \
+         WHERE a.status = 'queued' AND d.last_seen_at <= ?",
+    )
+    .bind(offline_before)
+    .fetch_all(pool)
+    .await?;
+    for id in &queued_ids {
+        let mut tx = pool.begin().await?;
+        sqlx::query(
+            "UPDATE collaboration_assignments SET status = 'failed', finished_at = ?, \
+             error = 'device went offline before starting' WHERE id = ? AND status = 'queued'",
+        )
+        .bind(now())
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("DELETE FROM collaboration_repo_leases WHERE assignment_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+    }
+    ids.extend(queued_ids);
     let mut out = Vec::new();
     for id in ids {
         if let Some(assignment) = get_assignment(pool, &id).await? {

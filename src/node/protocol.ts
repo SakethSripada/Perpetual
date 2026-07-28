@@ -180,6 +180,7 @@ export interface DaemonApi {
   createCollaborationAssignment(
     input: NewCollaborationAssignment
   ): Promise<CollaborationAssignment>;
+  retryCollaborationAssignment(assignmentId: string): Promise<CollaborationAssignment>;
   listCollaborationAssignments(
     deviceId?: string | null,
     activeOnly?: boolean

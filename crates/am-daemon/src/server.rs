@@ -569,6 +569,11 @@ async fn dispatch(core: &AppCore, req: DaemonRequest) -> Result<DaemonResponse, 
                 .await
                 .map_err(s)?,
         ),
+        Q::RetryCollaborationAssignment { assignment_id } => A::CollaborationAssignment(
+            core.retry_collaboration_assignment(&assignment_id)
+                .await
+                .map_err(s)?,
+        ),
         Q::ListCollaborationAssignments {
             device_id,
             active_only,

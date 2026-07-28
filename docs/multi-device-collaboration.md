@@ -105,7 +105,11 @@ tokens.
 - Allow VS Code/Perpetual through the host firewall when prompted.
 - Keep the host workspace and member VS Code window open for reconnect.
 - For a missing-repository error, open a matching clone as a workspace folder
-  on that worker and retry.
+  on that worker. The **Needs attention** card can add the clone and retry the
+  assignment without duplicating its prompt.
+- If more than one open clone has the same remote or name, keep only the clone
+  intended for the run in that VS Code workspace. Perpetual stops instead of
+  choosing one arbitrarily.
 - Authenticate the selected CLI on the selected device; accounts need not
   match the host account.
 - Use the **Perpetual** output channel for connection, mapping, lease, and patch

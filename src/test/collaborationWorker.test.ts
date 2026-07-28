@@ -10,6 +10,8 @@ type WorkerExports = {
     repoIds: string[];
     centralToLocal: Map<string, string>;
     localToCentral: Map<string, string>;
+    missing: string[];
+    ambiguous: string[];
   };
   normalizeRemote(value: string): string;
   sanitizeApprovalForCoordinator(value: any): any;
@@ -78,6 +80,21 @@ test("a single unambiguous local clone remains a safe fallback", async () => {
     [{ id: "local", name: "local-name", remote_url: null }],
   );
   assert.deepEqual(mapped.repoIds, ["local"]);
+});
+
+test("device workers reject ambiguous clones instead of choosing the first", async () => {
+  const { mapRepositories } = await loadWorkerExports();
+  const mapped = mapRepositories(
+    [{ repo_id: "central", repo_name: "api" }],
+    [{ id: "central", name: "api", remote_url: "https://github.com/example/api.git" }],
+    [
+      { id: "clone-a", name: "api-a", remote_url: "git@github.com:example/api.git" },
+      { id: "clone-b", name: "api-b", remote_url: "https://github.com/example/api.git" },
+    ],
+  );
+  assert.deepEqual(mapped.repoIds, []);
+  assert.deepEqual(mapped.ambiguous, ["api"]);
+  assert.deepEqual(mapped.missing, []);
 });
 
 test("relayed approvals redact credential-shaped command and tool input", async () => {

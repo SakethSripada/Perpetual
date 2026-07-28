@@ -205,13 +205,13 @@ export class CollaborationWorker implements vscode.Disposable {
     const localRepos: Repo[] = await this.local.listRepos(localProject.id);
     const mapping = mapRepositories(centralBindings, centralRepos, localRepos);
     if (centralBindings.length > 0 && mapping.repoIds.length !== centralBindings.length) {
-      const missing = centralBindings
-        .filter((binding) => !mapping.centralToLocal.has(binding.repo_id))
-        .map((binding) => binding.repo_name)
-        .join(", ");
-      throw new Error(
-        `Connect matching local repositories on this device before running shared work: ${missing}`,
-      );
+      const problems = [
+        mapping.missing.length > 0 ? `Missing: ${mapping.missing.join(", ")}.` : "",
+        mapping.ambiguous.length > 0
+          ? `Multiple open clones match: ${mapping.ambiguous.join(", ")}. Keep only the intended clone open.`
+          : "",
+      ].filter(Boolean).join(" ");
+      throw new Error(`Repository mapping failed on this device. ${problems}`);
     }
 
     const thread = await this.local.createAgentThread({
@@ -518,32 +518,46 @@ function mapRepositories(
   repoIds: string[];
   centralToLocal: Map<string, string>;
   localToCentral: Map<string, string>;
+  missing: string[];
+  ambiguous: string[];
 } {
   const centralById = new Map(centralRepos.map((repo) => [repo.id, repo]));
   const centralToLocal = new Map<string, string>();
   const localToCentral = new Map<string, string>();
   const used = new Set<string>();
+  const missing: string[] = [];
+  const ambiguous: string[] = [];
   for (const binding of bindings) {
     const central = centralById.get(binding.repo_id);
-    const candidates = localRepos.filter((local) => {
-      if (used.has(local.id)) return false;
-      const remoteMatch =
+    const available = localRepos.filter((local) => !used.has(local.id));
+    const remoteCandidates = available.filter(
+      (local) =>
         central?.remote_url &&
         local.remote_url &&
-        normalizeRemote(central.remote_url) === normalizeRemote(local.remote_url);
-      return remoteMatch || local.name.toLowerCase() === binding.repo_name.toLowerCase();
-    });
-    const local =
-      candidates[0] ??
-      (bindings.length === 1 && localRepos.length === 1 && !used.has(localRepos[0].id)
-        ? localRepos[0]
-        : undefined);
+        normalizeRemote(central.remote_url) === normalizeRemote(local.remote_url),
+    );
+    const nameCandidates = available.filter(
+      (local) => local.name.toLowerCase() === binding.repo_name.toLowerCase(),
+    );
+    let local: Repo | undefined;
+    if (remoteCandidates.length === 1) local = remoteCandidates[0];
+    else if (remoteCandidates.length > 1) ambiguous.push(binding.repo_name);
+    else if (nameCandidates.length === 1) local = nameCandidates[0];
+    else if (nameCandidates.length > 1) ambiguous.push(binding.repo_name);
+    else if (bindings.length === 1 && localRepos.length === 1) local = localRepos[0];
+    else missing.push(binding.repo_name);
     if (!local) continue;
     used.add(local.id);
     centralToLocal.set(binding.repo_id, local.id);
     localToCentral.set(local.id, binding.repo_id);
   }
-  return { repoIds: [...localToCentral.keys()], centralToLocal, localToCentral };
+  return {
+    repoIds: [...localToCentral.keys()],
+    centralToLocal,
+    localToCentral,
+    missing,
+    ambiguous,
+  };
 }
 
 function normalizeRemote(value: string): string {

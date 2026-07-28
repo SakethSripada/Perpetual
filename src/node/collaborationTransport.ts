@@ -398,6 +398,7 @@ const COLLABORATION_RPC_ALLOWLIST = new Set([
   "list_collaboration_devices",
   "collaboration_snapshot",
   "create_collaboration_assignment",
+  "retry_collaboration_assignment",
   "list_collaboration_assignments",
   "claim_collaboration_assignment",
   "renew_collaboration_lease",

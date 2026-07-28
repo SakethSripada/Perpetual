@@ -105,6 +105,45 @@ impl AppCore {
         &self,
         input: NewCollaborationAssignment,
     ) -> Result<CollaborationAssignment, CoreError> {
+        self.create_collaboration_assignment_inner(input, true)
+            .await
+    }
+
+    pub async fn retry_collaboration_assignment(
+        &self,
+        assignment_id: &str,
+    ) -> Result<CollaborationAssignment, CoreError> {
+        let previous = am_db::repos::collaboration::get_assignment(&self.db.pool, assignment_id)
+            .await?
+            .ok_or(CoreError::NotFound)?;
+        if !matches!(
+            previous.status,
+            CollaborationAssignmentStatus::Failed | CollaborationAssignmentStatus::LeaseExpired
+        ) {
+            return Err(CoreError::Other(
+                "Only failed or disconnected device work can be retried.".into(),
+            ));
+        }
+        self.create_collaboration_assignment_inner(
+            NewCollaborationAssignment {
+                thread_id: previous.thread_id,
+                device_id: previous.device_id,
+                agent: previous.agent,
+                permission: previous.permission,
+                execution_backend: previous.execution_backend,
+                message: None,
+                client_message_id: None,
+            },
+            false,
+        )
+        .await
+    }
+
+    async fn create_collaboration_assignment_inner(
+        &self,
+        input: NewCollaborationAssignment,
+        record_user_message: bool,
+    ) -> Result<CollaborationAssignment, CoreError> {
         self.expire_collaboration_leases().await?;
         if self.sessions.is_active(&input.thread_id).await {
             return Err(CoreError::Other(
@@ -125,6 +164,12 @@ impl AppCore {
             return Err(CoreError::Other(
                 "The selected device has been revoked. Pair it again before assigning work.".into(),
             ));
+        }
+        if now() - device.last_seen_at > Duration::seconds(LEASE_SECONDS) {
+            return Err(CoreError::Other(format!(
+                "{} is offline. Open Perpetual on that device and try again.",
+                device.name
+            )));
         }
         let capable = device.capabilities.iter().any(|capability| {
             capability.agent == input.agent && capability.installed && capability.authenticated
@@ -187,7 +232,7 @@ impl AppCore {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| thread.objective.trim());
-        if !user_text.is_empty() {
+        if record_user_message && !user_text.is_empty() {
             let event = AgentThreadEvent {
                 id: new_id(),
                 thread_id: thread.id.clone(),
@@ -1148,12 +1193,34 @@ mod tests {
             .finish_collaboration_assignment(FinishCollaborationAssignment {
                 assignment_id: queued.id.clone(),
                 lease_token: claimed.lease_token.clone(),
-                state: SessionState::Completed,
-                error: None,
+                state: SessionState::Failed,
+                error: Some("matching clone missing".into()),
             })
             .await
             .unwrap();
-        assert_eq!(finished.status, CollaborationAssignmentStatus::Completed);
+        assert_eq!(finished.status, CollaborationAssignmentStatus::Failed);
+
+        let user_messages_before_retry = core
+            .list_thread_events(&thread.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|event| event.role == "user")
+            .count();
+        let retry = core
+            .retry_collaboration_assignment(&queued.id)
+            .await
+            .unwrap();
+        assert_ne!(retry.id, queued.id);
+        assert_eq!(retry.status, CollaborationAssignmentStatus::Queued);
+        let user_messages_after_retry = core
+            .list_thread_events(&thread.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|event| event.role == "user")
+            .count();
+        assert_eq!(user_messages_after_retry, user_messages_before_retry);
 
         let events = core.list_thread_events(&thread.id).await.unwrap();
         let remote = events
@@ -1170,8 +1237,8 @@ mod tests {
 
         let late = core
             .report_collaboration_event(CollaborationEventInput {
-                assignment_id: queued.id,
-                lease_token: claimed.lease_token,
+                assignment_id: queued.id.clone(),
+                lease_token: claimed.lease_token.clone(),
                 event_id: "late".into(),
                 role: "assistant".into(),
                 kind: "assistant_text".into(),
@@ -1182,6 +1249,21 @@ mod tests {
             })
             .await;
         assert!(late.is_err(), "finished leases must fence late output");
+
+        let retry_claim = core
+            .claim_collaboration_assignment(&retry.id, "device-1")
+            .await
+            .unwrap();
+        let completed = core
+            .finish_collaboration_assignment(FinishCollaborationAssignment {
+                assignment_id: retry.id,
+                lease_token: retry_claim.lease_token,
+                state: SessionState::Completed,
+                error: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(completed.status, CollaborationAssignmentStatus::Completed);
 
         core.shutdown().await;
         drop(core);

@@ -2102,6 +2102,29 @@ textarea {
 .collaboration-body {
   gap: 14px;
 }
+.collaboration-inline-error {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--vscode-errorForeground) 45%, var(--am-border));
+  border-radius: 8px;
+  color: var(--vscode-errorForeground);
+  background: color-mix(in srgb, var(--vscode-errorForeground) 8%, transparent);
+}
+.collaboration-inline-error > span {
+  display: grid;
+  gap: 2px;
+}
+.collaboration-inline-error strong {
+  font-size: 11px;
+}
+.collaboration-inline-error small {
+  color: var(--vscode-foreground);
+  font-size: 10px;
+  line-height: 1.4;
+}
 .collaboration-onboarding {
   display: grid;
   gap: 12px;
@@ -2362,8 +2385,45 @@ textarea {
 .assignment-status.review {
   color: var(--am-warn);
 }
+.assignment-status.failed,
+.assignment-status.lease_expired {
+  color: var(--vscode-errorForeground);
+}
 .assignment-card > strong {
   font-size: 12px;
+}
+.assignment-card.assignment-issue {
+  border-color: color-mix(in srgb, var(--am-warn) 38%, var(--am-border));
+}
+.assignment-issue > p {
+  margin: 0;
+  color: var(--am-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.missing-repo-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.missing-repo-list code {
+  padding: 2px 6px;
+  border-radius: 5px;
+  color: var(--vscode-foreground);
+  background: var(--vscode-textCodeBlock-background, var(--am-surface-2));
+  font-size: 10px;
+}
+.assignment-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.assignment-actions small {
+  min-width: 180px;
+  flex: 1;
+  color: var(--am-muted);
+  font-size: 10px;
 }
 .assignment-card details summary {
   color: var(--vscode-textLink-foreground, var(--am-accent));

@@ -522,6 +522,15 @@ export class DaemonClient extends EventEmitter implements DaemonApi {
     );
   }
 
+  async retryCollaborationAssignment(assignmentId: string) {
+    return responsePayload(
+      await this.requestRaw(
+        variant("retry_collaboration_assignment", { assignment_id: assignmentId })
+      ),
+      "collaboration_assignment"
+    );
+  }
+
   async listCollaborationAssignments(deviceId?: string | null, activeOnly = false) {
     return responsePayload(
       await this.requestRaw(

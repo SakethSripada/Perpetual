@@ -1220,6 +1220,15 @@ export default function App() {
           onCancelAssignment={(assignmentId) =>
             vscode.postMessage({ type: "cancelCollaborationAssignment", assignmentId })
           }
+          onRetryAssignment={(assignmentId) =>
+            vscode.postMessage({ type: "retryCollaborationAssignment", assignmentId })
+          }
+          onDismissIssue={(assignmentId) =>
+            vscode.postMessage({ type: "dismissCollaborationAssignmentIssue", assignmentId })
+          }
+          onAddRepoAndRetry={(assignmentId) =>
+            vscode.postMessage({ type: "addCollaborationRepoAndRetry", assignmentId })
+          }
           onApplyChange={(changeSetId, overwrite = false) =>
             vscode.postMessage({
               type: "applyCollaborationChangeSet",
@@ -3665,6 +3674,93 @@ export function collaborationExecutionTargets(
   return options;
 }
 
+export type CollaborationAssignmentIssue = {
+  kind: "missing_repo" | "ambiguous_repo" | "connection" | "agent" | "changes" | "unknown";
+  title: string;
+  message: string;
+  missingRepos: string[];
+};
+
+export function collaborationAssignmentIssue(
+  assignment: CollaborationAssignment,
+): CollaborationAssignmentIssue {
+  const error = assignment.error?.trim() ?? "";
+  const missingMatch =
+    error.match(/repository mapping failed.*?missing:\s*([^.]+)\./i) ??
+    error.match(/connect matching local repositories.*?:\s*(.+)$/i);
+  if (missingMatch) {
+    const missingRepos = missingMatch[1]
+      .split(",")
+      .map((repo) => repo.trim())
+      .filter(Boolean);
+    return {
+      kind: "missing_repo",
+      title: "Repository clone needed",
+      message: `Open a matching clone on ${assignment.device_name}, then retry this work.`,
+      missingRepos,
+    };
+  }
+  const ambiguousMatch = error.match(/multiple open clones match:\s*([^.]+)\./i);
+  if (ambiguousMatch) {
+    return {
+      kind: "ambiguous_repo",
+      title: "More than one clone matches",
+      message: `On ${assignment.device_name}, keep only the intended clone open in this VS Code workspace, then retry.`,
+      missingRepos: ambiguousMatch[1].split(",").map((repo) => repo.trim()).filter(Boolean),
+    };
+  }
+  if (assignment.status === "lease_expired" || /lease|offline|disconnected/i.test(error)) {
+    return {
+      kind: "connection",
+      title: "Device connection was lost",
+      message: `No late changes were accepted. Bring ${assignment.device_name} online and retry.`,
+      missingRepos: [],
+    };
+  }
+  if (/not ready|not installed|sign.?in|authenticated|local worker ended/i.test(error)) {
+    return {
+      kind: "agent",
+      title: `${labelAgent(assignment.agent)} stopped`,
+      message: `Check ${labelAgent(assignment.agent)} on ${assignment.device_name}, then retry.`,
+      missingRepos: [],
+    };
+  }
+  if (/patch|changes|miB|worktree|git/i.test(error)) {
+    return {
+      kind: "changes",
+      title: "Changes could not be returned",
+      message: "Review the technical details, reduce or fix the repository change, then retry.",
+      missingRepos: [],
+    };
+  }
+  return {
+    kind: "unknown",
+    title: "Device work stopped",
+    message: `Check the details from ${assignment.device_name}, then retry when the issue is resolved.`,
+    missingRepos: [],
+  };
+}
+
+export function unresolvedCollaborationIssues(
+  assignments: CollaborationAssignment[],
+): CollaborationAssignment[] {
+  return assignments
+    .filter((assignment) =>
+      assignment.status === "failed" || assignment.status === "lease_expired",
+    )
+    .filter(
+      (assignment) =>
+        !assignments.some(
+          (newer) =>
+            newer.thread_id === assignment.thread_id &&
+            newer.device_id === assignment.device_id &&
+            Date.parse(newer.created_at) > Date.parse(assignment.created_at),
+        ),
+    )
+    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
+    .slice(0, 5);
+}
+
 const PERMISSIONS: {
   value: PermissionPolicy;
   label: string;
@@ -3860,6 +3956,9 @@ function CollaborationSheet(props: {
   onLeave(): void;
   onRevoke(deviceId: string): void;
   onCancelAssignment(assignmentId: string): void;
+  onRetryAssignment(assignmentId: string): void;
+  onDismissIssue(assignmentId: string): void;
+  onAddRepoAndRetry(assignmentId: string): void;
   onApplyChange(changeSetId: string, overwrite?: boolean): void;
   onRejectChange(changeSetId: string): void;
 }) {
@@ -3872,6 +3971,7 @@ function CollaborationSheet(props: {
   const activeAssignments = collaboration.assignments.filter((assignment) =>
     ["queued", "running", "review"].includes(assignment.status),
   );
+  const recentIssues = unresolvedCollaborationIssues(collaboration.assignments);
   const unresolvedChanges = collaboration.change_sets.filter((change) =>
     change.status === "pending" || change.status === "conflict",
   );
@@ -3903,14 +4003,22 @@ function CollaborationSheet(props: {
         </header>
 
         <div className="sheet-body collaboration-body">
+          {props.snapshot.error && (
+            <div className="collaboration-inline-error" role="alert">
+              <Icon name="alert" />
+              <span>
+                <strong>Could not complete that action</strong>
+                <small>{props.snapshot.error}</small>
+              </span>
+            </div>
+          )}
           {!collaboration.connected ? (
             <div className="collaboration-onboarding">
               <div className="collaboration-hero">
                 <span className="collaboration-hero-icon"><Icon name="devices" /></span>
-                <strong>One workspace, every Perpetual device</strong>
+                <strong>Coordinate agents on different devices</strong>
                 <p>
-                  Pair over your local network. Prompts and progress stay synchronized,
-                  while Claude and Codex credentials remain on the device that runs them.
+                  Pair over your local network. Prompts and progress stay synchronized between agents on different devices.
                 </p>
               </div>
               <button type="button" className="collaboration-choice" onClick={props.onHost}>
@@ -4051,6 +4159,88 @@ function CollaborationSheet(props: {
                         )}
                       </article>
                     ))}
+                  </div>
+                </section>
+              )}
+
+              {recentIssues.length > 0 && (
+                <section className="collaboration-section">
+                  <div className="collaboration-section-title">
+                    <strong>Needs attention</strong>
+                    <span>{recentIssues.length}</span>
+                  </div>
+                  <div className="assignment-list">
+                    {recentIssues.map((assignment) => {
+                      const issue = collaborationAssignmentIssue(assignment);
+                      const device = devices.find((item) => item.id === assignment.device_id);
+                      const online = onlineIds.has(assignment.device_id);
+                      const ready = device?.capabilities.some(
+                        (capability) =>
+                          capability.agent === assignment.agent &&
+                          capability.installed &&
+                          capability.authenticated,
+                      ) ?? false;
+                      const localMissingRepo =
+                        issue.kind === "missing_repo" &&
+                        assignment.device_id === collaboration.device_id;
+                      const retryDisabledReason = !online
+                        ? `Open Perpetual on ${assignment.device_name} before retrying.`
+                        : !ready
+                          ? `Sign in to ${labelAgent(assignment.agent)} on ${assignment.device_name} before retrying.`
+                          : null;
+                      return (
+                        <article className="assignment-card assignment-issue" key={assignment.id} role="alert">
+                          <div className="assignment-head">
+                            <span className={`assignment-status ${assignment.status}`}>
+                              {assignment.status === "lease_expired" ? "Disconnected" : "Stopped"}
+                            </span>
+                            <span>{assignment.device_name} · {labelAgent(assignment.agent)}</span>
+                          </div>
+                          <strong>{issue.title}</strong>
+                          <p>{issue.message}</p>
+                          {issue.missingRepos.length > 0 && (
+                            <div className="missing-repo-list">
+                              {issue.missingRepos.map((repo) => <code key={repo}>{repo}</code>)}
+                            </div>
+                          )}
+                          {assignment.error && (
+                            <details>
+                              <summary>Technical details</summary>
+                              <pre>{assignment.error}</pre>
+                            </details>
+                          )}
+                          <div className="assignment-actions">
+                            {localMissingRepo ? (
+                              <button
+                                type="button"
+                                className="primary-btn"
+                                onClick={() => props.onAddRepoAndRetry(assignment.id)}
+                              >
+                                <Icon name="folder" /> Choose clone and retry
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                className="primary-btn"
+                                disabled={!!retryDisabledReason}
+                                title={retryDisabledReason ?? "Queue this work again"}
+                                onClick={() => props.onRetryAssignment(assignment.id)}
+                              >
+                                Retry
+                              </button>
+                            )}
+                            {retryDisabledReason && <small>{retryDisabledReason}</small>}
+                            <button
+                              type="button"
+                              className="secondary-btn"
+                              onClick={() => props.onDismissIssue(assignment.id)}
+                            >
+                              Dismiss
+                            </button>
+                          </div>
+                        </article>
+                      );
+                    })}
                   </div>
                 </section>
               )}
