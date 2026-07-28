@@ -17,6 +17,12 @@ import type {
   CloudAvailability,
   CloudPolicy,
   CloudRun,
+  ClaimedCollaborationAssignment,
+  CollaborationAssignment,
+  CollaborationChangeSet,
+  CollaborationDevice,
+  CollaborationEventInput,
+  CollaborationSnapshot,
   ExecutionBackend,
   GithubAuthStatus,
   GithubRepository,
@@ -25,6 +31,7 @@ import type {
   LocalModelStatus,
   ContextPacket,
   NewAgentThread,
+  NewCollaborationAssignment,
   NewGithubRepo,
   NewLocalRepo,
   NewWorkEdge,
@@ -33,6 +40,7 @@ import type {
   Project,
   QueuedTurn,
   Repo,
+  RegisterCollaborationDevice,
   SandboxLoginPrompt,
   SandboxPolicy,
   SandboxRuntimeStatus,
@@ -159,5 +167,41 @@ export interface DaemonApi {
   deleteQueuedTurn(id: string): Promise<void>;
   updateQueuedTurn(id: string, message: string): Promise<void>;
   reorderQueuedTurns(threadId: string, orderedIds: string[]): Promise<void>;
+  registerCollaborationDevice(input: RegisterCollaborationDevice): Promise<CollaborationDevice>;
+  heartbeatCollaborationDevice(input: RegisterCollaborationDevice): Promise<CollaborationDevice>;
+  listCollaborationDevices(): Promise<CollaborationDevice[]>;
+  revokeCollaborationDevice(deviceId: string): Promise<void>;
+  collaborationSnapshot(threadId?: string | null): Promise<CollaborationSnapshot>;
+  createCollaborationAssignment(
+    input: NewCollaborationAssignment
+  ): Promise<CollaborationAssignment>;
+  listCollaborationAssignments(
+    deviceId?: string | null,
+    activeOnly?: boolean
+  ): Promise<CollaborationAssignment[]>;
+  claimCollaborationAssignment(
+    assignmentId: string,
+    deviceId: string
+  ): Promise<ClaimedCollaborationAssignment>;
+  renewCollaborationLease(
+    assignmentId: string,
+    leaseToken: string
+  ): Promise<CollaborationAssignment>;
+  reportCollaborationEvent(input: CollaborationEventInput): Promise<void>;
+  reportCollaborationChangeSet(input: {
+    assignment_id: string;
+    lease_token: string;
+    repo_id: string;
+    base_ref?: string | null;
+    files: import("./types").FileChange[];
+    patch: string;
+  }): Promise<CollaborationChangeSet>;
+  finishCollaborationAssignment(input: {
+    assignment_id: string;
+    lease_token: string;
+    state: "completed" | "interrupted" | "failed";
+    error?: string | null;
+  }): Promise<CollaborationAssignment>;
+  cancelCollaborationAssignment(assignmentId: string): Promise<CollaborationAssignment>;
   prepareShutdown(): Promise<void>;
 }

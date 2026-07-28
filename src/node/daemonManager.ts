@@ -1,9 +1,17 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import * as vscode from "vscode";
+import {
+  CollaborationHost,
+  connectCollaborationPeer,
+  decodeCollaborationInvite,
+  type SavedCollaborationPeer,
+} from "./collaborationTransport";
 import { DaemonClient } from "./daemonClient";
-import type { AppEvent } from "./types";
+import type { AgentStatus, AppEvent, RegisterCollaborationDevice } from "./types";
 
 type Endpoint = {
   port: number;
@@ -12,8 +20,13 @@ type Endpoint = {
 
 export class DaemonManager implements vscode.Disposable {
   private client: DaemonClient | null = null;
+  private coordinatorClient: DaemonClient | null = null;
+  private collaborationHost: CollaborationHost | null = null;
   private child: ChildProcessWithoutNullStreams | null = null;
   private startPromise: Promise<DaemonClient> | null = null;
+  private restorePromise: Promise<void> | null = null;
+  private collaborationRestored = false;
+  private heartbeatTimer: NodeJS.Timeout | null = null;
   private disposed = false;
   private stdoutBuffer = "";
   private stderrBuffer = "";
@@ -27,6 +40,12 @@ export class DaemonManager implements vscode.Disposable {
   ) {}
 
   async getClient(): Promise<DaemonClient> {
+    const local = await this.getLocalClient();
+    await this.restoreCollaboration(local);
+    return this.coordinatorClient ?? local;
+  }
+
+  async getLocalClient(): Promise<DaemonClient> {
     if (this.disposed) throw new Error("Perpetual daemon manager is disposed");
     if (this.client) return this.client;
     if (this.startPromise) return this.startPromise;
@@ -35,6 +54,119 @@ export class DaemonManager implements vscode.Disposable {
       this.startPromise = null;
     });
     return this.startPromise;
+  }
+
+  async createCollaborationInvite(): Promise<string> {
+    const local = await this.getLocalClient();
+    const identity = await this.deviceIdentity();
+    if (!this.collaborationHost) {
+      const hostId = this.context.globalState.get<string>(HOST_ID_KEY) ?? randomUUID();
+      await this.context.globalState.update(HOST_ID_KEY, hostId);
+      const host = new CollaborationHost(
+        local,
+        this.context.secrets,
+        hostId,
+        identity.name,
+      );
+      host.on("error", (error) =>
+        this.output.appendLine(`[collaboration] host error: ${formatError(error)}`),
+      );
+      const preferredPort = this.context.globalState.get<number>(HOST_PORT_KEY, 0);
+      let port: number;
+      try {
+        port = await host.start(preferredPort);
+      } catch (error) {
+        if (!preferredPort) throw error;
+        this.output.appendLine(
+          `[collaboration] saved port ${preferredPort} unavailable; selecting a new port`,
+        );
+        port = await host.start(0);
+      }
+      this.collaborationHost = host;
+      await Promise.all([
+        this.context.globalState.update(HOST_ENABLED_KEY, true),
+        this.context.globalState.update(HOST_PORT_KEY, port),
+      ]);
+      await this.registerThisDevice(local);
+      this.startHeartbeat();
+      this.output.appendLine(`[collaboration] hosting encrypted workspace on port ${port}`);
+    }
+    return this.collaborationHost.createInvite().text;
+  }
+
+  async joinCollaboration(inviteText: string): Promise<void> {
+    const invite = decodeCollaborationInvite(inviteText);
+    const local = await this.getLocalClient();
+    const identity = await this.deviceIdentity();
+    const connected = await connectCollaborationPeer(invite, identity.id);
+    const coordinator = await DaemonClient.connectStream(connected.stream, connected.credential);
+    try {
+      await this.registerThisDevice(coordinator);
+    } catch (error) {
+      coordinator.dispose();
+      throw error;
+    }
+    const saved: SavedCollaborationPeer = {
+      v: 1,
+      hostId: invite.hostId,
+      hostName: invite.hostName,
+      addresses: invite.addresses,
+      port: invite.port,
+      inviteId: invite.inviteId,
+      deviceId: identity.id,
+      credential: connected.credential,
+    };
+    await this.context.secrets.store(PEER_SECRET_KEY, JSON.stringify(saved));
+    this.useCoordinatorClient(coordinator);
+    this.collaborationRestored = true;
+    this.startHeartbeat();
+    this.output.appendLine(`[collaboration] joined ${invite.hostName}`);
+  }
+
+  async leaveCollaboration(): Promise<void> {
+    this.coordinatorClient?.dispose();
+    this.coordinatorClient = null;
+    await this.context.secrets.delete(PEER_SECRET_KEY);
+    this.collaborationRestored = true;
+    if (!this.collaborationHost && this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+    this.output.appendLine("[collaboration] left shared workspace");
+  }
+
+  async stopCollaborationHost(): Promise<void> {
+    this.collaborationHost?.dispose();
+    this.collaborationHost = null;
+    await this.context.globalState.update(HOST_ENABLED_KEY, false);
+    if (!this.coordinatorClient && this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
+  async revokeCollaborationDevice(deviceId: string): Promise<void> {
+    await this.collaborationHost?.revokeDevice(deviceId);
+    const client = await this.getClient();
+    await client.revokeCollaborationDevice(deviceId);
+  }
+
+  async collaborationStatus(): Promise<{
+    role: "standalone" | "host" | "member";
+    connected: boolean;
+    hostName: string | null;
+    deviceId: string;
+    deviceName: string;
+  }> {
+    const identity = await this.deviceIdentity();
+    const saved = await this.savedPeer();
+    return {
+      role: this.coordinatorClient ? "member" : this.collaborationHost ? "host" : "standalone",
+      connected: Boolean(this.coordinatorClient || this.collaborationHost),
+      hostName: this.coordinatorClient ? saved?.hostName ?? null : this.collaborationHost ? identity.name : null,
+      deviceId: identity.id,
+      deviceName: identity.name,
+    };
   }
 
   async ping(): Promise<void> {
@@ -53,11 +185,21 @@ export class DaemonManager implements vscode.Disposable {
         this.output.appendLine(`[daemon] shutdown prepare skipped: ${message}`);
       }
     }
+    this.coordinatorClient?.dispose();
+    this.coordinatorClient = null;
+    this.collaborationHost?.dispose();
+    this.collaborationHost = null;
     this.dispose();
   }
 
   dispose(): void {
     this.disposed = true;
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = null;
+    this.coordinatorClient?.dispose();
+    this.coordinatorClient = null;
+    this.collaborationHost?.dispose();
+    this.collaborationHost = null;
     this.client?.dispose();
     this.client = null;
     if (this.child && !this.child.killed) {
@@ -104,7 +246,9 @@ export class DaemonManager implements vscode.Disposable {
         }
       });
       const client = await DaemonClient.connect(endpoint.port, endpoint.token);
-      client.on("event", (event: AppEvent) => this.events.fire(event));
+      client.on("event", (event: AppEvent) => {
+        if (!this.coordinatorClient) this.events.fire(event);
+      });
       client.on("event_gap", (gap: unknown) =>
         this.events.fire({ type: "event_gap", data: gap } as AppEvent),
       );
@@ -188,6 +332,152 @@ export class DaemonManager implements vscode.Disposable {
       `No bundled am-daemon binary found for ${target}. Run npm run build:daemon -- --target=${target} && npm run copy-daemon -- --target=${target}, or set perpetual.daemonPath.`
     );
   }
+
+  private async restoreCollaboration(local: DaemonClient): Promise<void> {
+    if (this.collaborationRestored) return;
+    if (this.restorePromise) return this.restorePromise;
+    this.restorePromise = this.restoreCollaborationNow(local).finally(() => {
+      this.restorePromise = null;
+      this.collaborationRestored = true;
+    });
+    return this.restorePromise;
+  }
+
+  private async restoreCollaborationNow(local: DaemonClient): Promise<void> {
+    if (this.context.globalState.get<boolean>(HOST_ENABLED_KEY, false)) {
+      try {
+        await this.createCollaborationInvite();
+      } catch (error) {
+        this.output.appendLine(
+          `[collaboration] could not restore host: ${formatError(error)}`,
+        );
+      }
+    }
+    const saved = await this.savedPeer();
+    if (!saved) return;
+    try {
+      const connected = await connectCollaborationPeer(saved, saved.deviceId);
+      const coordinator = await DaemonClient.connectStream(
+        connected.stream,
+        connected.credential,
+      );
+      if (connected.credential !== saved.credential) {
+        await this.context.secrets.store(
+          PEER_SECRET_KEY,
+          JSON.stringify({ ...saved, credential: connected.credential }),
+        );
+      }
+      await this.registerThisDevice(coordinator);
+      this.useCoordinatorClient(coordinator);
+      this.startHeartbeat();
+      this.output.appendLine(`[collaboration] reconnected to ${saved.hostName}`);
+    } catch (error) {
+      this.output.appendLine(
+        `[collaboration] ${saved.hostName} is offline: ${formatError(error)}`,
+      );
+    }
+    void local;
+  }
+
+  private useCoordinatorClient(client: DaemonClient): void {
+    this.coordinatorClient?.dispose();
+    this.coordinatorClient = client;
+    client.on("event", (event: AppEvent) => this.events.fire(event));
+    client.on("event_gap", (gap: unknown) =>
+      this.events.fire({ type: "event_gap", data: gap } as AppEvent),
+    );
+    client.on("disconnect", (error: Error) => {
+      if (this.coordinatorClient !== client || this.disposed) return;
+      this.output.appendLine(`[collaboration] coordinator disconnected: ${error.message}`);
+      this.coordinatorClient = null;
+    });
+  }
+
+  private async registerThisDevice(client: DaemonClient): Promise<void> {
+    const input = await this.deviceRegistration();
+    await client.registerCollaborationDevice(input);
+  }
+
+  private startHeartbeat(): void {
+    if (this.heartbeatTimer) return;
+    this.heartbeatTimer = setInterval(() => void this.heartbeat(), 15_000);
+  }
+
+  private async heartbeat(): Promise<void> {
+    try {
+      const input = await this.deviceRegistration();
+      if (this.collaborationHost && this.client) {
+        await this.client.heartbeatCollaborationDevice(input);
+      }
+      if (this.coordinatorClient) {
+        await this.coordinatorClient.heartbeatCollaborationDevice(input);
+      } else if (await this.savedPeer()) {
+        this.collaborationRestored = false;
+        if (this.client) await this.restoreCollaboration(this.client);
+      }
+    } catch (error) {
+      this.output.appendLine(`[collaboration] heartbeat delayed: ${formatError(error)}`);
+    }
+  }
+
+  private async deviceRegistration(): Promise<RegisterCollaborationDevice> {
+    const identity = await this.deviceIdentity();
+    const local = await this.getLocalClient();
+    const agents: AgentStatus[] = await local.detectAgents().catch(() => []);
+    return {
+      id: identity.id,
+      name: identity.name,
+      hostname: os.hostname(),
+      platform: currentTarget(),
+      extension_version: String(this.context.extension.packageJSON.version ?? "unknown"),
+      capabilities: agents.map((agent) => ({
+        agent: agent.kind,
+        installed: agent.installed,
+        authenticated: agent.authenticated,
+        version: agent.version,
+      })),
+    };
+  }
+
+  private async deviceIdentity(): Promise<{ id: string; name: string }> {
+    let id = this.context.globalState.get<string>(DEVICE_ID_KEY);
+    if (!id) {
+      id = randomUUID();
+      await this.context.globalState.update(DEVICE_ID_KEY, id);
+    }
+    const configured = vscode.workspace
+      .getConfiguration("perpetual")
+      .get<string>("collaboration.deviceName", "")
+      .trim();
+    return { id, name: configured || friendlyDeviceName() };
+  }
+
+  private async savedPeer(): Promise<SavedCollaborationPeer | null> {
+    const raw = await this.context.secrets.get(PEER_SECRET_KEY);
+    if (!raw) return null;
+    try {
+      const peer = JSON.parse(raw) as SavedCollaborationPeer;
+      return peer.v === 1 && peer.deviceId && peer.credential ? peer : null;
+    } catch {
+      await this.context.secrets.delete(PEER_SECRET_KEY);
+      return null;
+    }
+  }
+}
+
+const DEVICE_ID_KEY = "perpetual.collaboration.deviceId";
+const HOST_ID_KEY = "perpetual.collaboration.hostId";
+const HOST_PORT_KEY = "perpetual.collaboration.hostPort";
+const HOST_ENABLED_KEY = "perpetual.collaboration.hostEnabled";
+const PEER_SECRET_KEY = "perpetual.collaboration.peer.v1";
+
+function friendlyDeviceName(): string {
+  const hostname = os.hostname().replace(/\.local$/i, "").trim();
+  return hostname || `${os.type()} device`;
+}
+
+function formatError(value: unknown): string {
+  return value instanceof Error ? value.message : String(value);
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {

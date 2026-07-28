@@ -200,6 +200,12 @@
           "default": "medium",
           "description": "Optional reasoning-effort override for new sessions."
         },
+        "perpetual.collaboration.deviceName": {
+          "type": "string",
+          "default": "",
+          "maxLength": 80,
+          "description": "Friendly name shown to paired Perpetual devices. Empty uses this computer's hostname."
+        },
         "perpetual.defaultLocalProvider": {
           "type": "string",
           "enum": [

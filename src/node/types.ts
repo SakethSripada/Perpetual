@@ -107,6 +107,113 @@ export interface AgentStatus {
   usage: ProviderUsage | null;
 }
 
+export interface CollaborationAgentCapability {
+  agent: AgentKind;
+  installed: boolean;
+  authenticated: boolean;
+  version: string | null;
+}
+
+export interface CollaborationDevice {
+  id: string;
+  name: string;
+  hostname: string;
+  platform: string;
+  extension_version: string;
+  capabilities: CollaborationAgentCapability[];
+  last_seen_at: string;
+  paired_at: string;
+  revoked_at: string | null;
+  active_assignments: number;
+}
+
+export interface RegisterCollaborationDevice {
+  id: string;
+  name: string;
+  hostname: string;
+  platform: string;
+  extension_version: string;
+  capabilities: CollaborationAgentCapability[];
+}
+
+export type CollaborationAssignmentStatus =
+  | "queued"
+  | "running"
+  | "review"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "lease_expired";
+
+export interface CollaborationAssignment {
+  id: string;
+  thread_id: string;
+  turn_id: string;
+  device_id: string;
+  device_name: string;
+  agent: AgentKind;
+  permission: PermissionPolicy;
+  execution_backend: ExecutionBackend;
+  prompt: string;
+  status: CollaborationAssignmentStatus;
+  lease_expires_at: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+}
+
+export interface NewCollaborationAssignment {
+  thread_id: string;
+  device_id: string;
+  agent: AgentKind;
+  permission: PermissionPolicy;
+  execution_backend: ExecutionBackend;
+  message?: string | null;
+  client_message_id?: string | null;
+}
+
+export interface ClaimedCollaborationAssignment {
+  assignment: CollaborationAssignment;
+  lease_token: string;
+}
+
+export interface CollaborationEventInput {
+  assignment_id: string;
+  lease_token: string;
+  event_id: string;
+  role: string;
+  kind: string;
+  text?: string | null;
+  client_message_id?: string | null;
+  data: unknown;
+  ts: string;
+}
+
+export interface CollaborationChangeSet {
+  id: string;
+  assignment_id: string;
+  thread_id: string;
+  device_id: string;
+  repo_id: string;
+  repo_name: string;
+  base_ref: string | null;
+  files: FileChange[];
+  patch: string;
+  patch_sha256: string;
+  status: "pending" | "applied" | "applied_with_overwrite" | "conflict" | "rejected";
+  conflict_files: string[];
+  created_at: string;
+  applied_at: string | null;
+}
+
+export interface CollaborationSnapshot {
+  devices: CollaborationDevice[];
+  assignments: CollaborationAssignment[];
+  change_sets: CollaborationChangeSet[];
+  server_time: string;
+}
+
 export interface AgentRunDefaults {
   kind: AgentKind;
   model: string | null;
@@ -592,6 +699,9 @@ export type AppEvent =
   | { type: "agent_thread_updated"; data: AgentThread }
   | { type: "agent_thread_event"; data: AgentThreadEvent }
   | { type: "cloud_run_updated"; data: CloudRun }
+  | { type: "collaboration_device_updated"; data: CollaborationDevice }
+  | { type: "collaboration_assignment_updated"; data: CollaborationAssignment }
+  | { type: "collaboration_change_set_updated"; data: CollaborationChangeSet }
   | { type: "provider_usage_updated"; data: { agent: AgentKind; usage: ProviderUsage } }
   | { type: "approval_requested"; data: ApprovalRequest }
   | { type: "approval_resolved"; data: { id: string; resolution: ApprovalResolution; decision?: ApprovalDecision | null } }
