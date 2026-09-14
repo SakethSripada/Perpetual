@@ -1144,6 +1144,20 @@ export default function App() {
             cloudPolicy,
             localModelPolicy,
           ) => {
+            const activeProfile = limitPolicy.agent_profiles?.find(
+              (profile) => profile.agent === agent,
+            );
+            if (activeProfile && !selectedThread) {
+              const nextModel = activeProfile.model ?? "";
+              const nextReasoning = activeProfile.reasoning ?? "";
+              composerDefaultsRef.current = {
+                agent,
+                model: nextModel,
+                reasoning: nextReasoning,
+              };
+              setModel(nextModel);
+              setReasoning(nextReasoning);
+            }
             vscode.postMessage({ type: "setLimitPolicy", policy: limitPolicy });
             vscode.postMessage({
               type: "setSandboxPolicy",
@@ -4535,23 +4549,61 @@ function SettingsSheet(props: {
   const [localPolicy, setLocalPolicy] = useState<LocalModelPolicy>(
     () => props.snapshot.localModelPolicy ?? defaultLocalModelPolicy(),
   );
+  const [section, setSection] = useState<
+    "agents" | "switching" | "continuity" | "local" | "sandbox"
+  >("agents");
+  const updateAgentProfile = (
+    agent: AgentKind,
+    patch: { model?: string | null; reasoning?: string | null },
+  ) => {
+    const profiles = [...(limit.agent_profiles ?? [])];
+    const index = profiles.findIndex((profile) => profile.agent === agent);
+    const current = index >= 0 ? profiles[index] : { agent, model: null, reasoning: null };
+    const next = { ...current, ...patch };
+    if (index >= 0) profiles[index] = next;
+    else profiles.push(next);
+    setLimit({ ...limit, agent_profiles: profiles });
+  };
   const cloudClaudeFirst =
     (cloud.provider_priority?.[0] ?? "claude_code") !== "codex";
   return (
     <div className="sheet-backdrop" onMouseDown={props.onClose}>
       <section
-        className="sheet"
+        className="sheet settings-sheet"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header>
-          <strong>Settings</strong>
+          <div className="settings-heading">
+            <strong>Perpetual settings</strong>
+            <small>Agents, continuity, and execution</small>
+          </div>
           <IconButton title="Close" onClick={props.onClose}>
             <Icon name="close" />
           </IconButton>
         </header>
 
-        <div className="sheet-body">
-          <div className="settings-group">
+        <div className="settings-layout">
+          <nav className="settings-nav" aria-label="Settings sections">
+            {([
+              ["agents", "Agents", "agent"],
+              ["switching", "Switching", "bolt"],
+              ["continuity", "Continuity", "cloud"],
+              ["local", "Local models", "cube"],
+              ["sandbox", "Sandbox", "shield"],
+            ] as const).map(([value, label, icon]) => (
+              <button
+                key={value}
+                type="button"
+                className={section === value ? "active" : ""}
+                onClick={() => setSection(value)}
+              >
+                <Icon name={icon} />
+                <span>{label}</span>
+              </button>
+            ))}
+          </nav>
+          <div className={`sheet-body settings-content section-${section}`}>
+          <div className="settings-group" data-settings-section="agents">
             <div className="group-title">Readiness</div>
             <div className="readiness-grid">
               {props.snapshot.agents.map((agent) => (
@@ -4642,8 +4694,82 @@ function SettingsSheet(props: {
             </button>
           </div>
 
-          <div className="settings-group">
+          <div className="settings-group" data-settings-section="switching">
             <div className="group-title">Limit handling</div>
+            <p className="settings-help">
+              Choose exactly which model and effort each provider should use. These
+              profiles also apply when Perpetual switches providers automatically.
+            </p>
+            <div className="agent-profile-grid">
+              {(["claude_code", "codex"] as const).map((profileAgent) => {
+                const profile = limit.agent_profiles?.find(
+                  (item) => item.agent === profileAgent,
+                ) ?? { agent: profileAgent, model: null, reasoning: null };
+                const models = modelOptions(
+                  profileAgent,
+                  props.snapshot,
+                  null,
+                  profile.model ?? "",
+                );
+                const efforts = reasoningOptions(
+                  profileAgent,
+                  props.snapshot,
+                  profile.model ?? "",
+                );
+                return (
+                  <div className="agent-profile-card" key={profileAgent}>
+                    <div className="agent-profile-title">
+                      <AgentMark agent={profileAgent} />
+                      <strong>{labelAgent(profileAgent)}</strong>
+                      <span>Default profile</span>
+                    </div>
+                    <label className="field">
+                      <span>Model</span>
+                      <select
+                        value={profile.model ?? ""}
+                        onChange={(event) => {
+                          const model = event.target.value;
+                          updateAgentProfile(profileAgent, {
+                            model: model || null,
+                            reasoning:
+                              reasoningAfterModelChange(
+                                profileAgent,
+                                props.snapshot,
+                                model,
+                                profile.reasoning ?? "",
+                              ) || null,
+                          });
+                        }}
+                      >
+                        <option value="">Provider default</option>
+                        {models.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Reasoning</span>
+                      <select
+                        value={profile.reasoning ?? ""}
+                        onChange={(event) =>
+                          updateAgentProfile(profileAgent, {
+                            reasoning: event.target.value || null,
+                          })
+                        }
+                      >
+                        {efforts.map((option) => (
+                          <option key={option.value || "default"} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                );
+              })}
+            </div>
             <label className="toggle">
               <input
                 type="checkbox"
@@ -4753,7 +4879,7 @@ function SettingsSheet(props: {
             </div>
           </div>
 
-          <div className="settings-group">
+          <div className="settings-group" data-settings-section="continuity">
             <div className="group-title">Cloud continuity</div>
             <p className="settings-help">
               Set up either cloud here, then turn on continuity to keep work
@@ -4932,7 +5058,7 @@ function SettingsSheet(props: {
             )}
           </div>
 
-          <div className="settings-group">
+          <div className="settings-group" data-settings-section="local">
             <div className="group-title">Local model fallback</div>
             <label className="toggle">
               <input
@@ -5128,7 +5254,7 @@ function SettingsSheet(props: {
             )}
           </div>
 
-          <div className="settings-group">
+          <div className="settings-group" data-settings-section="sandbox">
             <div className="group-title">Docker Sandbox</div>
             <label className="field">
               <span>Default runtime</span>
@@ -5199,6 +5325,7 @@ function SettingsSheet(props: {
                 </select>
               </label>
             </div>
+          </div>
           </div>
         </div>
 
@@ -5345,7 +5472,13 @@ function autoGrow(el: HTMLTextAreaElement) {
   el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
 }
 
-function runDefaults(snapshot: WorkbenchSnapshot, agent: AgentKind) {
+export function runDefaults(snapshot: WorkbenchSnapshot, agent: AgentKind) {
+  const profile = snapshot.limitPolicy?.agent_profiles?.find(
+    (item) => item.agent === agent,
+  );
+  if (profile) {
+    return { model: profile.model, reasoning: profile.reasoning };
+  }
   return (
     snapshot.runDefaults.find((item) => item.kind === agent) ?? {
       model: null,
@@ -5383,6 +5516,13 @@ export function modelOptions(
     for (const option of catalog?.models ?? []) {
       if (!option.available) continue;
       pushPickerOption(out, catalogOption(option));
+      for (const alias of option.aliases ?? []) {
+        pushPickerOption(out, {
+          value: alias,
+          label: `${humanize(alias)} · Latest`,
+          source: `${sourceLabel(option.source)} alias`,
+        });
+      }
     }
     const detectedModels = (catalog?.models ?? []).some(
       (option) => option.source !== "settings" && option.available,
@@ -5422,6 +5562,8 @@ function fallbackModelOptions(agent: AgentKind): PickerModelOption[] {
   const models =
     agent === "claude_code"
       ? [
+          "claude-fable-5-1",
+          "claude-opus-5",
           "claude-fable-5",
           "claude-opus-4-8",
           "claude-opus-4-7",
@@ -5430,6 +5572,7 @@ function fallbackModelOptions(agent: AgentKind): PickerModelOption[] {
           "claude-haiku-4-5",
         ]
       : [
+          "gpt-6-astra",
           "gpt-5.6-sol",
           "gpt-5.6-terra",
           "gpt-5.6-luna",
@@ -5564,7 +5707,10 @@ function sourceLabel(source: string): string {
       return "Codex";
     case "claude_code":
     case "claude_help":
+    case "claude_settings":
       return "Claude";
+    case "built_in_fallback":
+      return "Current fallback";
     case "settings":
       return "Settings";
     default:
@@ -5871,6 +6017,7 @@ function defaultLimitPolicy(): LimitPolicy {
     auto_switch: true,
     switch_back: true,
     agent_priority: ["claude_code", "codex"],
+    agent_profiles: [],
     resume_with_earliest: true,
     unknown_reset_retry_secs: 600,
     keep_awake: true,

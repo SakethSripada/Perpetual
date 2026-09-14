@@ -1163,6 +1163,8 @@ mod tests {
             fallback_agent: None,
             original_model: None,
             fallback_model: None,
+            original_reasoning: None,
+            fallback_reasoning: None,
             original_local_provider: None,
             fallback_local_provider: None,
             original_local_base_url: None,

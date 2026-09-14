@@ -25,6 +25,10 @@ type WorkbenchControlsModule = {
     model: string,
     current: string,
   ): string;
+  runDefaults(snapshot: any, agent: "claude_code" | "codex"): {
+    model: string | null;
+    reasoning: string | null;
+  };
   sameStringSet(a: readonly string[], b: readonly string[]): boolean;
   collaborationExecutionTargets(
     snapshot: any,
@@ -74,6 +78,8 @@ test("model picker restores cloud fallbacks when CLI detection is empty", async 
   assert.deepEqual(
     modelOptions("claude_code", null, null, "").map((option) => option.value),
     [
+      "claude-fable-5-1",
+      "claude-opus-5",
       "claude-fable-5",
       "claude-opus-4-8",
       "claude-opus-4-7",
@@ -85,6 +91,7 @@ test("model picker restores cloud fallbacks when CLI detection is empty", async 
   assert.deepEqual(
     modelOptions("codex", null, null, "").map((option) => option.value),
     [
+      "gpt-6-astra",
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
@@ -223,6 +230,29 @@ test("reasoning choices follow the selected model's discovered capabilities", as
     reasoningAfterModelChange("codex", snapshot, "gpt-5.6-luna", "ultra"),
     "medium",
   );
+});
+
+test("provider profiles override CLI defaults when switching agents", async () => {
+  const { runDefaults } = await loadWorkbenchControls();
+  const snapshot = {
+    limitPolicy: {
+      agent_profiles: [
+        { agent: "claude_code", model: "fable", reasoning: "high" },
+        { agent: "codex", model: "gpt-6-astra", reasoning: "low" },
+      ],
+    },
+    runDefaults: [
+      { kind: "codex", model: "gpt-5.5", reasoning: "medium" },
+    ],
+  };
+  assert.deepEqual(runDefaults(snapshot, "codex"), {
+    model: "gpt-6-astra",
+    reasoning: "low",
+  });
+  assert.deepEqual(runDefaults(snapshot, "claude_code"), {
+    model: "fable",
+    reasoning: "high",
+  });
 });
 
 test("repo snapshot acknowledgement compares repository sets", async () => {

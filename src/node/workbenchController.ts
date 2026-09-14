@@ -1343,6 +1343,7 @@ export class WorkbenchController implements vscode.Disposable {
           resume_with_earliest: settings.resumeWithEarliestAgent,
           unknown_reset_retry_secs: settings.unknownLimitRetrySeconds,
           agent_priority: settings.fallbackPriority,
+          agent_profiles: settings.agentProfiles,
         }),
       );
     }
@@ -1455,6 +1456,14 @@ export class WorkbenchController implements vscode.Disposable {
         normalizeAgentPriority(policy.agent_priority),
         target,
       ),
+      ...(["claude_code", "codex"] as const).flatMap((agent) => {
+        const profile = policy.agent_profiles?.find((item) => item.agent === agent);
+        const prefix = agent === "codex" ? "codex" : "claude";
+        return [
+          config.update(`${prefix}.model`, profile?.model ?? "", target),
+          config.update(`${prefix}.reasoning`, profile?.reasoning ?? "", target),
+        ];
+      }),
     ]);
   }
 
@@ -1836,8 +1845,10 @@ function titleFromMessage(message: string): string {
 
 function getDefaults(): WorkbenchDefaults {
   const config = vscode.workspace.getConfiguration("perpetual");
+  const agent = sanitizeAgent(config.get<string>("defaultAgent", "claude_code"));
+  const profile = providerProfileFromConfig(config, agent);
   return {
-    agent: sanitizeAgent(config.get<string>("defaultAgent", "claude_code")),
+    agent,
     permission: config.get<PermissionPolicy>(
       "defaultPermission",
       "workspace_write",
@@ -1846,8 +1857,8 @@ function getDefaults(): WorkbenchDefaults {
       "defaultExecutionBackend",
       "host",
     ),
-    model: blankToNull(config.get<string>("defaultModel", "")),
-    reasoning: blankToNull(config.get<string>("defaultReasoning", "medium")),
+    model: profile.model,
+    reasoning: profile.reasoning,
     local_provider: sanitizeLocalProvider(
       config.get<string>("defaultLocalProvider", ""),
     ),
@@ -1881,6 +1892,10 @@ function getSettingsSnapshot() {
     fallbackPriority: normalizeAgentPriority(
       config.get<AgentKind[]>("fallbackPriority", ["claude_code", "codex"]),
     ),
+    agentProfiles: (["claude_code", "codex"] as const).map((agent) => ({
+      agent,
+      ...providerProfileFromConfig(config, agent),
+    })),
     cloudAutoCarryover: config.get<boolean>("cloud.autoCarryover", false),
     cloudCarryOverOnSleep: config.get<boolean>("cloud.carryOverOnSleep", true),
     cloudCarryOverOnShutdown: config.get<boolean>(
@@ -1920,6 +1935,33 @@ function getSettingsSnapshot() {
       "balanced",
     ),
   };
+}
+
+function providerProfileFromConfig(
+  config: vscode.WorkspaceConfiguration,
+  agent: AgentKind,
+): { model: string | null; reasoning: string | null } {
+  const prefix = agent === "codex" ? "codex" : "claude";
+  return {
+    model:
+      explicitConfigString(config, `${prefix}.model`) ??
+      explicitConfigString(config, "defaultModel"),
+    reasoning:
+      explicitConfigString(config, `${prefix}.reasoning`) ??
+      explicitConfigString(config, "defaultReasoning"),
+  };
+}
+
+function explicitConfigString(
+  config: vscode.WorkspaceConfiguration,
+  key: string,
+): string | null {
+  const inspected = config.inspect<string>(key);
+  const value =
+    inspected?.workspaceFolderValue ??
+    inspected?.workspaceValue ??
+    inspected?.globalValue;
+  return blankToNull(value);
 }
 
 function sanitizeBackend(
@@ -1987,9 +2029,18 @@ function filterAgentThreads(items: AgentThread[]): AgentThread[] {
 }
 
 function normalizeLimitPolicy(policy: LimitPolicy): LimitPolicy {
+  const profiles = (["claude_code", "codex"] as const).map((agent) => {
+    const profile = policy.agent_profiles?.find((item) => item.agent === agent);
+    return {
+      agent,
+      model: blankToNull(profile?.model),
+      reasoning: blankToNull(profile?.reasoning),
+    };
+  });
   return {
     ...policy,
     agent_priority: normalizeAgentPriority(policy.agent_priority),
+    agent_profiles: profiles,
     unknown_reset_retry_secs: clampInt(
       policy.unknown_reset_retry_secs,
       0,

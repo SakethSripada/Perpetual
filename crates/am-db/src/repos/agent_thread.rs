@@ -33,6 +33,8 @@ struct AgentThreadRow {
     fallback_agent: Option<String>,
     original_model: Option<String>,
     fallback_model: Option<String>,
+    original_reasoning: Option<String>,
+    fallback_reasoning: Option<String>,
     original_local_provider: Option<String>,
     fallback_local_provider: Option<String>,
     original_local_base_url: Option<String>,
@@ -124,6 +126,8 @@ impl TryFrom<AgentThreadRow> for AgentThread {
             fallback_agent: parse_agent(r.fallback_agent)?,
             original_model: r.original_model,
             fallback_model: r.fallback_model,
+            original_reasoning: r.original_reasoning,
+            fallback_reasoning: r.fallback_reasoning,
             original_local_provider: parse_provider(r.original_local_provider)?,
             fallback_local_provider: parse_provider(r.fallback_local_provider)?,
             original_local_base_url: r.original_local_base_url,
@@ -172,7 +176,7 @@ fn parse_task_budget(value: String) -> Result<TaskBudget, DbError> {
 const SELECT: &str = "SELECT id, project_id, group_id, title, status, active_agent, preferred_agent, \
     permission, execution_backend, force_managed_workspace, model, reasoning, local_provider, local_base_url, \
     model_target, compute_lease_id, compute_provider, estimated_compute_cost_usd, fallback_model_target, \
-    original_agent, fallback_agent, original_model, fallback_model, original_local_provider, \
+    original_agent, fallback_agent, original_model, fallback_model, original_reasoning, fallback_reasoning, original_local_provider, \
     fallback_local_provider, original_local_base_url, fallback_local_base_url, \
     switch_back_pending, limit_reset_at, switch_back, handoff_state, objective, decisions, \
     progress, open_questions, next_actions, task_budget, sort_order, created_at, updated_at FROM agent_threads";
@@ -214,6 +218,8 @@ pub async fn create(pool: &SqlitePool, input: NewAgentThread) -> Result<AgentThr
         fallback_agent: None,
         original_model: None,
         fallback_model: None,
+        original_reasoning: None,
+        fallback_reasoning: None,
         original_local_provider: None,
         fallback_local_provider: None,
         original_local_base_url: None,
@@ -237,11 +243,11 @@ pub async fn create(pool: &SqlitePool, input: NewAgentThread) -> Result<AgentThr
         "INSERT INTO agent_threads (id, project_id, group_id, title, status, active_agent, preferred_agent, \
          permission, execution_backend, force_managed_workspace, model, reasoning, local_provider, local_base_url, \
          model_target, compute_lease_id, compute_provider, estimated_compute_cost_usd, fallback_model_target, \
-         original_agent, fallback_agent, original_model, fallback_model, original_local_provider, \
+         original_agent, fallback_agent, original_model, fallback_model, original_reasoning, fallback_reasoning, original_local_provider, \
          fallback_local_provider, original_local_base_url, fallback_local_base_url, \
          switch_back_pending, limit_reset_at, switch_back, handoff_state, objective, decisions, \
          progress, open_questions, next_actions, task_budget, sort_order, created_at, updated_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&thread.id)
     .bind(&thread.project_id)
@@ -266,6 +272,8 @@ pub async fn create(pool: &SqlitePool, input: NewAgentThread) -> Result<AgentThr
     .bind(thread.fallback_agent.map(|a| a.as_str()))
     .bind(&thread.original_model)
     .bind(&thread.fallback_model)
+    .bind(&thread.original_reasoning)
+    .bind(&thread.fallback_reasoning)
     .bind(thread.original_local_provider.map(|provider| provider.as_str()))
     .bind(thread.fallback_local_provider.map(|provider| provider.as_str()))
     .bind(&thread.original_local_base_url)
@@ -437,7 +445,7 @@ pub async fn save(pool: &SqlitePool, thread: &AgentThread) -> Result<AgentThread
          local_base_url = ?, model_target = ?, compute_lease_id = ?, compute_provider = ?, \
          estimated_compute_cost_usd = ?, fallback_model_target = ?, \
          original_agent = ?, fallback_agent = ?, original_model = ?, \
-         fallback_model = ?, original_local_provider = ?, fallback_local_provider = ?, \
+         fallback_model = ?, original_reasoning = ?, fallback_reasoning = ?, original_local_provider = ?, fallback_local_provider = ?, \
          original_local_base_url = ?, fallback_local_base_url = ?, switch_back_pending = ?, \
          limit_reset_at = ?, switch_back = ?, handoff_state = ?, objective = ?, decisions = ?, \
          progress = ?, open_questions = ?, next_actions = ?, task_budget = ?, sort_order = ?, updated_at = ? WHERE id = ?",
@@ -462,6 +470,8 @@ pub async fn save(pool: &SqlitePool, thread: &AgentThread) -> Result<AgentThread
     .bind(thread.fallback_agent.map(|a| a.as_str()))
     .bind(&thread.original_model)
     .bind(&thread.fallback_model)
+    .bind(&thread.original_reasoning)
+    .bind(&thread.fallback_reasoning)
     .bind(
         thread
             .original_local_provider

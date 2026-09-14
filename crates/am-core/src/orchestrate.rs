@@ -1322,7 +1322,27 @@ fn normalize_limit_policy(mut policy: am_proto::LimitPolicy) -> am_proto::LimitP
         priority = vec![AgentKind::ClaudeCode, AgentKind::Codex];
     }
     policy.agent_priority = priority;
+    let mut profiles: Vec<am_proto::AgentTargetProfile> = Vec::new();
+    for mut profile in policy.agent_profiles {
+        profile.model = clean_optional(profile.model);
+        profile.reasoning = clean_optional(profile.reasoning);
+        if let Some(existing) = profiles
+            .iter_mut()
+            .find(|existing| existing.agent == profile.agent)
+        {
+            *existing = profile;
+        } else {
+            profiles.push(profile);
+        }
+    }
+    policy.agent_profiles = profiles;
     policy
+}
+
+fn clean_optional(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 /// Compose the initial agent prompt from a task.
@@ -1386,8 +1406,7 @@ fn build_agent_model_catalog() -> Vec<AgentModelCatalog> {
     vec![claude_model_catalog(claude), codex_model_catalog(codex)]
 }
 
-/// Claude effort levels for models that support the full range (Fable 5,
-/// Opus 4.7+, Sonnet 5).
+/// Claude effort levels for models that support the full range.
 const CLAUDE_EFFORT_FULL: &[&str] = &["low", "medium", "high", "xhigh", "max"];
 /// Claude effort levels for the 4.6-generation models (no `xhigh`).
 const CLAUDE_EFFORT_46: &[&str] = &["low", "medium", "high", "max"];
@@ -1401,15 +1420,22 @@ const CLAUDE_EFFORT_46: &[&str] = &["low", "medium", "high", "max"];
 fn curated_claude_models(cli_levels: Option<&[String]>) -> Vec<AgentModelOption> {
     let entries: &[(&str, &str, &[&str], &[&str])] = &[
         (
-            "claude-fable-5",
-            "Claude Fable 5",
+            "claude-fable-5-1",
+            "Claude Fable 5.1",
             &["fable"],
+            CLAUDE_EFFORT_FULL,
+        ),
+        ("claude-fable-5", "Claude Fable 5", &[], CLAUDE_EFFORT_FULL),
+        (
+            "claude-opus-5",
+            "Claude Opus 5",
+            &["opus"],
             CLAUDE_EFFORT_FULL,
         ),
         (
             "claude-opus-4-8",
             "Claude Opus 4.8",
-            &["opus"],
+            &[],
             CLAUDE_EFFORT_FULL,
         ),
         (
@@ -1494,6 +1520,7 @@ fn claude_model_catalog(defaults: AgentRunDefaults) -> AgentModelCatalog {
     // Anything the CLI itself mentions (new aliases, new full ids) merges in;
     // aliases already carried by a curated entry dedupe into that entry, and
     // genuinely new models inherit the CLI-advertised effort levels.
+    help_models.extend(configured_claude_models());
     for mut option in help_models {
         let known = models.iter().any(|existing| {
             model_ids_equal(&existing.id, &option.id)
@@ -1543,6 +1570,64 @@ fn claude_model_catalog(defaults: AgentRunDefaults) -> AgentModelCatalog {
         detected_at: now(),
         error,
     }
+}
+
+fn configured_claude_models() -> Vec<AgentModelOption> {
+    let mut ids = Vec::new();
+    for key in [
+        "ANTHROPIC_MODEL",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    ] {
+        if let Ok(value) = std::env::var(key) {
+            push_unique(&mut ids, &value);
+        }
+    }
+    if let Some(settings) = home_path(".claude/settings.json")
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+    {
+        if let Some(model) = string_field(&settings, "model") {
+            push_unique(&mut ids, &model);
+        }
+        if let Some(models) = settings
+            .get("availableModels")
+            .and_then(|value| value.as_array())
+        {
+            for model in models.iter().filter_map(serde_json::Value::as_str) {
+                push_unique(&mut ids, model);
+            }
+        }
+        if let Some(env) = settings.get("env").and_then(|value| value.as_object()) {
+            for key in [
+                "ANTHROPIC_MODEL",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            ] {
+                if let Some(model) = env.get(key).and_then(serde_json::Value::as_str) {
+                    push_unique(&mut ids, model);
+                }
+            }
+        }
+    }
+    ids.into_iter()
+        .filter(|id| !id.trim().is_empty())
+        .map(|id| AgentModelOption {
+            label: pretty_model_label(&id),
+            family: model_family(&id),
+            id,
+            aliases: Vec::new(),
+            default: false,
+            available: true,
+            source: "claude_settings".to_string(),
+            reasoning: Vec::new(),
+            default_reasoning: None,
+            local_provider: None,
+            local_base_url: None,
+        })
+        .collect()
 }
 
 fn codex_model_catalog(mut defaults: AgentRunDefaults) -> AgentModelCatalog {
@@ -1616,7 +1701,15 @@ fn codex_model_catalog(mut defaults: AgentRunDefaults) -> AgentModelCatalog {
         push_unique(&mut reasoning, reasoning_default);
     }
     if reasoning.is_empty() {
-        reasoning.extend(["low", "medium", "high", "xhigh"].map(str::to_string));
+        reasoning.extend(
+            [
+                "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+            ]
+            .map(str::to_string),
+        );
+    }
+    if models.is_empty() {
+        models = curated_codex_models();
     }
 
     AgentModelCatalog {
@@ -1631,6 +1724,35 @@ fn codex_model_catalog(mut defaults: AgentRunDefaults) -> AgentModelCatalog {
         detected_at: now(),
         error,
     }
+}
+
+fn curated_codex_models() -> Vec<AgentModelOption> {
+    const ASTRA: &[&str] = &["low", "medium", "high", "xhigh", "max", "ultra"];
+    const FULL: &[&str] = &["low", "medium", "high", "xhigh", "max", "ultra"];
+    const THROUGH_MAX: &[&str] = &["low", "medium", "high", "xhigh", "max"];
+    const THROUGH_XHIGH: &[&str] = &["low", "medium", "high", "xhigh"];
+    [
+        ("gpt-6-astra", "GPT-6 Astra", ASTRA, "low"),
+        ("gpt-5.6-sol", "GPT-5.6 Sol", FULL, "low"),
+        ("gpt-5.6-terra", "GPT-5.6 Terra", FULL, "medium"),
+        ("gpt-5.6-luna", "GPT-5.6 Luna", THROUGH_MAX, "medium"),
+        ("gpt-5.5", "GPT-5.5", THROUGH_XHIGH, "medium"),
+    ]
+    .into_iter()
+    .map(|(id, label, efforts, default_effort)| AgentModelOption {
+        id: id.to_string(),
+        label: label.to_string(),
+        aliases: Vec::new(),
+        family: model_family(id),
+        default: id == "gpt-6-astra",
+        available: true,
+        source: "built_in_fallback".to_string(),
+        reasoning: efforts.iter().map(|effort| effort.to_string()).collect(),
+        default_reasoning: Some(default_effort.to_string()),
+        local_provider: None,
+        local_base_url: None,
+    })
+    .collect()
 }
 
 #[derive(Debug, Deserialize)]
@@ -2528,16 +2650,51 @@ mod model_catalog_tests {
     #[test]
     fn curated_claude_models_are_versioned_with_per_model_effort() {
         let models = curated_claude_models(None);
-        let fable = models.iter().find(|m| m.id == "claude-fable-5").unwrap();
-        assert_eq!(fable.label, "Claude Fable 5");
+        let fable = models.iter().find(|m| m.id == "claude-fable-5-1").unwrap();
+        assert_eq!(fable.label, "Claude Fable 5.1");
         assert!(fable.aliases.iter().any(|alias| alias == "fable"));
         assert_eq!(fable.reasoning, ["low", "medium", "high", "xhigh", "max"]);
-        let opus = models.iter().find(|m| m.id == "claude-opus-4-8").unwrap();
-        assert_eq!(opus.label, "Claude Opus 4.8");
+        let opus = models.iter().find(|m| m.id == "claude-opus-5").unwrap();
+        assert_eq!(opus.label, "Claude Opus 5");
+        assert!(opus.aliases.iter().any(|alias| alias == "opus"));
         let opus46 = models.iter().find(|m| m.id == "claude-opus-4-6").unwrap();
         assert!(!opus46.reasoning.iter().any(|level| level == "xhigh"));
         let haiku = models.iter().find(|m| m.id == "claude-haiku-4-5").unwrap();
         assert!(haiku.reasoning.is_empty());
+    }
+
+    #[test]
+    fn codex_fallback_covers_astra_and_model_specific_reasoning() {
+        let models = curated_codex_models();
+        let astra = models.iter().find(|m| m.id == "gpt-6-astra").unwrap();
+        assert!(astra.reasoning.iter().any(|level| level == "ultra"));
+        let luna = models.iter().find(|m| m.id == "gpt-5.6-luna").unwrap();
+        assert!(!luna.reasoning.iter().any(|level| level == "ultra"));
+    }
+
+    #[test]
+    fn limit_policy_normalizes_provider_profiles() {
+        let policy = normalize_limit_policy(am_proto::LimitPolicy {
+            agent_profiles: vec![
+                am_proto::AgentTargetProfile {
+                    agent: AgentKind::Codex,
+                    model: Some("  gpt-6-astra  ".into()),
+                    reasoning: Some(" low ".into()),
+                },
+                am_proto::AgentTargetProfile {
+                    agent: AgentKind::Codex,
+                    model: Some("gpt-5.6-sol".into()),
+                    reasoning: Some(" ".into()),
+                },
+            ],
+            ..Default::default()
+        });
+        assert_eq!(policy.agent_profiles.len(), 1);
+        assert_eq!(
+            policy.agent_profiles[0].model.as_deref(),
+            Some("gpt-5.6-sol")
+        );
+        assert_eq!(policy.agent_profiles[0].reasoning, None);
     }
 
     #[test]

@@ -107,14 +107,19 @@ them in provider-specific command lines.
 
 - Select a discovered provider model or use the provider default.
 - Set reasoning effort when the selected model supports it.
+- Save independent Claude and Codex profiles so manual and automatic provider
+  switches use the intended model and effort every time.
 - Choose `Read only`, `Workspace write`, or `Autonomous` permission posture.
 - Run locally on the host or, for Codex, in a Docker Sandbox.
 - Configure sandbox concurrency, CPU, memory, and network policy.
 - Configure Ollama or LM Studio as local Codex model targets.
 
 The model browser reflects the models and capabilities discovered from the
-active providers. If a selected model does not support the current reasoning
-choice, Perpetual repairs the choice to a supported value.
+active providers. Codex is queried through its live app-server catalog; Claude
+Code aliases, CLI help, user allowlists, environment overrides, and settings are
+merged with a current fallback catalog. Latest-tracking Claude aliases remain
+available alongside exact versioned IDs. If a selected model does not support
+the current reasoning choice, Perpetual repairs the choice to a supported value.
 
 ### Rate-limit fallback and switchback
 
@@ -342,8 +347,9 @@ scripts/             Build, packaging, and daemon lifecycle helpers
 Perpetual's settings are available through **Perpetual: Open Settings** or VS
 Code settings search. Important groups include:
 
-- `perpetual.defaultAgent`, `defaultModel`, and `defaultReasoning` for new
-  sessions.
+- `perpetual.defaultAgent` plus `perpetual.claude.model` / `.reasoning` and
+  `perpetual.codex.model` / `.reasoning` for provider-specific run and switch
+  profiles. The older shared defaults remain compatible with existing installs.
 - `perpetual.defaultPermission` and `defaultExecutionBackend` for default
   safety and runtime behavior.
 - `perpetual.defaultLocalProvider` and `defaultLocalBaseUrl` for local Codex

@@ -1750,17 +1750,22 @@ impl AppCore {
                 if thread.original_agent.is_none() {
                     thread.original_agent = Some(current);
                     thread.original_model = thread.model.clone();
+                    thread.original_reasoning = thread.reasoning.clone();
                     thread.original_local_provider = thread.local_provider;
                     thread.original_local_base_url = thread.local_base_url.clone();
                 }
                 thread.fallback_agent = Some(agent);
                 thread.active_agent = Some(agent);
-                let next_model = thread
+                let compatible_model = thread
                     .model
                     .clone()
                     .filter(|m| model_compatible_with_agent(agent, m));
+                let (profile_model, profile_reasoning) = self.agent_target_profile(agent).await;
+                let next_model = profile_model.or(compatible_model);
                 thread.model = next_model.clone();
                 thread.fallback_model = next_model;
+                thread.reasoning = profile_reasoning.clone();
+                thread.fallback_reasoning = profile_reasoning;
                 thread.local_provider = None;
                 thread.local_base_url = None;
                 thread.execution_backend =
@@ -1923,6 +1928,7 @@ impl AppCore {
                 if thread.original_agent.is_none() {
                     thread.original_agent = Some(current);
                     thread.original_model = thread.model.clone();
+                    thread.original_reasoning = thread.reasoning.clone();
                     thread.original_local_provider = thread.local_provider;
                     thread.original_local_base_url = thread.local_base_url.clone();
                 }
@@ -1932,12 +1938,16 @@ impl AppCore {
                 // agent runs (and is shown) with a compatible model instead of an
                 // incompatible id like `gpt-5.5` on Claude. None lets the CLI pick
                 // its own default; switch-back restores the original model.
-                let next_model = thread
+                let compatible_model = thread
                     .model
                     .clone()
                     .filter(|m| model_compatible_with_agent(agent, m));
+                let (profile_model, profile_reasoning) = self.agent_target_profile(agent).await;
+                let next_model = profile_model.or(compatible_model);
                 thread.model = next_model.clone();
                 thread.fallback_model = next_model;
+                thread.reasoning = profile_reasoning.clone();
+                thread.fallback_reasoning = profile_reasoning;
                 thread.local_provider = None;
                 thread.local_base_url = None;
                 thread.execution_backend =
@@ -2104,6 +2114,7 @@ impl AppCore {
         if thread.original_agent.is_none() {
             thread.original_agent = Some(current);
             thread.original_model = thread.model.clone();
+            thread.original_reasoning = thread.reasoning.clone();
             thread.original_local_provider = thread.local_provider;
             thread.original_local_base_url = thread.local_base_url.clone();
         }
@@ -2123,10 +2134,12 @@ impl AppCore {
         }
         thread.fallback_agent = Some(AgentKind::Codex);
         thread.fallback_model = Some(target_model.clone());
+        thread.fallback_reasoning = None;
         thread.fallback_local_provider = Some(target_provider);
         thread.fallback_local_base_url = target_base_url.clone();
         thread.active_agent = Some(AgentKind::Codex);
         thread.model = Some(target_model);
+        thread.reasoning = None;
         thread.local_provider = Some(target_provider);
         thread.local_base_url = target_base_url;
         thread.status = TaskStatus::Queued;
@@ -2187,15 +2200,18 @@ impl AppCore {
         thread.active_agent = Some(agent);
         if had_original {
             thread.model = thread.original_model.clone();
+            thread.reasoning = thread.original_reasoning.clone();
             thread.local_provider = thread.original_local_provider;
             thread.local_base_url = thread.original_local_base_url.clone();
         }
         thread.fallback_agent = None;
         thread.fallback_model = None;
+        thread.fallback_reasoning = None;
         thread.fallback_local_provider = None;
         thread.fallback_local_base_url = None;
         thread.original_agent = None;
         thread.original_model = None;
+        thread.original_reasoning = None;
         thread.original_local_provider = None;
         thread.original_local_base_url = None;
         thread.switch_back_pending = false;
@@ -2287,13 +2303,16 @@ impl AppCore {
         thread.active_agent = Some(original);
         thread.fallback_agent = None;
         thread.model = thread.original_model.clone();
+        thread.reasoning = thread.original_reasoning.clone();
         thread.local_provider = thread.original_local_provider;
         thread.local_base_url = thread.original_local_base_url.clone();
         thread.original_agent = None;
         thread.original_model = None;
+        thread.original_reasoning = None;
         thread.original_local_provider = None;
         thread.original_local_base_url = None;
         thread.fallback_model = None;
+        thread.fallback_reasoning = None;
         thread.fallback_local_provider = None;
         thread.fallback_local_base_url = None;
         thread.switch_back_pending = false;
@@ -3346,6 +3365,8 @@ mod tests {
             fallback_agent: None,
             original_model: None,
             fallback_model: None,
+            original_reasoning: None,
+            fallback_reasoning: None,
             original_local_provider: None,
             fallback_local_provider: None,
             original_local_base_url: None,

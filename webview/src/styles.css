@@ -12,8 +12,8 @@
   --am-hover: var(--vscode-list-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 8%, transparent));
   --am-muted: var(--vscode-descriptionForeground);
   --am-accent: var(--vscode-focusBorder, #3794ff);
-  --am-radius: 8px;
-  --am-radius-sm: 6px;
+  --am-radius: 11px;
+  --am-radius-sm: 8px;
   --am-ok: var(--vscode-testing-iconPassed, #3fb950);
   --am-warn: var(--vscode-charts-orange, #d18616);
   --am-composer-bg: color-mix(in srgb, var(--vscode-editor-background) 93%, var(--vscode-foreground) 7%);
@@ -72,7 +72,9 @@ textarea {
   height: 100%;
   min-width: 0;
   overflow: hidden;
-  background: var(--vscode-editor-background);
+  background:
+    radial-gradient(circle at 88% -10%, color-mix(in srgb, var(--am-accent) 9%, transparent), transparent 34%),
+    var(--vscode-editor-background);
 }
 
 .topbar {
@@ -82,6 +84,8 @@ textarea {
   gap: 10px;
   padding: 9px 12px 8px;
   border-bottom: 1px solid color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+  background: color-mix(in srgb, var(--vscode-editor-background) 92%, transparent);
+  backdrop-filter: blur(14px);
   flex: 0 0 auto;
 }
 
@@ -2023,7 +2027,8 @@ textarea {
   display: grid;
   place-items: center;
   padding: 16px;
-  background: rgba(0, 0, 0, 0.45);
+  background: color-mix(in srgb, #05070c 68%, transparent);
+  backdrop-filter: blur(8px) saturate(0.85);
   z-index: 100;
   animation: backdrop-in 0.13s ease-out both;
 }
@@ -2033,10 +2038,11 @@ textarea {
   width: min(560px, 100%);
   max-height: min(720px, 92vh);
   border: 1px solid var(--am-border);
-  border-radius: 12px;
+  border-radius: 18px;
   overflow: hidden;
-  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--vscode-editorWidget-background, var(--vscode-editor-background)) 98%, white 2%), var(--vscode-editorWidget-background, var(--vscode-editor-background)));
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.55), 0 1px 0 color-mix(in srgb, white 8%, transparent) inset;
   animation: sheet-in 0.14s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 .sheet header,
@@ -2549,6 +2555,111 @@ textarea {
 .settings-group {
   display: grid;
   gap: 10px;
+}
+.settings-sheet {
+  width: min(820px, 100%);
+  max-height: min(780px, 94vh);
+}
+.settings-heading {
+  display: grid;
+  gap: 2px;
+}
+.settings-heading small {
+  color: var(--am-muted);
+  font-size: 11px;
+}
+.settings-layout {
+  display: grid;
+  grid-template-columns: 168px minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+.settings-nav {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  padding: 14px 10px;
+  border-right: 1px solid var(--am-border-soft);
+  background: color-mix(in srgb, var(--am-surface) 65%, transparent);
+}
+.settings-nav button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  height: 35px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--am-muted);
+  cursor: pointer;
+  text-align: left;
+}
+.settings-nav button:hover {
+  color: var(--vscode-foreground);
+  background: var(--am-hover);
+}
+.settings-nav button.active {
+  border-color: color-mix(in srgb, var(--am-accent) 26%, transparent);
+  color: var(--vscode-foreground);
+  background: color-mix(in srgb, var(--am-accent) 14%, var(--am-surface));
+  box-shadow: 0 5px 18px color-mix(in srgb, var(--am-accent) 9%, transparent);
+}
+.settings-content {
+  min-width: 0;
+  padding: 20px 22px 24px;
+}
+.settings-content .settings-group {
+  padding: 16px;
+  border: 1px solid var(--am-border-soft);
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--am-surface) 78%, transparent);
+}
+.settings-content.section-agents [data-settings-section]:not([data-settings-section="agents"]),
+.settings-content.section-switching [data-settings-section]:not([data-settings-section="switching"]),
+.settings-content.section-continuity [data-settings-section]:not([data-settings-section="continuity"]),
+.settings-content.section-local [data-settings-section]:not([data-settings-section="local"]),
+.settings-content.section-sandbox [data-settings-section]:not([data-settings-section="sandbox"]) {
+  display: none;
+}
+.agent-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.agent-profile-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--am-border-soft);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--vscode-editor-background) 82%, transparent);
+}
+.agent-profile-title {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+}
+.agent-profile-title span {
+  color: var(--am-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+@media (max-width: 620px) {
+  .settings-layout { grid-template-columns: 1fr; }
+  .settings-nav {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    border-right: 0;
+    border-bottom: 1px solid var(--am-border-soft);
+    overflow-x: auto;
+  }
+  .settings-nav button { justify-content: center; padding: 0 8px; }
+  .settings-nav button span { display: none; }
+  .settings-content { padding: 14px; }
+  .agent-profile-grid { grid-template-columns: 1fr; }
 }
 .settings-help {
   margin: -2px 0 0;

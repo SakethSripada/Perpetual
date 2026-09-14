@@ -875,11 +875,15 @@ mod apply_tests {
         .unwrap();
 
         assert_eq!(
-            std::fs::read_to_string(repo.join("file.txt")).unwrap(),
+            std::fs::read_to_string(repo.join("file.txt"))
+                .unwrap()
+                .replace("\r\n", "\n"),
             "remote\n"
         );
         assert_eq!(
-            std::fs::read_to_string(backup.join("file.txt")).unwrap(),
+            std::fs::read_to_string(backup.join("file.txt"))
+                .unwrap()
+                .replace("\r\n", "\n"),
             "local\n"
         );
 

@@ -25,6 +25,12 @@ If neither provider is ready, Perpetual can wait for the relevant limit reset
 and resume the task automatically. When the original provider recovers, it can
 switch back according to your settings.
 
+Save a separate model and reasoning profile for each provider. A switch can,
+for example, move directly to GPT-6 Astra at low effort, GPT-5.6 Sol at medium,
+or Claude Fable 5.1 at high effort without inheriting an incompatible choice.
+Perpetual reads the installed Codex catalog live and keeps Claude's
+latest-tracking aliases alongside exact model versions.
+
 ### Continue work in the cloud
 
 When local execution cannot continue, optional Cloud Continuity can hand an
