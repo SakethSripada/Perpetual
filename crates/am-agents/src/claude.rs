@@ -244,7 +244,11 @@ fn push_policy_args(args: &mut Vec<String>, policy: &crate::AgentPolicyRuntime) 
 }
 
 fn policy_env(spec: &SessionSpec) -> Vec<(String, String)> {
-    let mut envs = Vec::new();
+    let mut envs = spec
+        .policy
+        .as_ref()
+        .map(|policy| policy.launch_env.clone())
+        .unwrap_or_default();
     if let Some(policy) = spec.policy.as_ref() {
         if policy.disable_remote_mcp_connectors {
             envs.push(("ENABLE_CLAUDEAI_MCP_SERVERS".into(), "false".into()));

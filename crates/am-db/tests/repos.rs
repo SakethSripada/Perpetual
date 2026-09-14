@@ -5,13 +5,50 @@
 
 use am_db::repos::{
     agent, agent_thread, agent_thread_message, agent_thread_repo, agent_turn, event, knowledge,
-    memory, message, project, queued_turn, repo, session, task, task_budget_state, task_repo,
+    memory, message, project, provider_account, queued_turn, repo, session, task,
+    task_budget_state, task_repo,
 };
 use am_db::Db;
 use am_proto::*;
 
 async fn db() -> Db {
     Db::connect_in_memory().await.unwrap()
+}
+
+#[tokio::test]
+async fn provider_account_limit_state_survives_reads_and_clears_atomically() {
+    let db = db().await;
+    let reset_at = now() + chrono::Duration::minutes(42);
+    provider_account::mark_limited(&db.pool, "codex-dummy-1", Some(reset_at), 2)
+        .await
+        .unwrap();
+
+    let state = provider_account::get(&db.pool, "codex-dummy-1")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(state.availability, AvailabilityState::Limited);
+    assert_eq!(state.reset_at, Some(reset_at));
+    assert_eq!(state.limit_strikes, 2);
+
+    provider_account::mark_available(&db.pool, "codex-dummy-1")
+        .await
+        .unwrap();
+    let state = provider_account::get(&db.pool, "codex-dummy-1")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(state.availability, AvailabilityState::Available);
+    assert!(state.reset_at.is_none());
+    assert_eq!(state.limit_strikes, 0);
+
+    provider_account::delete(&db.pool, "codex-dummy-1")
+        .await
+        .unwrap();
+    assert!(provider_account::get(&db.pool, "codex-dummy-1")
+        .await
+        .unwrap()
+        .is_none());
 }
 
 async fn a_project(db: &Db) -> Project {

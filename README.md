@@ -132,6 +132,27 @@ automatically. Limit detection, fallback, switchback, retry timing, and resume
 state are recorded in the transcript instead of appearing as unexplained
 provider failures.
 
+### Multiple subscription accounts
+
+Settings → Accounts can hold an ordered pool of Codex and Claude subscription
+accounts. Each Codex slot uses its own `CODEX_HOME`; each Claude slot uses its
+own `CLAUDE_CONFIG_DIR`. Claude setup tokens are stored in the operating
+system's credential vault, never in Perpetual's policy, database, repository,
+or transcript. When one account reports a usage limit, Perpetual marks only
+that slot limited and continues with the next authenticated slot in the global
+order. If every slot is exhausted, the scheduler waits for the earliest known
+reset and resumes without asking the user to sign in again.
+
+Earned Codex usage-reset credits are disabled for every account by default.
+Enabling them requires a per-account confirmation, uses Codex's supported
+app-server redemption method with an idempotency key, and does not purchase
+credits. Perpetual disables Claude fast mode for pooled runs; Claude extra usage
+remains an account-level provider setting and is not enabled by Perpetual.
+
+Account pools are intended only for accounts the user owns and is authorized
+to use. Provider plan eligibility, concurrent-use rules, and subscription terms
+remain controlled by the provider.
+
 ### Graceful session task budgets
 
 Set a budget for each task or session from the composer gauge. You can choose no

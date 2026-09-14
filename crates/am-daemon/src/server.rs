@@ -347,6 +347,24 @@ async fn dispatch(core: &AppCore, req: DaemonRequest) -> Result<DaemonResponse, 
         Q::SetLimitPolicy(policy) => {
             A::LimitPolicy(core.set_limit_policy(policy).await.map_err(s)?)
         }
+        Q::ProviderAccountStatuses => {
+            A::ProviderAccountStatuses(core.provider_account_statuses().await.map_err(s)?)
+        }
+        Q::ProviderAccountAuthLaunch { account_id } => A::ProviderAccountAuthLaunch(
+            core.provider_account_auth_launch(&account_id)
+                .await
+                .map_err(s)?,
+        ),
+        Q::SetProviderAccountToken { account_id, token } => {
+            core.set_provider_account_token(&account_id, &token)
+                .await
+                .map_err(s)?;
+            A::Unit
+        }
+        Q::DeleteProviderAccount { account_id } => {
+            core.delete_provider_account(&account_id).await.map_err(s)?;
+            A::Unit
+        }
         Q::DetectSandboxRuntime => {
             A::SandboxRuntimeStatus(core.detect_sandbox_runtime().await.map_err(s)?)
         }

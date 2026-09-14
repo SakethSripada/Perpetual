@@ -73,6 +73,25 @@ test("serializes local model fallback policy requests", () => {
   assert.deepEqual(variant("set_local_model_policy", policy), { set_local_model_policy: policy });
 });
 
+test("serializes provider account vault and sign-in requests", () => {
+  assert.equal(variant("provider_account_statuses"), "provider_account_statuses");
+  assert.deepEqual(variant("provider_account_auth_launch", { account_id: "codex-dummy-1" }), {
+    provider_account_auth_launch: { account_id: "codex-dummy-1" },
+  });
+  assert.deepEqual(variant("set_provider_account_token", {
+    account_id: "claude-dummy-1",
+    token: "dummy-token-never-persisted-in-policy",
+  }), {
+    set_provider_account_token: {
+      account_id: "claude-dummy-1",
+      token: "dummy-token-never-persisted-in-policy",
+    },
+  });
+  assert.deepEqual(variant("delete_provider_account", { account_id: "codex-dummy-1" }), {
+    delete_provider_account: { account_id: "codex-dummy-1" },
+  });
+});
+
 test("extracts cloud policy responses", () => {
   const policy = responsePayload<{ enabled: boolean }>(
     { cloud_policy: { enabled: true } },

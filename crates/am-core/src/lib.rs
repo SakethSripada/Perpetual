@@ -51,6 +51,7 @@ mod local_models;
 mod network;
 mod orchestrate;
 mod policy;
+mod provider_accounts;
 mod sandbox;
 mod scheduler;
 mod session_manager;

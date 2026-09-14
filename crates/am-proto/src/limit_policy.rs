@@ -2,6 +2,52 @@ use serde::{Deserialize, Serialize};
 
 use crate::AgentKind;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderAccountAuthMode {
+    #[default]
+    IsolatedCli,
+    OauthToken,
+}
+
+/// Non-secret account metadata. Array order is the global failover order and
+/// may freely interleave Codex and Claude accounts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderAccount {
+    pub id: String,
+    pub label: String,
+    pub agent: AgentKind,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Whether Perpetual may redeem optional usage/reset credits. Off by default.
+    #[serde(default)]
+    pub use_credits: bool,
+    #[serde(default)]
+    pub auth_mode: ProviderAccountAuthMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderAccountStatus {
+    #[serde(flatten)]
+    pub account: ProviderAccount,
+    pub authenticated: bool,
+    pub availability: crate::AvailabilityState,
+    pub reset_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub detail: Option<String>,
+}
+
+/// Credential-free description of a provider-owned interactive login process.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderAccountAuthLaunch {
+    pub account_id: String,
+    pub label: String,
+    pub agent: AgentKind,
+    pub binary: String,
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+    pub instructions: String,
+}
+
 /// Model and reasoning defaults applied whenever Perpetual starts or switches
 /// to a provider. Keeping these in the fallback policy makes provider changes
 /// deterministic instead of depending on whichever CLI default happens to be
@@ -38,6 +84,9 @@ pub struct LimitPolicy {
     /// own defaults for backwards compatibility.
     #[serde(default)]
     pub agent_profiles: Vec<AgentTargetProfile>,
+    /// Ordered account pool. Empty retains legacy single-login behavior.
+    #[serde(default)]
+    pub accounts: Vec<ProviderAccount>,
     /// When every agent is limited, resume with whichever agent's limit resets
     /// first instead of always waiting for the agent that was running.
     #[serde(default = "default_true")]
@@ -72,6 +121,7 @@ impl Default for LimitPolicy {
             switch_back: true,
             agent_priority: default_priority(),
             agent_profiles: Vec::new(),
+            accounts: Vec::new(),
             resume_with_earliest: true,
             unknown_reset_retry_secs: default_unknown_retry(),
             keep_awake: true,

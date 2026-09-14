@@ -28,6 +28,8 @@ import type {
   GithubAuthStatus,
   GithubRepository,
   LimitPolicy,
+  ProviderAccountAuthLaunch,
+  ProviderAccountStatus,
   LocalModelPolicy,
   LocalModelStatus,
   ContextPacket,
@@ -97,6 +99,10 @@ export interface DaemonApi {
   setLocalModelPolicy(policy: LocalModelPolicy): Promise<LocalModelPolicy>;
   getLimitPolicy(): Promise<LimitPolicy>;
   setLimitPolicy(policy: LimitPolicy): Promise<LimitPolicy>;
+  providerAccountStatuses(): Promise<ProviderAccountStatus[]>;
+  providerAccountAuthLaunch(accountId: string): Promise<ProviderAccountAuthLaunch>;
+  setProviderAccountToken(accountId: string, token: string): Promise<void>;
+  deleteProviderAccount(accountId: string): Promise<void>;
   detectSandboxRuntime(): Promise<SandboxRuntimeStatus>;
   sandboxLogin(): Promise<SandboxLoginPrompt>;
   codexSandboxLogin(): Promise<SandboxLoginPrompt>;

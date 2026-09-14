@@ -649,6 +649,12 @@ impl AppCore {
         let workspace_path = workspace.path;
         let mut runtime_policy = policy.runtime_policy.clone();
         runtime_policy.task_budget = Some(thread.task_budget.clone());
+        let account = self.select_provider_account(agent).await?;
+        let provider_account_id = account.as_ref().map(|account| account.id.clone());
+        if let Some(account) = account {
+            runtime_policy.launch_env = account.env;
+            runtime_policy.provider_account_id = Some(account.id);
+        }
         let spec = SessionSpec {
             worktree: workspace_path,
             prompt: match (&message, prior.is_some()) {
@@ -706,6 +712,7 @@ impl AppCore {
                 permit,
                 sandbox_lease,
                 message,
+                provider_account_id,
             )
             .await;
         });
@@ -1209,8 +1216,10 @@ impl AppCore {
         permit: crate::SessionPermit,
         sandbox_lease: Option<SandboxLease>,
         pending_message: Option<PendingThreadMessage>,
+        provider_account_id: Option<String>,
     ) {
         let mut saw_usage_limit = false;
+        let mut credit_redeemed = false;
         let mut saw_network_loss = false;
         let mut saw_approval_needed = false;
         let mut completed_ok = false;
@@ -1429,7 +1438,25 @@ impl AppCore {
                 NormalizedEvent::UsageLimitReached { reset_at } => {
                     saw_usage_limit = true;
                     limit_reset_at = *reset_at;
-                    let _ = self.mark_agent_limited(agent, *reset_at).await;
+                    if let Some(account_id) = provider_account_id.as_deref() {
+                        credit_redeemed = self
+                            .try_consume_provider_credit(account_id)
+                            .await
+                            .unwrap_or(false);
+                        if credit_redeemed {
+                            let _ = am_db::repos::provider_account::mark_available(
+                                &self.db.pool,
+                                account_id,
+                            )
+                            .await;
+                        } else {
+                            let _ = self
+                                .mark_provider_account_limited(account_id, *reset_at)
+                                .await;
+                        }
+                    } else {
+                        let _ = self.mark_agent_limited(agent, *reset_at).await;
+                    }
                     if let Ok(Some(mut thread)) =
                         am_db::repos::agent_thread::get(&self.db.pool, &thread_id).await
                     {
@@ -1654,8 +1681,35 @@ impl AppCore {
             if crate::budget::is_percentage_budget(&usage_budget) {
                 return;
             }
-            self.start_thread_fallback(&thread_id, agent, limit_reset_at)
-                .await;
+            if credit_redeemed {
+                if let Ok(Some(mut thread)) =
+                    am_db::repos::agent_thread::get(&self.db.pool, &thread_id).await
+                {
+                    thread.status = TaskStatus::Queued;
+                    thread.handoff_state = "credit_reset_redeemed".into();
+                    let permission = parse_permission(&thread.permission);
+                    if let Ok(saved) =
+                        am_db::repos::agent_thread::save(&self.db.pool, &thread).await
+                    {
+                        self.events.publish(AppEvent::AgentThreadUpdated(saved));
+                    }
+                    let core = self.clone();
+                    let id = thread_id.clone();
+                    tokio::spawn(async move {
+                        let _ = core
+                            .run_agent_thread_boxed(&id, agent, permission, None)
+                            .await;
+                    });
+                }
+                return;
+            }
+            self.start_thread_fallback(
+                &thread_id,
+                agent,
+                provider_account_id.as_deref(),
+                limit_reset_at,
+            )
+            .await;
             return;
         }
 
@@ -1913,8 +1967,33 @@ impl AppCore {
         &self,
         thread_id: &str,
         current: AgentKind,
+        current_account_id: Option<&str>,
         reset_at: Option<chrono::DateTime<chrono::Utc>>,
     ) {
+        if self.provider_accounts_configured().await {
+            if let Ok(Some(next)) = self.next_ready_provider_account(current_account_id).await {
+                self.start_thread_account_fallback(thread_id, current, next)
+                    .await;
+                return;
+            }
+            let reset_at = self
+                .earliest_provider_account_reset()
+                .await
+                .ok()
+                .flatten()
+                .or(reset_at);
+            if let Ok(Some(mut thread)) =
+                am_db::repos::agent_thread::get(&self.db.pool, thread_id).await
+            {
+                thread.status = TaskStatus::WaitingForLimit;
+                thread.limit_reset_at = reset_at;
+                thread.handoff_state = "waiting_for_account".into();
+                if let Ok(saved) = am_db::repos::agent_thread::save(&self.db.pool, &thread).await {
+                    self.events.publish(AppEvent::AgentThreadUpdated(saved));
+                }
+            }
+            return;
+        }
         let Ok(decision) = self.fallback_decision(current, reset_at).await else {
             return;
         };
@@ -2034,6 +2113,58 @@ impl AppCore {
                         .await;
                 }
             }
+        }
+    }
+
+    async fn start_thread_account_fallback(
+        &self,
+        thread_id: &str,
+        current: AgentKind,
+        next: crate::provider_accounts::AccountRuntime,
+    ) {
+        let Ok(Some(mut thread)) = am_db::repos::agent_thread::get(&self.db.pool, thread_id).await
+        else {
+            return;
+        };
+        if thread.original_agent.is_none() {
+            thread.original_agent = Some(current);
+            thread.original_model = thread.model.clone();
+            thread.original_reasoning = thread.reasoning.clone();
+        }
+        let (model, reasoning) = self.agent_target_profile(next.agent).await;
+        thread.active_agent = Some(next.agent);
+        thread.fallback_agent = Some(next.agent);
+        thread.model = model.clone();
+        thread.fallback_model = model;
+        thread.reasoning = reasoning.clone();
+        thread.fallback_reasoning = reasoning;
+        thread.status = TaskStatus::Queued;
+        thread.handoff_state = "account_fallback_active".into();
+        thread.limit_reset_at = None;
+        let permission = parse_permission(&thread.permission);
+        if let Ok(saved) = am_db::repos::agent_thread::save(&self.db.pool, &thread).await {
+            self.events
+                .publish(AppEvent::AgentThreadUpdated(saved.clone()));
+            let _ = self
+                .activity(
+                    saved.project_id,
+                    None,
+                    "thread.account_switched",
+                    json!({
+                        "thread_id": thread_id,
+                        "from_agent": current.as_str(),
+                        "to_agent": next.agent.as_str(),
+                        "account_id": next.id,
+                    }),
+                )
+                .await;
+            let core = self.clone();
+            let id = thread_id.to_string();
+            tokio::spawn(async move {
+                let _ = core
+                    .run_agent_thread_boxed(&id, next.agent, permission, None)
+                    .await;
+            });
         }
     }
 
@@ -2251,6 +2382,27 @@ impl AppCore {
         };
         if !thread.switch_back {
             return;
+        }
+        if self.provider_accounts_configured().await {
+            let original_ready = self
+                .provider_account_statuses()
+                .await
+                .map(|statuses| {
+                    statuses.into_iter().any(|status| {
+                        status.account.agent == original
+                            && status.account.enabled
+                            && status.authenticated
+                            && status.availability != AvailabilityState::Limited
+                    })
+                })
+                .unwrap_or(false);
+            if !original_ready {
+                thread.switch_back_pending = true;
+                if let Ok(saved) = am_db::repos::agent_thread::save(&self.db.pool, &thread).await {
+                    self.events.publish(AppEvent::AgentThreadUpdated(saved));
+                }
+                return;
+            }
         }
         if thread.fallback_local_provider.is_some() {
             let policy = self.get_local_model_policy().await.unwrap_or_default();

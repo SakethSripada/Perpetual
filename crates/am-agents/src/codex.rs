@@ -396,6 +396,7 @@ fn local_model_env(spec: &SessionSpec) -> Vec<(String, String)> {
 pub(crate) fn session_env(spec: &SessionSpec) -> Vec<(String, String)> {
     let mut envs = local_model_env(spec);
     if let Some(policy) = spec.policy.as_ref() {
+        envs.extend(policy.launch_env.iter().cloned());
         if !policy.env_allowlist.is_empty() {
             envs.push((
                 "PERPETUAL_POLICY_ENV_ALLOWLIST".into(),

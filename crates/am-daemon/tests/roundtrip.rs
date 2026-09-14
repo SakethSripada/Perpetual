@@ -7,7 +7,10 @@ use std::time::Duration;
 use am_core::AppCore;
 use am_daemon::protocol::{DaemonRequest, DaemonResponse};
 use am_daemon::{DaemonClient, Server};
-use am_proto::{AppEvent, NewKnowledgeDoc, NewProject, NewTask, TaskPriority};
+use am_proto::{
+    AgentKind, AppEvent, LimitPolicy, NewKnowledgeDoc, NewProject, NewTask, ProviderAccount,
+    ProviderAccountAuthMode, TaskPriority,
+};
 
 async fn start_daemon() -> (Server, String, std::net::SocketAddr) {
     // Unique temp data dir per run (matches the repo's existing test convention).
@@ -122,6 +125,46 @@ async fn rpc_roundtrip_and_events() {
         .await
         .unwrap();
     assert!(matches!(missing, DaemonResponse::ProjectOpt(None)));
+
+    // Exercise the real daemon policy/status path with credential-free dummy
+    // slots. Authentication must remain false rather than falling through to
+    // the caller's normal provider login.
+    let policy = LimitPolicy {
+        accounts: vec![
+            ProviderAccount {
+                id: "codex-dummy-1".into(),
+                label: "Codex dummy".into(),
+                agent: AgentKind::Codex,
+                enabled: true,
+                use_credits: false,
+                auth_mode: ProviderAccountAuthMode::IsolatedCli,
+            },
+            ProviderAccount {
+                id: "claude-dummy-1".into(),
+                label: "Claude dummy".into(),
+                agent: AgentKind::ClaudeCode,
+                enabled: true,
+                use_credits: false,
+                auth_mode: ProviderAccountAuthMode::IsolatedCli,
+            },
+        ],
+        ..Default::default()
+    };
+    let response = client
+        .request(DaemonRequest::SetLimitPolicy(policy))
+        .await
+        .unwrap();
+    assert!(matches!(response, DaemonResponse::LimitPolicy(_)));
+    let statuses = client
+        .request(DaemonRequest::ProviderAccountStatuses)
+        .await
+        .unwrap();
+    let DaemonResponse::ProviderAccountStatuses(statuses) = statuses else {
+        panic!("expected provider account statuses");
+    };
+    assert_eq!(statuses.len(), 2);
+    assert!(statuses.iter().all(|status| !status.authenticated));
+    assert!(statuses.iter().all(|status| !status.account.use_credits));
 
     handle.abort();
 }
