@@ -12,6 +12,7 @@ pub mod knowledge;
 pub mod memory;
 pub mod message;
 pub mod project;
+pub mod provider_account;
 pub mod queued_turn;
 pub mod repo;
 pub mod search;

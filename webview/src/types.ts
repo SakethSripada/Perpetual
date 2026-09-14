@@ -239,9 +239,26 @@ export interface LimitPolicy {
   switch_back: boolean;
   agent_priority: AgentKind[];
   agent_profiles?: AgentTargetProfile[];
+  accounts?: ProviderAccount[];
   resume_with_earliest: boolean;
   unknown_reset_retry_secs: number;
   keep_awake: boolean;
+}
+
+export type ProviderAccountAuthMode = "isolated_cli" | "oauth_token";
+export interface ProviderAccount {
+  id: string;
+  label: string;
+  agent: AgentKind;
+  enabled: boolean;
+  use_credits: boolean;
+  auth_mode: ProviderAccountAuthMode;
+}
+export interface ProviderAccountStatus extends ProviderAccount {
+  authenticated: boolean;
+  availability: AvailabilityState;
+  reset_at: string | null;
+  detail: string | null;
 }
 
 export interface AgentTargetProfile {
@@ -498,6 +515,7 @@ export interface WorkbenchSnapshot {
   detectionState?: "idle" | "loading" | "ready" | "error";
   defaultRepoIds?: string[];
   limitPolicy: LimitPolicy | null;
+  providerAccounts: ProviderAccountStatus[];
   sandboxPolicy: SandboxPolicy | null;
   sandboxRuntime: SandboxRuntimeStatus | null;
   cloudPolicy: CloudPolicy | null;

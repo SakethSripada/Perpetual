@@ -19,10 +19,10 @@ use am_proto::{
     KnowledgeDocUpdate, LimitPolicy, LocalModelPolicy, LocalModelStatus, MemoryNote,
     MemoryNoteUpdate, NewAgentThread, NewCollaborationAssignment, NewCollaborationChangeSet,
     NewGithubRepo, NewKnowledgeDoc, NewLocalRepo, NewMemoryNote, NewProject, NewTask, NewWorkEdge,
-    NewWorkNode, Project, QueuedTurn, RegisterCollaborationDevice, Repo,
-    ReportCollaborationApproval, SandboxLoginPrompt, SandboxPolicy, SandboxRuntimeStatus,
-    SearchHit, SequencedEvent, Task, TaskDiff, TaskUpdate, WorkEdge, WorkGraph, WorkNode,
-    WorkNodeDiff, WorkNodeRepoBinding, WorkNodeUpdate,
+    NewWorkNode, Project, ProviderAccountAuthLaunch, ProviderAccountStatus, QueuedTurn,
+    RegisterCollaborationDevice, Repo, ReportCollaborationApproval, SandboxLoginPrompt,
+    SandboxPolicy, SandboxRuntimeStatus, SearchHit, SequencedEvent, Task, TaskDiff, TaskUpdate,
+    WorkEdge, WorkGraph, WorkNode, WorkNodeDiff, WorkNodeRepoBinding, WorkNodeUpdate,
 };
 use serde::{Deserialize, Serialize};
 
@@ -173,6 +173,17 @@ pub enum DaemonRequest {
     SetLocalModelPolicy(LocalModelPolicy),
     GetLimitPolicy,
     SetLimitPolicy(LimitPolicy),
+    ProviderAccountStatuses,
+    ProviderAccountAuthLaunch {
+        account_id: String,
+    },
+    SetProviderAccountToken {
+        account_id: String,
+        token: String,
+    },
+    DeleteProviderAccount {
+        account_id: String,
+    },
     DetectSandboxRuntime,
     SandboxLogin,
     CodexSandboxLogin,
@@ -414,6 +425,8 @@ pub enum DaemonResponse {
     LocalModelStatuses(Vec<LocalModelStatus>),
     LocalModelPolicy(LocalModelPolicy),
     LimitPolicy(LimitPolicy),
+    ProviderAccountStatuses(Vec<ProviderAccountStatus>),
+    ProviderAccountAuthLaunch(ProviderAccountAuthLaunch),
     SandboxRuntimeStatus(SandboxRuntimeStatus),
     SandboxLoginPrompt(SandboxLoginPrompt),
     SandboxPolicy(SandboxPolicy),

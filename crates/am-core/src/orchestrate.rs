@@ -349,6 +349,13 @@ impl AppCore {
         )
         .await?;
 
+        let account = self.select_provider_account(agent).await?;
+        let provider_account_id = account.as_ref().map(|account| account.id.clone());
+        let mut runtime_policy = policy.runtime_policy.clone();
+        if let Some(account) = account {
+            runtime_policy.launch_env = account.env;
+            runtime_policy.provider_account_id = Some(account.id);
+        }
         let spec = SessionSpec {
             worktree,
             prompt: match (&message, prior.is_some()) {
@@ -362,7 +369,7 @@ impl AppCore {
             local_model,
             permission,
             runtime,
-            policy: Some(policy.runtime_policy.clone()),
+            policy: Some(runtime_policy),
             approver: self.approver_for(
                 permission,
                 agent,
@@ -405,6 +412,7 @@ impl AppCore {
                 events,
                 permit,
                 sandbox_lease,
+                provider_account_id,
             )
             .await;
         });
@@ -462,8 +470,10 @@ impl AppCore {
         mut events: Receiver<NormalizedEvent>,
         permit: crate::SessionPermit,
         sandbox_lease: Option<SandboxLease>,
+        provider_account_id: Option<String>,
     ) {
         let mut saw_usage_limit = false;
+        let mut credit_redeemed = false;
         let mut saw_network_loss = false;
         let mut saw_approval_needed = false;
         let mut completed_ok = false;
@@ -514,7 +524,25 @@ impl AppCore {
                 NormalizedEvent::UsageLimitReached { reset_at } => {
                     saw_usage_limit = true;
                     limit_reset_at = *reset_at;
-                    let _ = self.mark_agent_limited(agent, *reset_at).await;
+                    if let Some(account_id) = provider_account_id.as_deref() {
+                        credit_redeemed = self
+                            .try_consume_provider_credit(account_id)
+                            .await
+                            .unwrap_or(false);
+                        if credit_redeemed {
+                            let _ = am_db::repos::provider_account::mark_available(
+                                &self.db.pool,
+                                account_id,
+                            )
+                            .await;
+                        } else {
+                            let _ = self
+                                .mark_provider_account_limited(account_id, *reset_at)
+                                .await;
+                        }
+                    } else {
+                        let _ = self.mark_agent_limited(agent, *reset_at).await;
+                    }
                     if let Ok(task) = am_db::repos::task::update(
                         &self.db.pool,
                         &task_id,
@@ -725,6 +753,52 @@ impl AppCore {
             self.handle_task_network_loss(&task_id, &project_id, agent, permission)
                 .await;
         } else if should_fallback {
+            if credit_redeemed {
+                if let Ok(task) = am_db::repos::task::update(
+                    &self.db.pool,
+                    &task_id,
+                    TaskUpdate {
+                        status: Some(TaskStatus::Queued),
+                        ..Default::default()
+                    },
+                )
+                .await
+                {
+                    self.events.publish(AppEvent::TaskUpdated(task));
+                    let core = self.clone();
+                    tokio::spawn(async move {
+                        let _ = core.run_task_boxed(&task_id, agent, permission, None).await;
+                    });
+                }
+                return;
+            }
+            if self.provider_accounts_configured().await {
+                if let Ok(Some(next)) = self
+                    .next_ready_provider_account(provider_account_id.as_deref())
+                    .await
+                {
+                    if let Ok(task) = am_db::repos::task::update(
+                        &self.db.pool,
+                        &task_id,
+                        TaskUpdate {
+                            status: Some(TaskStatus::Queued),
+                            primary_agent: Some(next.agent),
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    {
+                        self.events.publish(AppEvent::TaskUpdated(task));
+                        let core = self.clone();
+                        tokio::spawn(async move {
+                            let _ = core
+                                .run_task_boxed(&task_id, next.agent, permission, None)
+                                .await;
+                        });
+                    }
+                }
+                return;
+            }
             if let Ok(crate::fallback::FallbackDecision::Switch {
                 agent: next_agent, ..
             }) = self
@@ -1336,6 +1410,35 @@ fn normalize_limit_policy(mut policy: am_proto::LimitPolicy) -> am_proto::LimitP
         }
     }
     policy.agent_profiles = profiles;
+    let mut accounts: Vec<am_proto::ProviderAccount> = Vec::new();
+    for mut account in policy.accounts {
+        if !matches!(account.agent, AgentKind::Codex | AgentKind::ClaudeCode) {
+            continue;
+        }
+        account.id = account.id.trim().to_string();
+        account.label = account.label.trim().chars().take(80).collect();
+        if account.label.is_empty()
+            || account.id.len() < 8
+            || account.id.len() > 128
+            || !account
+                .id
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+        {
+            continue;
+        }
+        if account.agent == AgentKind::Codex {
+            account.auth_mode = am_proto::ProviderAccountAuthMode::IsolatedCli;
+        } else {
+            account.use_credits = false;
+        }
+        if let Some(existing) = accounts.iter_mut().find(|item| item.id == account.id) {
+            *existing = account;
+        } else {
+            accounts.push(account);
+        }
+    }
+    policy.accounts = accounts;
     policy
 }
 

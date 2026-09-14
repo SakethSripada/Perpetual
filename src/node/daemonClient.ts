@@ -166,6 +166,22 @@ export class DaemonClient extends EventEmitter implements DaemonApi {
     return responsePayload(await this.requestRaw(variant("set_limit_policy", policy)), "limit_policy");
   }
 
+  async providerAccountStatuses() {
+    return responsePayload(await this.requestRaw(variant("provider_account_statuses")), "provider_account_statuses");
+  }
+
+  async providerAccountAuthLaunch(accountId: string) {
+    return responsePayload(await this.requestRaw(variant("provider_account_auth_launch", { account_id: accountId })), "provider_account_auth_launch");
+  }
+
+  async setProviderAccountToken(accountId: string, token: string) {
+    await this.requestRaw(variant("set_provider_account_token", { account_id: accountId, token }));
+  }
+
+  async deleteProviderAccount(accountId: string) {
+    await this.requestRaw(variant("delete_provider_account", { account_id: accountId }));
+  }
+
   async detectSandboxRuntime() {
     return responsePayload(await this.requestRaw(variant("detect_sandbox_runtime")), "sandbox_runtime_status");
   }

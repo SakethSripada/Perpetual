@@ -267,8 +267,37 @@ impl AppCore {
         )
         .await?;
 
-        for task in tasks {
-            if self.limit_wait_ready(&task).await? {
+        let policy = self.get_limit_policy().await.unwrap_or_default();
+        let ready_account_agent = if policy.accounts.is_empty() {
+            None
+        } else {
+            self.provider_account_statuses()
+                .await?
+                .into_iter()
+                .find(|status| {
+                    status.account.enabled
+                        && status.authenticated
+                        && status.availability != AvailabilityState::Limited
+                })
+                .map(|status| status.account.agent)
+        };
+
+        for mut task in tasks {
+            if let Some(agent) = ready_account_agent {
+                if task.primary_agent != Some(agent) {
+                    task = am_db::repos::task::update(
+                        &self.db.pool,
+                        &task.id,
+                        TaskUpdate {
+                            primary_agent: Some(agent),
+                            ..Default::default()
+                        },
+                    )
+                    .await?;
+                }
+                self.try_scheduler_start(task, "scheduler.account_available_continue")
+                    .await;
+            } else if policy.accounts.is_empty() && self.limit_wait_ready(&task).await? {
                 self.try_scheduler_start(task, "scheduler.limit_reset_continue")
                     .await;
             }
@@ -278,6 +307,17 @@ impl AppCore {
     }
 
     async fn limit_wait_ready(&self, task: &Task) -> Result<bool, CoreError> {
+        if self.provider_accounts_configured().await {
+            return Ok(self
+                .provider_account_statuses()
+                .await?
+                .into_iter()
+                .any(|status| {
+                    status.account.enabled
+                        && status.authenticated
+                        && status.availability != AvailabilityState::Limited
+                }));
+        }
         let Some(agent) = task.primary_agent else {
             return Ok(false);
         };
@@ -415,9 +455,28 @@ impl AppCore {
         // once a reset time passes) and is reused across the batch.
         let statuses = self.detect_agents().await?;
         let policy = self.get_limit_policy().await.unwrap_or_default();
+        let account_statuses = if policy.accounts.is_empty() {
+            Vec::new()
+        } else {
+            self.provider_account_statuses().await.unwrap_or_default()
+        };
 
         for thread in threads {
-            if let Some(agent) = thread_resume_agent(&thread, &policy, &statuses) {
+            let account_agent = account_statuses
+                .iter()
+                .find(|status| {
+                    status.account.enabled
+                        && status.authenticated
+                        && status.availability != AvailabilityState::Limited
+                })
+                .map(|status| status.account.agent);
+            if let Some(agent) = account_agent.or_else(|| {
+                policy
+                    .accounts
+                    .is_empty()
+                    .then(|| thread_resume_agent(&thread, &policy, &statuses))
+                    .flatten()
+            }) {
                 self.try_thread_scheduler_start(
                     thread,
                     agent,

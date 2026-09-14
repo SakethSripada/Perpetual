@@ -28,6 +28,7 @@ import type {
   NewGithubRepo,
   PermissionPolicy,
   ProviderUsage,
+  ProviderAccountStatus,
   SandboxPolicy,
   SandboxRuntimeStatus,
   TaskBudget,
@@ -84,6 +85,9 @@ type WebviewMessage =
   | { type: "setLocalModelPolicy"; policy: LocalModelPolicy }
   | { type: "sandboxLogin"; codex?: boolean }
   | { type: "signInAgent"; agent: AgentKind }
+  | { type: "signInProviderAccount"; accountId: string }
+  | { type: "setProviderAccountToken"; accountId: string; token: string }
+  | { type: "deleteProviderAccount"; accountId: string }
   | { type: "githubSignIn" | "refreshReadiness" }
   | { type: "launchCloudHandoff"; threadId: string; agent?: AgentKind | null }
   | { type: "reclaimCloudRun"; threadId: string }
@@ -114,6 +118,7 @@ type DetectionCache = {
   agents: AgentStatus[];
   runDefaults: AgentRunDefaults[];
   limitPolicy: LimitPolicy | null;
+  providerAccounts: ProviderAccountStatus[];
   sandboxPolicy: SandboxPolicy | null;
   sandboxRuntime: SandboxRuntimeStatus | null;
   cloudPolicy: CloudPolicy | null;
@@ -342,6 +347,24 @@ export class WorkbenchController implements vscode.Disposable {
           return;
         case "signInAgent":
           await this.startAgentSignIn(message.agent, reply);
+          return;
+        case "signInProviderAccount":
+          await this.startProviderAccountSignIn(message.accountId, reply);
+          return;
+        case "setProviderAccountToken":
+          await this.withLocalClient((client) =>
+            client.setProviderAccountToken(message.accountId, message.token),
+          );
+          this.detectionCache = null;
+          this.notice(reply, "Claude account token stored in the OS credential vault.");
+          await this.refresh();
+          return;
+        case "deleteProviderAccount":
+          await this.withLocalClient((client) =>
+            client.deleteProviderAccount(message.accountId),
+          );
+          this.detectionCache = null;
+          await this.refresh();
           return;
         case "githubSignIn":
           await this.githubToken();
@@ -704,6 +727,7 @@ export class WorkbenchController implements vscode.Disposable {
         agents,
         runDefaults,
         limitPolicy,
+        providerAccounts,
         sandboxPolicy,
         sandboxRuntime,
         cloudPolicy,
@@ -763,6 +787,7 @@ export class WorkbenchController implements vscode.Disposable {
         detectionState,
         defaultRepoIds,
         limitPolicy,
+        providerAccounts,
         sandboxPolicy,
         sandboxRuntime,
         cloudPolicy,
@@ -1186,6 +1211,25 @@ export class WorkbenchController implements vscode.Disposable {
     this.notice(reply, `Opened ${labelAgent(agent)} sign-in in a terminal.`);
   }
 
+  private async startProviderAccountSignIn(
+    accountId: string,
+    reply?: WebviewReply,
+  ): Promise<void> {
+    this.assertTrusted();
+    const launch = await this.withLocalClient((client) =>
+      client.providerAccountAuthLaunch(accountId),
+    );
+    const terminal = vscode.window.createTerminal({
+      name: `${launch.label} · ${labelAgent(launch.agent)}`,
+      shellPath: launch.binary,
+      shellArgs: launch.args,
+      env: Object.fromEntries(launch.env),
+      message: launch.instructions,
+    });
+    terminal.show(true);
+    this.notice(reply, launch.instructions);
+  }
+
   private async loadDiff(threadId: string): Promise<void> {
     this.diffCache.set(threadId, { state: "loading", diff: null });
     await this.refresh();
@@ -1248,6 +1292,7 @@ export class WorkbenchController implements vscode.Disposable {
         modelCatalog,
         localModels,
         limitPolicy,
+        providerAccounts,
         sandboxPolicy,
         sandboxRuntime,
         cloudPolicy,
@@ -1276,6 +1321,7 @@ export class WorkbenchController implements vscode.Disposable {
           .getLimitPolicy()
           .then(normalizeLimitPolicy)
           .catch(() => null),
+        client.providerAccountStatuses().catch(() => []),
         client.getSandboxPolicy().catch(() => null),
         client.detectSandboxRuntime().catch(() => null),
         client
@@ -1296,6 +1342,7 @@ export class WorkbenchController implements vscode.Disposable {
         agents,
         runDefaults,
         limitPolicy,
+        providerAccounts,
         sandboxPolicy,
         sandboxRuntime,
         cloudPolicy,
@@ -1695,6 +1742,7 @@ function emptyDetectionCache(state: DetectionCache["state"]): DetectionCache {
     agents: [],
     runDefaults: [],
     limitPolicy: null,
+    providerAccounts: [],
     sandboxPolicy: null,
     sandboxRuntime: null,
     cloudPolicy: null,
@@ -1726,6 +1774,7 @@ function emptySnapshot(
     detectionState: "idle",
     defaultRepoIds: [],
     limitPolicy: null,
+    providerAccounts: [],
     sandboxPolicy: null,
     sandboxRuntime: null,
     cloudPolicy: null,
@@ -2037,10 +2086,26 @@ function normalizeLimitPolicy(policy: LimitPolicy): LimitPolicy {
       reasoning: blankToNull(profile?.reasoning),
     };
   });
+  const accountIds = new Set<string>();
+  const accounts = (policy.accounts ?? []).flatMap((account) => {
+    const id = account.id.trim();
+    const label = account.label.trim();
+    if (!/^[A-Za-z0-9_-]{8,128}$/.test(id) || accountIds.has(id)) return [];
+    if (account.agent !== "codex" && account.agent !== "claude_code") return [];
+    accountIds.add(id);
+    return [{
+      ...account,
+      id,
+      label: label || (account.agent === "codex" ? "Codex account" : "Claude account"),
+      use_credits: account.agent === "codex" && account.use_credits === true,
+      auth_mode: account.agent === "codex" ? "isolated_cli" as const : account.auth_mode,
+    }];
+  });
   return {
     ...policy,
     agent_priority: normalizeAgentPriority(policy.agent_priority),
     agent_profiles: profiles,
+    accounts,
     unknown_reset_retry_secs: clampInt(
       policy.unknown_reset_retry_secs,
       0,

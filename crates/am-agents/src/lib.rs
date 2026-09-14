@@ -133,7 +133,7 @@ pub struct SessionSpec {
     pub approver: Option<ApprovalResponder>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Clone, Default, PartialEq)]
 pub struct AgentPolicyRuntime {
     pub allowed_tools: Vec<String>,
     pub denied_tools: Vec<String>,
@@ -146,6 +146,38 @@ pub struct AgentPolicyRuntime {
     /// Private launch metadata used by the graceful session budget adapter.
     /// It is never serialized into the webview or transcript.
     pub task_budget: Option<am_proto::TaskBudget>,
+    /// Child-only account selector variables resolved by the core. Secrets are
+    /// never serialized or logged.
+    pub launch_env: Vec<(String, String)>,
+    pub provider_account_id: Option<String>,
+}
+
+impl std::fmt::Debug for AgentPolicyRuntime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentPolicyRuntime")
+            .field("allowed_tools", &self.allowed_tools)
+            .field("denied_tools", &self.denied_tools)
+            .field("allowed_mcp_servers", &self.allowed_mcp_servers)
+            .field("denied_mcp_servers", &self.denied_mcp_servers)
+            .field("denied_context_globs", &self.denied_context_globs)
+            .field("env_allowlist", &self.env_allowlist)
+            .field(
+                "disable_remote_mcp_connectors",
+                &self.disable_remote_mcp_connectors,
+            )
+            .field("max_budget_usd", &self.max_budget_usd)
+            .field("task_budget", &self.task_budget)
+            .field(
+                "launch_env_keys",
+                &self
+                    .launch_env
+                    .iter()
+                    .map(|(key, _)| key)
+                    .collect::<Vec<_>>(),
+            )
+            .field("provider_account_id", &self.provider_account_id)
+            .finish()
+    }
 }
 
 /// Local provider target passed to adapters that can run against local models.

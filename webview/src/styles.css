@@ -2557,6 +2557,7 @@ textarea {
   gap: 10px;
 }
 .settings-sheet {
+  position: relative;
   width: min(820px, 100%);
   max-height: min(780px, 94vh);
 }
@@ -2616,6 +2617,7 @@ textarea {
   border-radius: 13px;
   background: color-mix(in srgb, var(--am-surface) 78%, transparent);
 }
+.settings-content.section-accounts [data-settings-section]:not([data-settings-section="accounts"]),
 .settings-content.section-agents [data-settings-section]:not([data-settings-section="agents"]),
 .settings-content.section-switching [data-settings-section]:not([data-settings-section="switching"]),
 .settings-content.section-continuity [data-settings-section]:not([data-settings-section="continuity"]),
@@ -2627,6 +2629,150 @@ textarea {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+.account-manager { gap: 14px !important; }
+.account-manager-hero,
+.account-card-heading,
+.account-controls,
+.account-actions,
+.account-add-row,
+.account-token-row,
+.account-security-note {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.account-manager-hero { align-items: flex-start; justify-content: space-between; }
+.account-manager-hero > div { display: grid; gap: 7px; }
+.account-count,
+.account-state {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border: 1px solid var(--am-border-soft);
+  border-radius: 999px;
+  color: var(--am-muted);
+  background: var(--am-surface-2);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.account-state.ready {
+  border-color: color-mix(in srgb, var(--vscode-testing-iconPassed) 38%, transparent);
+  color: var(--vscode-testing-iconPassed);
+  background: color-mix(in srgb, var(--vscode-testing-iconPassed) 9%, transparent);
+}
+.account-add-row { flex-wrap: wrap; }
+.account-add-row button { display: inline-flex; align-items: center; gap: 7px; }
+.account-empty {
+  display: grid;
+  gap: 5px;
+  padding: 26px 18px;
+  border: 1px dashed color-mix(in srgb, var(--am-border) 80%, transparent);
+  border-radius: 14px;
+  color: var(--am-muted);
+  text-align: center;
+}
+.account-empty strong { color: var(--vscode-foreground); }
+.account-stack { display: grid; gap: 9px; }
+.account-card {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 28px;
+  gap: 10px;
+  padding: 13px;
+  border: 1px solid var(--am-border-soft);
+  border-radius: 14px;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--vscode-editor-background) 92%, transparent), color-mix(in srgb, var(--am-surface-2) 78%, transparent));
+  transition: border-color 140ms ease, transform 140ms ease;
+}
+.account-card:hover { border-color: color-mix(in srgb, var(--am-accent) 26%, var(--am-border-soft)); }
+.account-card.authenticated { box-shadow: inset 2px 0 color-mix(in srgb, var(--vscode-testing-iconPassed) 65%, transparent); }
+.account-priority {
+  display: grid;
+  place-items: center;
+  align-self: start;
+  width: 25px;
+  height: 25px;
+  border-radius: 8px;
+  color: var(--am-muted);
+  background: var(--am-surface-2);
+  font-size: 11px;
+  font-weight: 700;
+}
+.account-card-main { display: grid; gap: 10px; min-width: 0; }
+.account-card-heading { min-width: 0; }
+.account-name-input {
+  min-width: 80px;
+  flex: 1;
+  border: 0 !important;
+  border-radius: 5px !important;
+  padding: 3px 5px !important;
+  background: transparent !important;
+  color: var(--vscode-foreground) !important;
+  font-size: 13px;
+  font-weight: 650;
+}
+.account-name-input:focus { background: var(--am-surface-2) !important; }
+.compact-field { grid-template-columns: 105px minmax(0, 1fr); align-items: center; }
+.compact-field select { min-height: 30px; }
+.account-token-row input { min-width: 0; flex: 1; }
+.account-controls { flex-wrap: wrap; }
+.compact-toggle { min-height: 0; padding: 0; background: transparent; }
+.account-credit-note,
+.account-detail { color: var(--am-muted); font-size: 11px; line-height: 1.35; }
+.account-actions { align-items: center; flex-wrap: wrap; }
+.account-detail { flex: 1; min-width: 150px; }
+.account-order-actions { display: grid; align-content: start; gap: 4px; }
+.account-order-actions button {
+  width: 27px;
+  height: 27px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--am-muted);
+  background: transparent;
+  cursor: pointer;
+}
+.account-order-actions button:hover:not(:disabled) { color: var(--vscode-foreground); background: var(--am-hover); }
+.account-order-actions button.danger:hover { color: var(--vscode-errorForeground); }
+.account-order-actions button:disabled { opacity: .25; cursor: default; }
+.account-security-note {
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: 10px;
+  color: var(--am-muted);
+  background: color-mix(in srgb, var(--am-accent) 7%, transparent);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.account-security-note svg { flex: 0 0 auto; margin-top: 1px; color: var(--am-accent); }
+.settings-confirm-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--vscode-editor-background) 66%, transparent);
+  backdrop-filter: blur(8px);
+}
+.settings-confirm {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px 12px;
+  max-width: 430px;
+  padding: 20px;
+  border: 1px solid color-mix(in srgb, var(--am-accent) 30%, var(--am-border));
+  border-radius: 16px;
+  background: var(--vscode-editor-background);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .34);
+}
+.settings-confirm > svg { color: var(--am-accent); }
+.settings-confirm p { grid-column: 1 / -1; margin: 0; color: var(--am-muted); font-size: 12px; line-height: 1.5; }
+.settings-confirm-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; }
+.settings-confirm .danger-confirm {
+  border-color: color-mix(in srgb, var(--vscode-errorForeground) 45%, transparent);
+  color: var(--vscode-errorForeground);
+  background: color-mix(in srgb, var(--vscode-errorForeground) 12%, transparent);
 }
 .agent-profile-card {
   display: grid;
@@ -2651,7 +2797,7 @@ textarea {
 @media (max-width: 620px) {
   .settings-layout { grid-template-columns: 1fr; }
   .settings-nav {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     border-right: 0;
     border-bottom: 1px solid var(--am-border-soft);
     overflow-x: auto;
@@ -2660,6 +2806,8 @@ textarea {
   .settings-nav button span { display: none; }
   .settings-content { padding: 14px; }
   .agent-profile-grid { grid-template-columns: 1fr; }
+  .account-card { grid-template-columns: 24px minmax(0, 1fr); }
+  .account-order-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; }
 }
 .settings-help {
   margin: -2px 0 0;
