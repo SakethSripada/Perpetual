@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Add an ordered multi-account pool for Codex and Claude subscriptions with
+  isolated provider-owned authentication and seamless per-account failover.
+- Persist account-specific limit/reset state and resume waiting work as soon as
+  any authenticated slot becomes available.
+- Store Claude setup tokens in the OS credential vault and keep credentials out
+  of policies, project files, transcripts, and debug output.
+- Keep earned Codex reset-credit redemption off by default behind a per-account
+  confirmation, and disable Claude fast-mode paid usage for pooled runs.
+- Add a polished Accounts manager for adding, naming, pausing, authenticating,
+  reordering, and removing account slots.
+- Add five-account failover simulation, credential isolation, durable reset
+  state, wire-protocol, and full regression coverage.
+
 ## 0.4.0
 
 - Add the current Claude Fable 5.1, Claude Opus 5, and GPT-6 Astra families,

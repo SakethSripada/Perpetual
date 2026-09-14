@@ -33,6 +33,14 @@ authentication facilities; do not paste credentials into prompts, issues, or
 logs. The daemon's local transport is authenticated, but it is not a security
 boundary against other software already running as the same user.
 
+Multi-account metadata contains labels and routing policy only. Codex account
+slots authenticate inside separate `CODEX_HOME` directories and Claude slots
+inside separate `CLAUDE_CONFIG_DIR` directories. Claude setup tokens are stored
+through the operating system credential vault and are injected into only the
+selected Claude child process; token values are redacted from Rust debug output
+and never returned in account-status responses. Removing a saved slot deletes
+its isolated directory, limit state, and vault entry after confirmation.
+
 ## Release audit
 
 Run both `npm audit --omit=dev --audit-level=high` and `npm run audit:rust`

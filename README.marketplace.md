@@ -31,6 +31,16 @@ or Claude Fable 5.1 at high effort without inheriting an incompatible choice.
 Perpetual reads the installed Codex catalog live and keeps Claude's
 latest-tracking aliases alongside exact model versions.
 
+### Rotate across your paid accounts
+
+Add multiple Codex and Claude subscriptions in the polished Accounts manager,
+order them once, and keep their provider-owned authentication isolated. When a
+slot reaches its limit, Perpetual continues with the next ready account—even
+across providers. If all slots are exhausted, it waits for the earliest reset
+and resumes automatically. Earned Codex reset credits are off by default and
+require explicit confirmation for each account; Claude paid extra usage is
+never enabled by Perpetual.
+
 ### Continue work in the cloud
 
 When local execution cannot continue, optional Cloud Continuity can hand an
