@@ -300,9 +300,16 @@ export interface LimitPolicy {
   auto_switch: boolean;
   switch_back: boolean;
   agent_priority: AgentKind[];
+  agent_profiles?: AgentTargetProfile[];
   resume_with_earliest: boolean;
   unknown_reset_retry_secs: number;
   keep_awake: boolean;
+}
+
+export interface AgentTargetProfile {
+  agent: AgentKind;
+  model: string | null;
+  reasoning: string | null;
 }
 
 export interface CloudPolicy {
@@ -402,6 +409,8 @@ export interface AgentThread {
   fallback_agent: AgentKind | null;
   original_model?: string | null;
   fallback_model?: string | null;
+  original_reasoning?: string | null;
+  fallback_reasoning?: string | null;
   original_local_provider?: LocalModelProvider | null;
   fallback_local_provider?: LocalModelProvider | null;
   original_local_base_url?: string | null;

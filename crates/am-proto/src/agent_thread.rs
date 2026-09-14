@@ -86,6 +86,8 @@ pub struct AgentThread {
     pub fallback_agent: Option<AgentKind>,
     pub original_model: Option<String>,
     pub fallback_model: Option<String>,
+    pub original_reasoning: Option<String>,
+    pub fallback_reasoning: Option<String>,
     pub original_local_provider: Option<LocalModelProviderKind>,
     pub fallback_local_provider: Option<LocalModelProviderKind>,
     pub original_local_base_url: Option<String>,

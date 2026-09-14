@@ -78,6 +78,19 @@ impl FallbackPolicy {
 }
 
 impl AppCore {
+    pub(crate) async fn agent_target_profile(
+        &self,
+        agent: AgentKind,
+    ) -> (Option<String>, Option<String>) {
+        let policy = self.get_limit_policy().await.unwrap_or_default();
+        policy
+            .agent_profiles
+            .into_iter()
+            .find(|profile| profile.agent == agent)
+            .map(|profile| (profile.model, profile.reasoning))
+            .unwrap_or((None, None))
+    }
+
     pub(crate) async fn fallback_decision(
         &self,
         current: AgentKind,

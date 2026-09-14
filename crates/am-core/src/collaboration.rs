@@ -1407,7 +1407,9 @@ mod tests {
             CollaborationChangeStatus::AppliedWithOverwrite
         );
         assert_eq!(
-            std::fs::read_to_string(repo_path.join("file.txt")).unwrap(),
+            std::fs::read_to_string(repo_path.join("file.txt"))
+                .unwrap()
+                .replace("\r\n", "\n"),
             "remote\n"
         );
         assert_eq!(

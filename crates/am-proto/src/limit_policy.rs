@@ -2,6 +2,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::AgentKind;
 
+/// Model and reasoning defaults applied whenever Perpetual starts or switches
+/// to a provider. Keeping these in the fallback policy makes provider changes
+/// deterministic instead of depending on whichever CLI default happens to be
+/// active on that machine.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentTargetProfile {
+    pub agent: AgentKind,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub reasoning: Option<String>,
+}
+
 /// Global policy controlling what happens when an agent hits a usage limit.
 ///
 /// Defaults are tuned to keep work flowing without stalling: switch to any
@@ -20,6 +33,11 @@ pub struct LimitPolicy {
     /// Preference order used when choosing a fallback / resume agent.
     #[serde(default = "default_priority")]
     pub agent_priority: Vec<AgentKind>,
+    /// Per-provider model and reasoning choices used for new runs and automatic
+    /// fallback switches. Missing entries continue to use the provider CLI's
+    /// own defaults for backwards compatibility.
+    #[serde(default)]
+    pub agent_profiles: Vec<AgentTargetProfile>,
     /// When every agent is limited, resume with whichever agent's limit resets
     /// first instead of always waiting for the agent that was running.
     #[serde(default = "default_true")]
@@ -53,6 +71,7 @@ impl Default for LimitPolicy {
             auto_switch: true,
             switch_back: true,
             agent_priority: default_priority(),
+            agent_profiles: Vec::new(),
             resume_with_earliest: true,
             unknown_reset_retry_secs: default_unknown_retry(),
             keep_awake: true,

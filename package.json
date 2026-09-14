@@ -2,7 +2,7 @@
   "name": "perpetual-for-vscode",
   "displayName": "Perpetual for VS Code",
   "description": "Coordinate Codex and Claude Code across devices with shared sessions, safe Git worktrees, handoffs, and review.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "SakethSripada",
   "license": "MIT",
   "author": {
@@ -195,12 +195,34 @@
         "perpetual.defaultModel": {
           "type": "string",
           "default": "",
-          "description": "Optional model override for new sessions. Empty uses the selected agent CLI default."
+          "description": "Legacy shared model override. Prefer the Claude and Codex profile settings.",
+          "markdownDeprecationMessage": "Use `perpetual.claude.model` and `perpetual.codex.model` so provider switches keep deterministic defaults."
         },
         "perpetual.defaultReasoning": {
           "type": "string",
           "default": "medium",
-          "description": "Optional reasoning-effort override for new sessions."
+          "description": "Legacy shared reasoning override. Prefer the Claude and Codex profile settings.",
+          "markdownDeprecationMessage": "Use `perpetual.claude.reasoning` and `perpetual.codex.reasoning`."
+        },
+        "perpetual.claude.model": {
+          "type": "string",
+          "default": "",
+          "description": "Claude model or latest-tracking alias used for new Claude runs and automatic switches. Empty uses the Claude Code default."
+        },
+        "perpetual.claude.reasoning": {
+          "type": "string",
+          "default": "",
+          "description": "Claude effort used for new Claude runs and automatic switches. Empty uses the model default."
+        },
+        "perpetual.codex.model": {
+          "type": "string",
+          "default": "",
+          "description": "Codex model used for new Codex runs and automatic switches. Empty uses the Codex default."
+        },
+        "perpetual.codex.reasoning": {
+          "type": "string",
+          "default": "",
+          "description": "Codex reasoning effort used for new Codex runs and automatic switches. Empty uses the model default."
         },
         "perpetual.collaboration.deviceName": {
           "type": "string",

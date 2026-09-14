@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 0.4.0
+
+- Add the current Claude Fable 5.1, Claude Opus 5, and GPT-6 Astra families,
+  including model-specific reasoning effort choices.
+- Keep model discovery current through the installed Codex app-server catalog,
+  Claude CLI/config discovery, latest-tracking Claude aliases, and resilient
+  built-in fallbacks when a CLI cannot be queried.
+- Add independent Claude and Codex model/reasoning profiles for new runs,
+  automatic fallback switches, and exact switch-back restoration.
+- Replace the long settings form with a polished, responsive sectioned settings
+  experience and refine the workbench's surfaces, depth, and spacing.
+- Make the collaboration overwrite test portable across Windows and POSIX line
+  endings.
+
 ## 0.3.0
 
 - Add encrypted LAN collaboration across multiple Perpetual installations and
