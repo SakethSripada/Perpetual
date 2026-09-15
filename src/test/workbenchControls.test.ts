@@ -474,3 +474,28 @@ test("the visible VS Code workspace is restored as the default repository", () =
   assert.match(app, /const defaultRepoIds = snapshot\?\.defaultRepoIds \?\? \[\]/);
   assert.match(app, /setRepoIds\(defaultRepoIds\)/);
 });
+
+test("overlay menus escape the clipped workbench stacking context", () => {
+  const app = readFileSync(
+    path.resolve(__dirname, "../../webview/src/App.tsx"),
+    "utf8",
+  );
+  const styles = readFileSync(
+    path.resolve(__dirname, "../../webview/src/styles.css"),
+    "utf8",
+  );
+  assert.match(app, /import \{ createPortal \} from "react-dom"/);
+  assert.match(app, /createPortal\([\s\S]*document\.body/);
+  assert.match(styles, /\.popover \{[\s\S]*z-index: 1000/);
+});
+
+test("new provider accounts persist before authentication", () => {
+  const app = readFileSync(
+    path.resolve(__dirname, "../../webview/src/App.tsx"),
+    "utf8",
+  );
+  assert.match(app, /const saveAccounts = \(nextAccounts: ProviderAccount\[\]\)/);
+  assert.match(app, /props\.onSaveLimitPolicy\(next\)/);
+  assert.doesNotMatch(app, /Apply settings before authenticating/);
+  assert.doesNotMatch(app, /disabled=\{!saved\} onClick=\{\(\) => props\.onSignInProviderAccount/);
+});

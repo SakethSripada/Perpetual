@@ -3496,3 +3496,558 @@ textarea {
     transition-duration: 0.001ms !important;
   }
 }
+
+/* ---------- 0.5.1 interface refinement ----------
+   Calm, single-layer surfaces with deliberate spacing. These overrides keep
+   every VS Code theme native while removing the stacked-card visual noise. */
+
+.top-actions .icon-btn,
+.collaboration-trigger {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  border-radius: 9px;
+}
+.top-actions .icon-btn svg,
+.collaboration-trigger svg {
+  width: 17px;
+  height: 17px;
+}
+
+/* Popovers are portaled to body, above every app-shell stacking context. */
+.popover {
+  z-index: 1000;
+  border-color: color-mix(in srgb, var(--vscode-foreground) 15%, transparent);
+  border-radius: 12px;
+  background: var(--vscode-menu-background, var(--vscode-editorWidget-background, var(--vscode-editor-background)));
+  box-shadow: 0 16px 46px rgba(0, 0, 0, 0.46), 0 1px 0 color-mix(in srgb, white 6%, transparent) inset;
+  will-change: auto;
+}
+.menu {
+  gap: 3px;
+  padding: 7px;
+}
+.menu-item {
+  min-height: 38px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.menu-item svg {
+  width: 17px;
+  height: 17px;
+}
+.history-menu {
+  width: min(390px, calc(100vw - 20px));
+  min-width: min(330px, calc(100vw - 20px));
+  max-height: inherit;
+  overflow-y: auto;
+  padding: 8px;
+}
+.history-menu-head {
+  position: sticky;
+  top: -8px;
+  z-index: 2;
+  min-height: 46px;
+  margin: -8px -8px 4px;
+  padding: 9px 11px;
+  border-bottom: 1px solid var(--am-border-soft);
+  background: var(--vscode-menu-background, var(--vscode-editorWidget-background, var(--vscode-editor-background)));
+}
+.history-menu-head strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+.history-new {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--am-border-soft);
+  border-radius: 8px;
+  background: transparent;
+}
+.history-pick {
+  min-height: 48px;
+  padding: 8px 10px;
+}
+.history-title,
+.history-text > span:first-child {
+  font-size: 13px;
+}
+.history-text small {
+  margin-top: 2px;
+  font-size: 11px;
+}
+.history-del {
+  width: 32px;
+  height: 32px;
+  opacity: 0;
+}
+
+.sheet-backdrop {
+  padding: 18px;
+  background: rgba(5, 7, 11, 0.72);
+  backdrop-filter: blur(3px);
+}
+.settings-sheet {
+  width: min(960px, 100%);
+  height: min(780px, calc(100vh - 36px));
+  max-height: calc(100vh - 36px);
+  border-color: color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+  border-radius: 16px;
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.52);
+}
+.settings-sheet > header {
+  min-height: 74px;
+  padding: 17px 20px 16px;
+}
+.settings-sheet > header .icon-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+}
+.settings-sheet > footer {
+  min-height: 62px;
+  padding: 13px 20px;
+}
+.settings-sheet > footer button {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 8px;
+}
+.settings-heading {
+  gap: 4px;
+}
+.settings-heading strong {
+  font-size: 19px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+.settings-heading small {
+  font-size: 12px;
+  line-height: 1.4;
+}
+.settings-save-note {
+  flex: 1;
+  color: var(--am-muted);
+  font-size: 11px;
+  text-align: right;
+}
+.settings-layout {
+  grid-template-columns: 230px minmax(0, 1fr);
+}
+.settings-nav {
+  gap: 3px;
+  padding: 18px 12px;
+  background: color-mix(in srgb, var(--vscode-foreground) 2.5%, transparent);
+}
+.settings-nav button {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  height: auto;
+  min-height: 55px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 9px;
+}
+.settings-nav button:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+}
+.settings-nav button.active {
+  border: 0;
+  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+  box-shadow: none;
+}
+.settings-nav-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  color: var(--am-muted);
+}
+.settings-nav-icon svg {
+  width: 19px;
+  height: 19px;
+  stroke-width: 1.5;
+}
+.settings-nav button.active .settings-nav-icon {
+  color: var(--vscode-foreground);
+  background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+}
+.settings-nav-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.settings-nav-copy strong,
+.settings-nav-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-nav-copy strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+.settings-nav-copy small {
+  color: var(--am-muted);
+  font-size: 10px;
+  font-weight: 400;
+}
+.settings-content {
+  align-content: start;
+  padding: 28px 32px 34px;
+}
+.settings-content .settings-group {
+  gap: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.settings-page-title,
+.settings-group[data-settings-section] > .group-title:first-child {
+  color: var(--vscode-foreground);
+  font-size: 20px;
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  text-transform: none;
+}
+.settings-help {
+  max-width: 620px;
+  margin: -9px 0 1px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.account-manager {
+  gap: 18px !important;
+}
+.account-manager-hero {
+  gap: 24px;
+  padding-bottom: 2px;
+}
+.account-manager-hero > div {
+  gap: 13px;
+}
+.account-count,
+.account-state {
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: transparent;
+  font-size: 10px;
+}
+.account-add-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.account-add-button {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 11px;
+  min-height: 58px;
+  padding: 10px 12px;
+  border: 1px solid var(--am-border-soft);
+  border-radius: 11px;
+  background: transparent;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  text-align: left;
+}
+.account-add-button:hover {
+  border-color: var(--am-border);
+  background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+}
+.account-add-button .agent-mark {
+  width: 22px;
+  height: 22px;
+}
+.account-add-button > span {
+  display: grid;
+  gap: 2px;
+}
+.account-add-button strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+.account-add-button small {
+  color: var(--am-muted);
+  font-size: 10px;
+}
+.account-add-button > svg {
+  color: var(--am-muted);
+}
+.account-empty {
+  padding: 36px 20px;
+  border-color: var(--am-border-soft);
+  border-radius: 11px;
+}
+.account-stack {
+  gap: 0;
+  border: 1px solid var(--am-border-soft);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.account-card {
+  grid-template-columns: 30px minmax(0, 1fr) 30px;
+  gap: 12px;
+  padding: 16px;
+  border: 0;
+  border-bottom: 1px solid var(--am-border-soft);
+  border-radius: 0;
+  background: transparent;
+  transition: background 120ms ease;
+}
+.account-card:last-child {
+  border-bottom: 0;
+}
+.account-card:hover {
+  border-color: var(--am-border-soft);
+  background: color-mix(in srgb, var(--vscode-foreground) 2.5%, transparent);
+}
+.account-card.authenticated {
+  box-shadow: none;
+}
+.account-priority {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--am-border-soft);
+  border-radius: 8px;
+  background: transparent;
+  font-weight: 600;
+}
+.account-card-main {
+  gap: 12px;
+}
+.account-card-heading {
+  gap: 10px;
+}
+.account-card-heading .agent-mark {
+  width: 19px;
+  height: 19px;
+}
+.account-name-input {
+  min-height: 30px;
+  font-size: 13px;
+}
+.account-name-input:focus {
+  background: var(--vscode-input-background) !important;
+}
+.account-controls {
+  gap: 18px;
+}
+.account-actions {
+  gap: 11px;
+}
+.account-sign-in {
+  height: 32px;
+  padding: 0 13px;
+}
+.account-detail {
+  line-height: 1.45;
+}
+.account-order-actions {
+  gap: 5px;
+}
+.account-order-actions button {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+}
+.account-order-actions svg {
+  width: 16px;
+  height: 16px;
+}
+.account-security-note {
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--am-border-soft);
+  border-radius: 10px;
+  background: transparent;
+}
+.account-security-note strong {
+  color: var(--vscode-foreground);
+  font-weight: 600;
+}
+
+.agent-profile-grid,
+.cloud-setup-grid {
+  gap: 12px;
+}
+.agent-profile-card,
+.cloud-setup-card {
+  gap: 13px;
+  padding: 16px;
+  border-color: var(--am-border-soft);
+  border-radius: 11px;
+  background: transparent;
+}
+.readiness-grid {
+  gap: 0;
+  border-top: 1px solid var(--am-border-soft);
+  border-bottom: 1px solid var(--am-border-soft);
+}
+.readiness-row {
+  min-height: 47px;
+  padding: 8px 2px;
+  border: 0;
+  border-bottom: 1px solid var(--am-border-soft);
+  border-radius: 0;
+  background: transparent;
+}
+.readiness-row:last-child {
+  border-bottom: 0;
+}
+.readiness-action {
+  height: 30px;
+  padding: 0 11px;
+  border-radius: 8px;
+  background: transparent;
+}
+.field-grid {
+  gap: 14px;
+}
+.field {
+  gap: 7px;
+}
+.field > span {
+  font-size: 11px;
+  font-weight: 550;
+}
+.field input,
+.field select {
+  height: 36px;
+  padding: 0 10px;
+  border-color: var(--am-border-soft);
+  border-radius: 8px;
+}
+.field input:focus,
+.field select:focus {
+  border-color: var(--am-accent);
+}
+.model-trigger {
+  min-height: 38px;
+  padding: 6px 10px;
+  border-color: var(--am-border-soft);
+  border-radius: 8px;
+}
+.secondary-btn,
+.primary-btn {
+  height: 32px;
+  border-radius: 8px;
+}
+.toggle input[type="checkbox"],
+.toggle-row input[type="checkbox"] {
+  position: relative;
+  width: 32px;
+  height: 18px;
+  margin: 0;
+  appearance: none;
+  border: 1px solid var(--am-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.toggle input[type="checkbox"]::after,
+.toggle-row input[type="checkbox"]::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--vscode-foreground);
+  opacity: 0.7;
+  transition: transform 140ms ease, opacity 140ms ease;
+}
+.toggle input[type="checkbox"]:checked,
+.toggle-row input[type="checkbox"]:checked {
+  border-color: var(--vscode-button-background);
+  background: var(--vscode-button-background);
+}
+.toggle input[type="checkbox"]:checked::after,
+.toggle-row input[type="checkbox"]:checked::after {
+  transform: translateX(14px);
+  background: var(--vscode-button-foreground);
+  opacity: 1;
+}
+.settings-confirm-backdrop {
+  background: rgba(5, 7, 11, 0.76);
+  backdrop-filter: blur(3px);
+}
+.settings-confirm {
+  gap: 12px 14px;
+  padding: 22px;
+  border-color: var(--am-border);
+  border-radius: 13px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.46);
+}
+
+@media (max-width: 700px) {
+  .settings-layout {
+    grid-template-columns: 1fr;
+  }
+  .settings-nav {
+    grid-template-columns: repeat(6, minmax(72px, 1fr));
+    padding: 8px;
+  }
+  .settings-nav button {
+    display: flex;
+    justify-content: center;
+    min-height: 42px;
+    padding: 4px;
+  }
+  .settings-nav-icon {
+    display: grid;
+    width: 30px;
+    height: 30px;
+  }
+  .settings-nav-copy {
+    display: none;
+  }
+  .settings-content {
+    padding: 22px 20px 28px;
+  }
+}
+
+@media (max-width: 520px) {
+  .sheet-backdrop {
+    padding: 8px;
+  }
+  .settings-sheet {
+    height: calc(100vh - 16px);
+    max-height: calc(100vh - 16px);
+    border-radius: 13px;
+  }
+  .settings-sheet > header {
+    min-height: 62px;
+    padding: 12px 14px;
+  }
+  .settings-sheet > footer {
+    padding: 10px 14px;
+  }
+  .settings-save-note {
+    display: none;
+  }
+  .account-add-row,
+  .agent-profile-grid {
+    grid-template-columns: 1fr;
+  }
+  .account-card {
+    grid-template-columns: 28px minmax(0, 1fr);
+    padding: 13px;
+  }
+  .account-order-actions {
+    grid-column: 1 / -1;
+    display: flex;
+    justify-content: flex-end;
+  }
+}
