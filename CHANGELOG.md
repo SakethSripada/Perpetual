@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.5.1
+
+- Redesign Settings around a calm, spacious navigation and content hierarchy
+  with larger icons, cleaner controls, and restrained theme-native surfaces.
+- Save account additions, priority, authentication mode, enabled state, and
+  reset-credit preferences immediately, so sign-in never depends on a separate
+  Apply step.
+- Move popover menus into a document-level overlay layer so Recent Sessions and
+  other menus cannot fade beneath or be clipped by the workbench.
+- Refine account rows, provider readiness, model profiles, confirmation dialogs,
+  responsive layouts, and global menu interaction targets.
+- Add regression coverage for overlay layering and immediate account setup.
+
+## 0.5.0
+
 - Add an ordered multi-account pool for Codex and Claude subscriptions with
   isolated provider-owned authentication and seamless per-account failover.
 - Persist account-specific limit/reset state and resume waiting work as soon as

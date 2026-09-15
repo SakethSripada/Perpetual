@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import type { CSSProperties, ReactNode } from "react";
+import { createPortal } from "react-dom";
 import type {
   AgentKind,
   AgentModelOption,
@@ -1187,6 +1188,9 @@ export default function App() {
           onDeleteProviderAccount={(accountId) =>
             vscode.postMessage({ type: "deleteProviderAccount", accountId })
           }
+          onSaveLimitPolicy={(policy) =>
+            vscode.postMessage({ type: "setLimitPolicy", policy })
+          }
           onSandboxLogin={(codex) =>
             vscode.postMessage({ type: "sandboxLogin", codex })
           }
@@ -1820,7 +1824,7 @@ function Popover(props: {
         toggle: () => props.setOpen(!props.open),
         ref: (el) => (triggerRef.current = el),
       })}
-      {props.open && (
+      {props.open && createPortal(
         <div
           ref={menuRef}
           className={`popover${fullWidth ? " composer-popover" : ""}`}
@@ -1835,7 +1839,8 @@ function Popover(props: {
           }
         >
           {props.children}
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );
@@ -4546,6 +4551,7 @@ function SettingsSheet(props: {
   onSignInProviderAccount(accountId: string): void;
   onSetProviderAccountToken(accountId: string, token: string): void;
   onDeleteProviderAccount(accountId: string): void;
+  onSaveLimitPolicy(policy: LimitPolicy): void;
   onSandboxLogin(codex: boolean): void;
   onGithubSignIn(): void;
   onRefreshReadiness(): void;
@@ -4569,29 +4575,43 @@ function SettingsSheet(props: {
   const [creditConfirmId, setCreditConfirmId] = useState<string | null>(null);
   const [removeConfirmId, setRemoveConfirmId] = useState<string | null>(null);
   const accounts = limit.accounts ?? [];
-  const updateAccount = (id: string, patch: Partial<ProviderAccount>) =>
-    setLimit({
+  const saveAccounts = (nextAccounts: ProviderAccount[]) => {
+    const next = { ...limit, accounts: nextAccounts };
+    setLimit(next);
+    props.onSaveLimitPolicy(next);
+  };
+  const updateAccount = (
+    id: string,
+    patch: Partial<ProviderAccount>,
+    save = true,
+  ) => {
+    const nextAccounts = accounts.map((account) =>
+      account.id === id ? { ...account, ...patch } : account,
+    );
+    if (save) saveAccounts(nextAccounts);
+    else setLimit({
       ...limit,
-      accounts: accounts.map((account) => account.id === id ? { ...account, ...patch } : account),
+      accounts: nextAccounts,
     });
+  };
   const addAccount = (agent: "codex" | "claude_code") => {
     const number = accounts.filter((account) => account.agent === agent).length + 1;
     const id = `${agent === "codex" ? "codex" : "claude"}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    setLimit({ ...limit, accounts: [...accounts, {
+    saveAccounts([...accounts, {
       id,
       label: `${agent === "codex" ? "Codex" : "Claude"} ${number}`,
       agent,
       enabled: true,
       use_credits: false,
       auth_mode: agent === "claude_code" ? "oauth_token" : "isolated_cli",
-    }] });
+    }]);
   };
   const moveAccount = (index: number, delta: number) => {
     const target = index + delta;
     if (target < 0 || target >= accounts.length) return;
     const next = [...accounts];
     [next[index], next[target]] = [next[target], next[index]];
-    setLimit({ ...limit, accounts: next });
+    saveAccounts(next);
   };
   const updateAgentProfile = (
     agent: AgentKind,
@@ -4615,8 +4635,8 @@ function SettingsSheet(props: {
       >
         <header>
           <div className="settings-heading">
-            <strong>Perpetual settings</strong>
-            <small>Agents, continuity, and execution</small>
+            <strong>Settings</strong>
+            <small>Configure how Perpetual runs and hands off work.</small>
           </div>
           <IconButton title="Close" onClick={props.onClose}>
             <Icon name="close" />
@@ -4626,21 +4646,24 @@ function SettingsSheet(props: {
         <div className="settings-layout">
           <nav className="settings-nav" aria-label="Settings sections">
             {([
-              ["accounts", "Accounts", "devices"],
-              ["agents", "Agents", "agent"],
-              ["switching", "Switching", "bolt"],
-              ["continuity", "Continuity", "cloud"],
-              ["local", "Local models", "cube"],
-              ["sandbox", "Sandbox", "shield"],
-            ] as const).map(([value, label, icon]) => (
+              ["accounts", "Accounts", "Sign-in and priority", "devices"],
+              ["agents", "Providers", "Readiness and access", "agent"],
+              ["switching", "Models & fallback", "Defaults and limits", "sliders"],
+              ["continuity", "Continuity", "Cloud handoff", "cloud"],
+              ["local", "Local models", "Offline fallback", "cube"],
+              ["sandbox", "Sandbox", "Isolation and resources", "shield"],
+            ] as const).map(([value, label, description, icon]) => (
               <button
                 key={value}
                 type="button"
                 className={section === value ? "active" : ""}
                 onClick={() => setSection(value)}
               >
-                <Icon name={icon} />
-                <span>{label}</span>
+                <span className="settings-nav-icon"><Icon name={icon} /></span>
+                <span className="settings-nav-copy">
+                  <strong>{label}</strong>
+                  <small>{description}</small>
+                </span>
               </button>
             ))}
           </nav>
@@ -4648,17 +4671,17 @@ function SettingsSheet(props: {
           <div className="settings-group account-manager" data-settings-section="accounts">
             <div className="account-manager-hero">
               <div>
-                <div className="group-title">Account rotation</div>
+                <div className="settings-page-title">Accounts</div>
                 <p className="settings-help">
-                  Provider-owned sign-ins stay isolated. Perpetual tries ready accounts from top to bottom,
-                  then waits for the earliest reset when every slot is limited.
+                  Add every subscription you use. Perpetual keeps each sign-in isolated and follows
+                  this priority order when an account reaches its limit.
                 </p>
               </div>
               <span className="account-count">{accounts.length} configured</span>
             </div>
             <div className="account-add-row">
-              <button type="button" className="secondary-btn" onClick={() => addAccount("codex")}><AgentMark agent="codex" /> Add Codex</button>
-              <button type="button" className="secondary-btn" onClick={() => addAccount("claude_code")}><AgentMark agent="claude_code" /> Add Claude</button>
+              <button type="button" className="account-add-button" onClick={() => addAccount("codex")}><AgentMark agent="codex" /><span><strong>Add Codex account</strong><small>Isolated Codex profile</small></span><Icon name="plus" /></button>
+              <button type="button" className="account-add-button" onClick={() => addAccount("claude_code")}><AgentMark agent="claude_code" /><span><strong>Add Claude account</strong><small>Token or isolated profile</small></span><Icon name="plus" /></button>
             </div>
             {accounts.length === 0 ? (
               <div className="account-empty">
@@ -4670,7 +4693,7 @@ function SettingsSheet(props: {
                 {accounts.map((account, index) => {
                   const status = props.snapshot.providerAccounts?.find((item) => item.id === account.id);
                   const saved = !!status;
-                  const state = !account.enabled ? "Paused" : !saved ? "Save to activate" : !status.authenticated ? "Sign-in required" : status.availability === "limited" ? (status.reset_at ? `Limited · ${formatResetTime(status.reset_at)}` : "Limited") : "Ready";
+                  const state = !account.enabled ? "Paused" : !saved ? "Ready to sign in" : !status.authenticated ? "Sign-in required" : status.availability === "limited" ? (status.reset_at ? `Limited · ${formatResetTime(status.reset_at)}` : "Limited") : "Ready";
                   const token = accountTokens[account.id] ?? "";
                   return (
                     <article className={`account-card ${status?.authenticated ? "authenticated" : ""}`} key={account.id}>
@@ -4678,7 +4701,7 @@ function SettingsSheet(props: {
                       <div className="account-card-main">
                         <div className="account-card-heading">
                           <AgentMark agent={account.agent} />
-                          <input className="account-name-input" aria-label="Account name" value={account.label} onChange={(event) => updateAccount(account.id, { label: event.target.value })} />
+                          <input className="account-name-input" aria-label="Account name" value={account.label} onChange={(event) => updateAccount(account.id, { label: event.target.value }, false)} onBlur={() => props.onSaveLimitPolicy(limit)} />
                           <span className={`account-state ${status?.authenticated && status.availability !== "limited" ? "ready" : ""}`}>{state}</span>
                         </div>
                         {account.agent === "claude_code" && (
@@ -4690,7 +4713,7 @@ function SettingsSheet(props: {
                             </select>
                           </label>
                         )}
-                        {account.agent === "claude_code" && account.auth_mode === "oauth_token" && saved && (
+                        {account.agent === "claude_code" && account.auth_mode === "oauth_token" && (
                           <div className="account-token-row">
                             <input type="password" autoComplete="off" placeholder="Paste token from claude setup-token" value={token} onChange={(event) => setAccountTokens({ ...accountTokens, [account.id]: event.target.value })} />
                             <button type="button" className="secondary-btn" disabled={!token.trim()} onClick={() => {
@@ -4709,24 +4732,24 @@ function SettingsSheet(props: {
                           ) : <span className="account-credit-note">Paid extra usage stays off; manage it in Claude.</span>}
                         </div>
                         <div className="account-actions">
-                          <button type="button" className="secondary-btn" disabled={!saved} onClick={() => props.onSignInProviderAccount(account.id)}>{account.auth_mode === "oauth_token" ? "Generate token" : status?.authenticated ? "Re-authenticate" : "Sign in"}</button>
-                          <span className="account-detail">{status?.detail ?? (!saved ? "Apply settings before authenticating." : "Credentials stay outside project files.")}</span>
+                          <button type="button" className="primary-btn account-sign-in" onClick={() => props.onSignInProviderAccount(account.id)}>{account.auth_mode === "oauth_token" ? "Generate token" : status?.authenticated ? "Re-authenticate" : "Sign in"}</button>
+                          <span className="account-detail">{status?.detail ?? "Credentials stay outside project files."}</span>
                         </div>
                       </div>
                       <div className="account-order-actions">
-                        <button type="button" aria-label="Move account up" disabled={index === 0} onClick={() => moveAccount(index, -1)}>↑</button>
-                        <button type="button" aria-label="Move account down" disabled={index === accounts.length - 1} onClick={() => moveAccount(index, 1)}>↓</button>
-                        <button type="button" className="danger" aria-label="Remove account" onClick={() => {
+                        <button type="button" aria-label="Move account up" title="Move up" disabled={index === 0} onClick={() => moveAccount(index, -1)}><Icon name="up" /></button>
+                        <button type="button" aria-label="Move account down" title="Move down" disabled={index === accounts.length - 1} onClick={() => moveAccount(index, 1)}><Icon name="down" /></button>
+                        <button type="button" className="danger" aria-label="Remove account" title="Remove account" onClick={() => {
                           if (saved) setRemoveConfirmId(account.id);
-                          else setLimit({ ...limit, accounts: accounts.filter((item) => item.id !== account.id) });
-                        }}>×</button>
+                          else saveAccounts(accounts.filter((item) => item.id !== account.id));
+                        }}><Icon name="trash" /></button>
                       </div>
                     </article>
                   );
                 })}
               </div>
             )}
-            <div className="account-security-note"><Icon name="shield" /><span>Codex uses a separate <code>CODEX_HOME</code> per slot. Claude uses a separate <code>CLAUDE_CONFIG_DIR</code>; setup tokens live in the OS credential vault and are injected only into the selected child process.</span></div>
+            <div className="account-security-note"><Icon name="shield" /><span><strong>Private by design.</strong> Each account gets its own provider profile. Claude setup tokens are kept in your operating system credential vault, never in the project.</span></div>
           </div>
           <div className="settings-group" data-settings-section="agents">
             <div className="group-title">Readiness</div>
@@ -5492,12 +5515,15 @@ function SettingsSheet(props: {
           <button type="button" onClick={props.onOpenSettings}>
             VS Code settings
           </button>
+          <span className="settings-save-note">
+            {section === "accounts" ? "Account changes save automatically" : "Save to apply this section"}
+          </span>
           <button
             type="button"
             className="primary"
             onClick={() => props.onApply(limit, sandbox, cloud, localPolicy)}
           >
-            Apply
+            Save changes
           </button>
         </footer>
       </section>
