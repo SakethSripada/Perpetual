@@ -1,0 +1,23 @@
+/*
+ * Tailwind is intentionally reset-free in the webview. The existing chat stays
+ * visually stable while surfaces move to explicit, locally-scoped utilities.
+ */
+@layer theme, utilities;
+@import "tailwindcss/theme.css" layer(theme) prefix(tw);
+@import "tailwindcss/utilities.css" layer(utilities) prefix(tw) source("./");
+
+@theme {
+  --font-sans: var(--vscode-font-family, ui-sans-serif, system-ui, sans-serif);
+  --animate-settings-in: settings-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  @keyframes settings-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px) scale(0.99);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+}

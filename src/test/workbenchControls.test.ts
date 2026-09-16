@@ -8,6 +8,7 @@ import { build } from "esbuild";
 
 type ModelOption = { value: string; label: string; source: string };
 type WorkbenchControlsModule = {
+  providerAccountDisplayName(account: any, status?: any): string;
   modelOptions(
     agent: "claude_code" | "codex",
     snapshot: any,
@@ -45,6 +46,18 @@ type WorkbenchControlsModule = {
 };
 
 let modulePromise: Promise<WorkbenchControlsModule> | null = null;
+
+test("account names use authenticated identity without overwriting custom labels", async () => {
+  const { providerAccountDisplayName } = await loadWorkbenchControls();
+  const account = { agent: "codex", label: "Codex 1" };
+  const identity = { authenticated: true, email: "person@example.com" };
+  assert.equal(providerAccountDisplayName(account, identity), "person@example.com");
+  assert.equal(providerAccountDisplayName({ agent: "claude_code", label: "Claude account 2" }, identity), "person@example.com");
+  assert.equal(providerAccountDisplayName({ ...account, label: "Work" }, identity), "Work");
+  assert.equal(providerAccountDisplayName(account, { ...identity, authenticated: false }), "Codex 1");
+  assert.equal(providerAccountDisplayName(account), "Codex 1");
+  assert.equal(providerAccountDisplayName({ ...account, label: "" }), "Codex");
+});
 
 function loadWorkbenchControls(): Promise<WorkbenchControlsModule> {
   if (modulePromise) return modulePromise;
@@ -512,6 +525,35 @@ test("settings stay legible and compact at narrow panel widths", () => {
   assert.doesNotMatch(app, /Private by design/);
   assert.doesNotMatch(app, /Configure how Perpetual runs and hands off work/);
   assert.match(styles, /\.sheet footer button \{[\s\S]*color: var\(--vscode-button-secondaryForeground/);
-  assert.match(styles, /@media \(max-width: 700px\)[\s\S]*\.settings-nav \{[\s\S]*overflow-x: auto/);
+  assert.doesNotMatch(app, /className="settings-section-picker"/);
+  assert.doesNotMatch(styles, /\.settings-nav button span \{ display: none; \}/);
   assert.doesNotMatch(styles, /grid-template-columns: repeat\(6, minmax\(72px, 1fr\)\)/);
+  const settingsStyles = readFileSync(
+    path.resolve(__dirname, "../../webview/src/settings.css"), "utf8",
+  );
+  // Inactive categories must stay hidden even when a layout rule sets display.
+  for (const section of ["accounts", "agents", "integrations", "switching", "continuity", "local", "sandbox"]) {
+    assert.ok(app.includes(`hidden={section !== "${section}"}`));
+    assert.ok(app.includes(`id="settings-panel-${section}"`));
+  }
+  assert.match(settingsStyles, /\[data-settings-section\]\[hidden\]\s*\{\s*display: none !important/);
+  assert.match(settingsStyles, /@container \(max-width: 470px\)/);
+});
+
+test("integration setup stays inside the selected isolated provider profile", () => {
+  const controller = readFileSync(
+    path.resolve(__dirname, "../../src/node/workbenchController.ts"),
+    "utf8",
+  );
+  const app = readFileSync(
+    path.resolve(__dirname, "../../webview/src/App.tsx"),
+    "utf8",
+  );
+
+  assert.match(controller, /case "openProviderAccountSetup"/);
+  assert.match(controller, /providerAccountAuthLaunch\(accountId\)/);
+  assert.match(controller, /env: Object\.fromEntries\(launch\.env\)/);
+  assert.match(controller, /shellArgs: \[\]/);
+  assert.match(app, /Provider app only/);
+  assert.match(app, /never copies tokens, browser sessions, or plugin secrets/);
 });

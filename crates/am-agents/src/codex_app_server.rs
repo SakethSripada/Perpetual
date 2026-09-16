@@ -42,7 +42,8 @@ pub(crate) async fn launch(
     approver: ApprovalResponder,
 ) -> Result<SessionHandle, AgentLaunchError> {
     let envs = crate::codex::session_env(&spec);
-    let mut child = spawn_host_piped_stdin(BIN, &["app-server".to_string()], &spec.worktree, &envs)
+    let args = app_server_args(&spec);
+    let mut child = spawn_host_piped_stdin(BIN, &args, &spec.worktree, &envs)
         .await
         .map_err(AgentLaunchError::Spawn)?;
     let stdin = child
@@ -67,6 +68,18 @@ pub(crate) async fn launch(
         events: events_rx,
         control: SessionControl::with_steer(cancel_tx, steer_tx),
     })
+}
+
+/// Build the app-server command line without ever interpolating values through
+/// a shell. App-server loads the selected Codex profile's normal configuration
+/// (plugins, apps, skills, MCP servers, and feature flags); these overrides only
+/// narrow that configuration according to Perpetual's effective run policy.
+fn app_server_args(spec: &SessionSpec) -> Vec<String> {
+    let mut args = vec!["app-server".to_string()];
+    if let Some(policy) = spec.policy.as_ref() {
+        crate::codex::push_policy_args(&mut args, policy);
+    }
+    args
 }
 
 /// Minimal launch error so the adapter can fall back to `codex exec`.
@@ -271,7 +284,7 @@ async fn run_turn(
             match rpc
                 .request(
                     "thread/resume",
-                    json!({ "threadId": prior.agent_session_id }),
+                    thread_resume_params(spec, &prior.agent_session_id),
                 )
                 .await
             {
@@ -314,14 +327,7 @@ async fn run_turn(
     }
 
     let turn = rpc
-        .request(
-            "turn/start",
-            json!({
-                "threadId": thread_id,
-                "input": [{ "type": "text", "text": spec.prompt }],
-                "approvalPolicy": approval_policy(spec.permission),
-            }),
-        )
+        .request("turn/start", turn_start_params(spec, &thread_id))
         .await?;
     let turn_id = turn
         .pointer("/turn/id")
@@ -360,6 +366,31 @@ fn thread_start_params(spec: &SessionSpec) -> Value {
         .filter(|m| !m.is_empty() && !matches!(*m, "default" | "auto"))
     {
         params["model"] = json!(model);
+    }
+    params
+}
+
+fn thread_resume_params(spec: &SessionSpec, thread_id: &str) -> Value {
+    let mut params = thread_start_params(spec);
+    params["threadId"] = json!(thread_id);
+    params
+}
+
+fn turn_start_params(spec: &SessionSpec, thread_id: &str) -> Value {
+    let mut params = json!({
+        "threadId": thread_id,
+        "input": [{ "type": "text", "text": spec.prompt }],
+        "approvalPolicy": approval_policy(spec.permission),
+    });
+    if let Some(effort) = spec
+        .reasoning
+        .as_deref()
+        .map(str::trim)
+        .filter(|effort| !effort.is_empty() && !matches!(*effort, "default" | "auto"))
+    {
+        // ReasoningEffort is deliberately an open string in the app-server
+        // schema. Let the installed Codex version validate newly added values.
+        params["effort"] = json!(effort.to_ascii_lowercase());
     }
     params
 }
@@ -500,6 +531,40 @@ async fn handle_server_request(
     let params = value.get("params").cloned().unwrap_or(Value::Null);
 
     if method == "item/tool/requestUserInput" {
+        if let Some(choices) = approval_question_choices(&params) {
+            // Apps use requestUserInput for consequential MCP calls. Route the
+            // provider's Accept/Decline choices through Perpetual's existing
+            // live approval UI so the original tool call remains pending and
+            // the user's decision is returned to that exact request.
+            let approver = approver.clone();
+            let out_tx = out_tx.clone();
+            tokio::spawn(async move {
+                let decision = approver
+                    .ask(ApprovalAsk {
+                        kind: ApprovalKind::Tool,
+                        tool_name: "app_connector".to_string(),
+                        command: None,
+                        cwd: None,
+                        input: params,
+                        reason: Some("An app or connector wants to perform an action".into()),
+                    })
+                    .await;
+                let answers = choices
+                    .into_iter()
+                    .map(|choice| {
+                        let answer = if decision.is_allow() {
+                            choice.allow
+                        } else {
+                            choice.deny
+                        };
+                        (choice.id, json!({ "answers": [answer] }))
+                    })
+                    .collect::<serde_json::Map<String, Value>>();
+                let reply = json!({ "id": id, "result": { "answers": answers } });
+                let _ = out_tx.send(reply.to_string()).await;
+            });
+            return;
+        }
         // The app-server keeps the turn blocked until its client responds. Our
         // conversation transport resumes provider sessions one turn at a time,
         // so surface the structured question immediately, acknowledge this
@@ -512,6 +577,20 @@ async fn handle_server_request(
             })
             .await;
         let reply = json!({ "id": id, "result": { "answers": {} } });
+        let _ = out_tx.send(reply.to_string()).await;
+    } else if method == "mcpServer/elicitation/request" {
+        // Form and URL elicitations can request arbitrary data or navigation.
+        // The current workbench does not yet have a correlated form response
+        // channel, so surface the request and cancel it explicitly. An empty
+        // success object is not valid for this protocol and can leave remote
+        // MCP servers in an ambiguous state.
+        let _ = events_tx
+            .send(NormalizedEvent::ToolUse {
+                name: "mcp_elicitation".to_string(),
+                input: params,
+            })
+            .await;
+        let reply = json!({ "id": id, "result": { "action": "cancel" } });
         let _ = out_tx.send(reply.to_string()).await;
     } else if let Some(ask) = approval_ask_for(method, &params) {
         let approver = approver.clone();
@@ -526,10 +605,55 @@ async fn handle_server_request(
             let _ = out_tx.send(reply.to_string()).await;
         });
     } else {
-        // Unknown request: reply with an empty result so Codex can proceed.
-        let reply = json!({ "id": id, "result": {} });
+        // Fail closed. Returning `{}` used to look like success even for
+        // security-sensitive requests such as token refreshes or attestations.
+        // A JSON-RPC error lets Codex stop or fall back without pretending that
+        // Perpetual performed an operation it does not implement.
+        let reply = json!({
+            "id": id,
+            "error": {
+                "code": -32601,
+                "message": format!("Perpetual does not support app-server request method {method}")
+            }
+        });
         let _ = out_tx.send(reply.to_string()).await;
     }
+}
+
+struct ApprovalQuestionChoice {
+    id: String,
+    allow: String,
+    deny: String,
+}
+
+/// Recognize the constrained Accept/Decline questions Codex uses to approve
+/// app tool calls. General-purpose user questions intentionally do not match.
+fn approval_question_choices(params: &Value) -> Option<Vec<ApprovalQuestionChoice>> {
+    let questions = params.get("questions")?.as_array()?;
+    if questions.is_empty() {
+        return None;
+    }
+    questions
+        .iter()
+        .map(|question| {
+            let id = question.get("id")?.as_str()?.to_string();
+            let options = question.get("options")?.as_array()?;
+            let find = |labels: &[&str]| {
+                options.iter().find_map(|option| {
+                    let label = option.get("label")?.as_str()?;
+                    labels
+                        .iter()
+                        .any(|candidate| label.eq_ignore_ascii_case(candidate))
+                        .then(|| label.to_string())
+                })
+            };
+            Some(ApprovalQuestionChoice {
+                id,
+                allow: find(&["accept", "allow", "approve", "yes"])?,
+                deny: find(&["decline", "deny", "reject", "no", "cancel"])?,
+            })
+        })
+        .collect()
 }
 
 /// Build an [`ApprovalAsk`] from a Codex approval request, or `None` if the
@@ -822,6 +946,7 @@ fn map_item(item: &Value, completed: bool) -> Vec<NormalizedEvent> {
                         .pointer("/error/message")
                         .and_then(Value::as_str)
                         .map(ToString::to_string)
+                        .or_else(|| item.get("result").map(summarize_value))
                         .unwrap_or_else(|| name.clone()),
                 });
             } else {
@@ -831,9 +956,120 @@ fn map_item(item: &Value, completed: bool) -> Vec<NormalizedEvent> {
                 });
             }
         }
+        Some("dynamicToolCall") => {
+            let tool = item.get("tool").and_then(Value::as_str).unwrap_or("tool");
+            let namespace = item.get("namespace").and_then(Value::as_str).unwrap_or("");
+            let name = if namespace.is_empty() {
+                tool.to_string()
+            } else {
+                format!("{namespace}/{tool}")
+            };
+            if completed {
+                let status = item.get("status").and_then(Value::as_str).unwrap_or("");
+                out.push(NormalizedEvent::ToolResult {
+                    ok: item
+                        .get("success")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(status == "completed"),
+                    summary: item
+                        .get("contentItems")
+                        .map(summarize_value)
+                        .unwrap_or(name),
+                });
+            } else {
+                out.push(NormalizedEvent::ToolUse {
+                    name,
+                    input: item.get("arguments").cloned().unwrap_or(Value::Null),
+                });
+            }
+        }
+        Some("webSearch") => {
+            let query = item.get("query").and_then(Value::as_str).unwrap_or("");
+            if completed {
+                out.push(NormalizedEvent::ToolResult {
+                    ok: true,
+                    summary: if query.is_empty() {
+                        "Web search completed".into()
+                    } else {
+                        format!("Web search completed: {}", truncate(query, 300))
+                    },
+                });
+            } else {
+                out.push(NormalizedEvent::ToolUse {
+                    name: "Web search".into(),
+                    input: json!({
+                        "query": query,
+                        "action": item.get("action").cloned().unwrap_or(Value::Null)
+                    }),
+                });
+            }
+        }
+        Some("imageView") if !completed => {
+            out.push(NormalizedEvent::ToolUse {
+                name: "View image".into(),
+                input: json!({ "path": item.get("path").cloned().unwrap_or(Value::Null) }),
+            });
+        }
+        Some("imageGeneration") => {
+            if completed {
+                let status = item.get("status").and_then(Value::as_str).unwrap_or("");
+                let summary = item
+                    .get("savedPath")
+                    .map(summarize_value)
+                    .filter(|value| !value.is_empty() && value != "null")
+                    .or_else(|| {
+                        item.get("result")
+                            .and_then(Value::as_str)
+                            .map(|value| truncate(value, 800))
+                    })
+                    .unwrap_or_else(|| "Image generation completed".into());
+                out.push(NormalizedEvent::ToolResult {
+                    ok: matches!(status, "completed" | "succeeded" | "success"),
+                    summary,
+                });
+            } else {
+                out.push(NormalizedEvent::ToolUse {
+                    name: "Image generation".into(),
+                    input: json!({
+                        "revisedPrompt": item.get("revisedPrompt").cloned().unwrap_or(Value::Null),
+                        "transparentBackground": item.get("transparentBackground").cloned().unwrap_or(Value::Null)
+                    }),
+                });
+            }
+        }
+        Some("collabAgentToolCall") => {
+            let tool = item
+                .get("tool")
+                .and_then(Value::as_str)
+                .unwrap_or("collaboration");
+            if completed {
+                let status = item.get("status").and_then(Value::as_str).unwrap_or("");
+                out.push(NormalizedEvent::ToolResult {
+                    ok: matches!(status, "completed" | "succeeded" | "success"),
+                    summary: format!("Collaboration {tool}: {status}"),
+                });
+            } else {
+                out.push(NormalizedEvent::ToolUse {
+                    name: format!("Collaboration/{tool}"),
+                    input: json!({
+                        "prompt": item.get("prompt").cloned().unwrap_or(Value::Null),
+                        "model": item.get("model").cloned().unwrap_or(Value::Null),
+                        "receiverThreadIds": item.get("receiverThreadIds").cloned().unwrap_or(Value::Null)
+                    }),
+                });
+            }
+        }
         _ => {}
     }
     out
+}
+
+fn summarize_value(value: &Value) -> String {
+    let text = match value {
+        Value::String(value) => value.clone(),
+        other => other.to_string(),
+    };
+    truncate(&text, 800)
 }
 
 fn parse_usage(usage: Option<&Value>) -> Option<NormalizedEvent> {
@@ -978,6 +1214,55 @@ mod tests {
     }
 
     #[test]
+    fn app_server_applies_effective_mcp_policy() {
+        let spec = SessionSpec {
+            worktree: "/tmp/wt".into(),
+            prompt: "go".into(),
+            model: None,
+            reasoning: None,
+            local_model: None,
+            permission: PermissionPolicy::WorkspaceWrite,
+            runtime: crate::SessionRuntime::default(),
+            policy: Some(crate::AgentPolicyRuntime {
+                denied_mcp_servers: vec!["untrusted".into()],
+                allowed_tools: vec!["mcp__github__search".into()],
+                ..Default::default()
+            }),
+            approver: None,
+        };
+        let args = app_server_args(&spec);
+        assert_eq!(args[0], "app-server");
+        assert!(args
+            .iter()
+            .any(|arg| arg == "mcp_servers.untrusted.enabled=false"));
+        assert!(args
+            .iter()
+            .any(|arg| arg == "mcp_servers.github.enabled_tools=[\"search\"]"));
+    }
+
+    #[test]
+    fn resume_and_turn_keep_current_overrides() {
+        let spec = SessionSpec {
+            worktree: "/tmp/wt".into(),
+            prompt: "continue".into(),
+            model: Some("gpt-test".into()),
+            reasoning: Some("Ultra".into()),
+            local_model: None,
+            permission: PermissionPolicy::ReadOnly,
+            runtime: crate::SessionRuntime::default(),
+            policy: None,
+            approver: None,
+        };
+        let resume = thread_resume_params(&spec, "thr_1");
+        assert_eq!(resume["threadId"], "thr_1");
+        assert_eq!(resume["model"], "gpt-test");
+        assert_eq!(resume["sandbox"], "read-only");
+        let turn = turn_start_params(&spec, "thr_1");
+        assert_eq!(turn["effort"], "ultra");
+        assert_eq!(turn["input"][0]["text"], "continue");
+    }
+
+    #[test]
     fn maps_decisions_to_review_decision() {
         assert_eq!(review_decision(ApprovalDecision::Allow), "approved");
         assert_eq!(
@@ -1087,6 +1372,89 @@ mod tests {
         assert_eq!(response, json!({ "id": 7, "result": { "answers": {} } }));
     }
 
+    #[tokio::test]
+    async fn connector_approval_answers_the_pending_request() {
+        let (out_tx, mut out_rx) = mpsc::channel(2);
+        let (events_tx, mut events_rx) = mpsc::channel(2);
+        let approver = ApprovalResponder::new(|ask| {
+            assert_eq!(ask.tool_name, "app_connector");
+            Box::pin(async { ApprovalDecision::Allow })
+        });
+        handle_server_request(
+            "item/tool/requestUserInput",
+            &json!({
+                "id": 8,
+                "params": {
+                    "questions": [{
+                        "id": "approval",
+                        "header": "Approve",
+                        "question": "Let Dropbox upload this file?",
+                        "options": [
+                            { "label": "Accept", "description": "Upload" },
+                            { "label": "Decline", "description": "Do not upload" },
+                            { "label": "Cancel", "description": "Stop" }
+                        ]
+                    }]
+                }
+            }),
+            &approver,
+            &out_tx,
+            &events_tx,
+        )
+        .await;
+
+        let response: Value = serde_json::from_str(&out_rx.recv().await.unwrap()).unwrap();
+        assert_eq!(
+            response,
+            json!({ "id": 8, "result": { "answers": {
+                "approval": { "answers": ["Accept"] }
+            } } })
+        );
+        assert!(events_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn mcp_elicitation_is_surfaced_and_safely_cancelled() {
+        let (out_tx, mut out_rx) = mpsc::channel(2);
+        let (events_tx, mut events_rx) = mpsc::channel(2);
+        let approver = ApprovalResponder::new(|_| Box::pin(async { ApprovalDecision::Deny }));
+        handle_server_request(
+            "mcpServer/elicitation/request",
+            &json!({ "id": 9, "params": { "serverName": "crm", "mode": "url", "url": "https://example.test" } }),
+            &approver,
+            &out_tx,
+            &events_tx,
+        )
+        .await;
+        assert!(matches!(
+            events_rx.recv().await,
+            Some(NormalizedEvent::ToolUse { name, .. }) if name == "mcp_elicitation"
+        ));
+        let response: Value = serde_json::from_str(&out_rx.recv().await.unwrap()).unwrap();
+        assert_eq!(
+            response,
+            json!({ "id": 9, "result": { "action": "cancel" } })
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_server_request_fails_closed() {
+        let (out_tx, mut out_rx) = mpsc::channel(2);
+        let (events_tx, _events_rx) = mpsc::channel(2);
+        let approver = ApprovalResponder::new(|_| Box::pin(async { ApprovalDecision::Deny }));
+        handle_server_request(
+            "account/chatgptAuthTokens/refresh",
+            &json!({ "id": 10, "params": {} }),
+            &approver,
+            &out_tx,
+            &events_tx,
+        )
+        .await;
+        let response: Value = serde_json::from_str(&out_rx.recv().await.unwrap()).unwrap();
+        assert_eq!(response["error"]["code"], -32601);
+        assert!(response.get("result").is_none());
+    }
+
     #[test]
     fn maps_agent_message_item() {
         let item = json!({ "type": "agentMessage", "id": "i1", "text": "Done." });
@@ -1160,5 +1528,37 @@ mod tests {
             &done[0],
             NormalizedEvent::ToolResult { ok: true, .. }
         ));
+    }
+
+    #[test]
+    fn maps_rich_tool_items() {
+        let web = map_item(
+            &json!({ "type": "webSearch", "id": "w", "query": "current docs" }),
+            false,
+        );
+        assert!(matches!(&web[0], NormalizedEvent::ToolUse { name, .. } if name == "Web search"));
+
+        let dynamic = map_item(
+            &json!({
+                "type": "dynamicToolCall", "id": "d", "namespace": "browser",
+                "tool": "navigate", "arguments": { "url": "https://example.test" },
+                "status": "inProgress"
+            }),
+            false,
+        );
+        assert!(
+            matches!(&dynamic[0], NormalizedEvent::ToolUse { name, .. } if name == "browser/navigate")
+        );
+
+        let image = map_item(
+            &json!({
+                "type": "imageGeneration", "id": "i", "status": "completed",
+                "result": "done", "savedPath": "/tmp/image.png"
+            }),
+            true,
+        );
+        assert!(
+            matches!(&image[0], NormalizedEvent::ToolResult { ok: true, summary } if summary.contains("image.png"))
+        );
     }
 }

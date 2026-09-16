@@ -1182,6 +1182,9 @@ export default function App() {
           onSignInProviderAccount={(accountId) =>
             vscode.postMessage({ type: "signInProviderAccount", accountId })
           }
+          onOpenProviderAccountSetup={(accountId) =>
+            vscode.postMessage({ type: "openProviderAccountSetup", accountId })
+          }
           onSetProviderAccountToken={(accountId, token) =>
             vscode.postMessage({ type: "setProviderAccountToken", accountId, token })
           }
@@ -1646,11 +1649,12 @@ function IconButton(props: {
   title: string;
   onClick(): void;
   disabled?: boolean;
+  className?: string;
   children: ReactNode;
 }) {
   return (
     <button
-      className="icon-btn"
+      className={`icon-btn ${props.className ?? ""}`}
       type="button"
       title={props.title}
       aria-label={props.title}
@@ -4044,7 +4048,6 @@ function CollaborationSheet(props: {
           {!collaboration.connected ? (
             <div className="collaboration-onboarding">
               <div className="collaboration-hero">
-                <span className="collaboration-hero-icon"><Icon name="devices" /></span>
                 <strong>Coordinate agents on different devices</strong>
                 <p>
                   Pair over your local network. Prompts and progress stay synchronized between agents on different devices.
@@ -4056,7 +4059,7 @@ function CollaborationSheet(props: {
                   <strong>Share from this device</strong>
                   <small>Creates an encrypted, 15-minute invite and copies it.</small>
                 </span>
-                <Icon name="caret" />
+                <Icon name="plus" />
               </button>
               <div className="collaboration-join">
                 <label htmlFor="collaboration-invite">Join with an invite</label>
@@ -4100,7 +4103,7 @@ function CollaborationSheet(props: {
                   </div>
                   <button type="button" className="primary-btn" onClick={props.onCopyInvite}>
                     <Icon name="paperclip" />
-                    {props.invite ? "Copy New Invite" : "Copy Invite"}
+                    {props.invite ? "Copy new invite" : "Copy invite"}
                   </button>
                 </div>
               )}
@@ -4536,6 +4539,24 @@ function resetSummary(agents: AgentStatus[]): string {
     .join(", ");
 }
 
+const SETTINGS_SECTIONS = [
+  ["accounts", "Accounts", "Manage sign-ins"],
+  ["agents", "Providers", "Check connections"],
+  ["integrations", "Integrations", "Provider-owned tools"],
+  ["switching", "Models & limits", "Defaults and routing"],
+  ["continuity", "Continuity", "Keep work moving"],
+  ["local", "Local models", "Offline fallback"],
+  ["sandbox", "Sandbox", "Isolated execution"],
+] as const;
+
+type SettingsSection = (typeof SETTINGS_SECTIONS)[number][0];
+
+export function providerAccountDisplayName(account: ProviderAccount, status?: { authenticated: boolean; email?: string | null }): string {
+  const label = account.label.trim();
+  const isDefault = !label || /^(Codex|Claude)(?: account)? \d+$/i.test(label);
+  return isDefault && status?.authenticated && status.email ? status.email : label || labelAgent(account.agent);
+}
+
 function SettingsSheet(props: {
   snapshot: WorkbenchSnapshot;
   onClose(): void;
@@ -4549,6 +4570,7 @@ function SettingsSheet(props: {
   onOpenExternal(url: string): void;
   onSignInAgent(agent: AgentKind): void;
   onSignInProviderAccount(accountId: string): void;
+  onOpenProviderAccountSetup(accountId: string): void;
   onSetProviderAccountToken(accountId: string, token: string): void;
   onDeleteProviderAccount(accountId: string): void;
   onSaveLimitPolicy(policy: LimitPolicy): void;
@@ -4568,9 +4590,8 @@ function SettingsSheet(props: {
   const [localPolicy, setLocalPolicy] = useState<LocalModelPolicy>(
     () => props.snapshot.localModelPolicy ?? defaultLocalModelPolicy(),
   );
-  const [section, setSection] = useState<
-    "accounts" | "agents" | "switching" | "continuity" | "local" | "sandbox"
-  >("accounts");
+  const [section, setSection] = useState<SettingsSection>("accounts");
+  const [expandedAccounts, setExpandedAccounts] = useState<Record<string, boolean>>({});
   const [accountTokens, setAccountTokens] = useState<Record<string, string>>({});
   const [creditConfirmId, setCreditConfirmId] = useState<string | null>(null);
   const [removeConfirmId, setRemoveConfirmId] = useState<string | null>(null);
@@ -4597,6 +4618,7 @@ function SettingsSheet(props: {
   const addAccount = (agent: "codex" | "claude_code") => {
     const number = accounts.filter((account) => account.agent === agent).length + 1;
     const id = `${agent === "codex" ? "codex" : "claude"}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    setExpandedAccounts((current) => ({ ...current, [id]: true }));
     saveAccounts([...accounts, {
       id,
       label: `${agent === "codex" ? "Codex" : "Claude"} ${number}`,
@@ -4628,14 +4650,18 @@ function SettingsSheet(props: {
   const cloudClaudeFirst =
     (cloud.provider_priority?.[0] ?? "claude_code") !== "codex";
   return (
-    <div className="sheet-backdrop" onMouseDown={props.onClose}>
+    <div
+      className="sheet-backdrop"
+      onMouseDown={props.onClose}
+    >
       <section
-        className="sheet settings-sheet"
+        className="sheet settings-sheet" role="dialog" aria-modal="true" aria-label="Perpetual settings"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header>
           <div className="settings-heading">
-            <strong>Settings</strong>
+            <strong>Perpetual settings</strong>
+            <span>Configure accounts, routing, and execution</span>
           </div>
           <IconButton title="Close" onClick={props.onClose}>
             <Icon name="close" />
@@ -4644,29 +4670,18 @@ function SettingsSheet(props: {
 
         <div className="settings-layout">
           <nav className="settings-nav" aria-label="Settings sections">
-            {([
-              ["accounts", "Accounts", "devices"],
-              ["agents", "Providers", "agent"],
-              ["switching", "Models", "sliders"],
-              ["continuity", "Continuity", "cloud"],
-              ["local", "Local", "cube"],
-              ["sandbox", "Sandbox", "shield"],
-            ] as const).map(([value, label, icon]) => (
-              <button
-                key={value}
-                type="button"
+            {SETTINGS_SECTIONS.map(([value, label, description]) => (
+              <button key={value} type="button" id={`settings-nav-${value}`}
+                aria-current={section === value ? "page" : undefined}
+                aria-controls={`settings-panel-${value}`}
                 className={section === value ? "active" : ""}
-                onClick={() => setSection(value)}
-              >
-                <span className="settings-nav-icon"><Icon name={icon} /></span>
-                <span className="settings-nav-copy">
-                  <strong>{label}</strong>
-                </span>
+                onClick={() => setSection(value)}>
+                <span className="settings-nav-copy"><strong>{label}</strong><small>{description}</small></span>
               </button>
             ))}
           </nav>
-          <div className={`sheet-body settings-content section-${section}`}>
-          <div className="settings-group account-manager" data-settings-section="accounts">
+          <div className="settings-content" key={section}>
+          <div className="settings-group account-manager" data-settings-section="accounts" id="settings-panel-accounts" role="region" aria-labelledby="settings-nav-accounts" hidden={section !== "accounts"}>
             <div className="account-manager-hero">
               <div>
                 <div className="settings-page-title">Accounts</div>
@@ -4674,8 +4689,8 @@ function SettingsSheet(props: {
               <span className="account-count">{accounts.length} {accounts.length === 1 ? "account" : "accounts"}</span>
             </div>
             <div className="account-add-row">
-              <button type="button" className="account-add-button" onClick={() => addAccount("codex")}><AgentMark agent="codex" /><strong>Add Codex</strong></button>
-              <button type="button" className="account-add-button" onClick={() => addAccount("claude_code")}><AgentMark agent="claude_code" /><strong>Add Claude</strong></button>
+              <button type="button" className="account-add-button" onClick={() => addAccount("codex")}><AgentMark agent="codex" /><span><strong>Add Codex</strong><small>New isolated profile</small></span><Icon name="plus" /></button>
+              <button type="button" className="account-add-button" onClick={() => addAccount("claude_code")}><AgentMark agent="claude_code" /><span><strong>Add Claude</strong><small>Token or isolated profile</small></span><Icon name="plus" /></button>
             </div>
             {accounts.length === 0 ? (
               <div className="account-empty">
@@ -4689,54 +4704,60 @@ function SettingsSheet(props: {
                   const saved = !!status;
                   const state = !account.enabled ? "Paused" : !saved ? "Ready to sign in" : !status.authenticated ? "Sign-in required" : status.availability === "limited" ? (status.reset_at ? `Limited · ${formatResetTime(status.reset_at)}` : "Limited") : "Ready";
                   const token = accountTokens[account.id] ?? "";
+                  const displayName = providerAccountDisplayName(account, status);
+                  const expanded = !!expandedAccounts[account.id];
                   return (
-                    <article className={`account-card ${status?.authenticated ? "authenticated" : ""}`} key={account.id}>
-                      <div className="account-priority">{index + 1}</div>
-                      <div className="account-card-main">
-                        <div className="account-card-heading">
+                    <article className="provider-account" key={account.id}>
+                      <div className="provider-account-header">
+                        <button type="button" className="account-disclosure" aria-expanded={expanded} aria-controls={`account-details-${account.id}`} onClick={() => setExpandedAccounts((current) => ({ ...current, [account.id]: !current[account.id] }))}>
+                          <Icon name="caret" />
                           <AgentMark agent={account.agent} />
-                          <input className="account-name-input" aria-label="Account name" value={account.label} onChange={(event) => updateAccount(account.id, { label: event.target.value }, false)} onBlur={() => props.onSaveLimitPolicy(limit)} />
-                          <span className={`account-state ${status?.authenticated && status.availability !== "limited" ? "ready" : ""}`}>{state}</span>
+                          <span title={displayName}>{displayName}</span>
+                        </button>
+                        <div className="account-reorder" role="group" aria-label={`Order for ${displayName}`}>
+                          <button type="button" disabled={index === 0} aria-label={`Move ${displayName} up`} title="Move up" onClick={() => moveAccount(index, -1)}><Icon name="up" /></button>
+                          <button type="button" disabled={index === accounts.length - 1} aria-label={`Move ${displayName} down`} title="Move down" onClick={() => moveAccount(index, 1)}><Icon name="down" /></button>
                         </div>
+                      </div>
+                      <div className="provider-account-body" id={`account-details-${account.id}`} hidden={!expanded}>
+                        <div className="account-status-line"><span>{labelAgent(account.agent)}</span><span className={status?.authenticated ? "account-status ready" : "account-status"}>{state}</span></div>
+                        <label className="field">
+                          <span>Account name</span>
+                          <input aria-label="Account name" value={account.label} onChange={(event) => updateAccount(account.id, { label: event.target.value }, false)} onBlur={() => props.onSaveLimitPolicy(limit)} />
+                          {status?.authenticated && status.email && <small className="account-identity">Signed in as {status.email}</small>}
+                        </label>
                         {account.agent === "claude_code" && (
-                          <label className="field compact-field">
+                          <label className="field">
                             <span>Authentication</span>
                             <select value={account.auth_mode} onChange={(event) => updateAccount(account.id, { auth_mode: event.target.value as ProviderAccount["auth_mode"] })}>
-                              <option value="oauth_token">Secure setup token (recommended)</option>
+                              <option value="oauth_token">Secure setup token</option>
                               <option value="isolated_cli">Isolated CLI profile</option>
                             </select>
                           </label>
                         )}
                         {account.agent === "claude_code" && account.auth_mode === "oauth_token" && (
-                          <div className="account-token-row">
-                            <input type="password" autoComplete="off" placeholder="Paste token from claude setup-token" value={token} onChange={(event) => setAccountTokens({ ...accountTokens, [account.id]: event.target.value })} />
-                            <button type="button" className="secondary-btn" disabled={!token.trim()} onClick={() => {
-                              props.onSetProviderAccountToken(account.id, token);
-                              setAccountTokens({ ...accountTokens, [account.id]: "" });
-                            }}>Store securely</button>
+                          <div className="account-token-field">
+                            <label className="field" htmlFor={`account-token-${account.id}`}><span>Setup token</span></label>
+                            <div className="account-token-entry">
+                              <input id={`account-token-${account.id}`} type="password" autoComplete="off" placeholder="Paste your setup token" value={token} onChange={(event) => setAccountTokens({ ...accountTokens, [account.id]: event.target.value })} />
+                              <button type="button" className="secondary-btn" disabled={!token.trim()} onClick={() => {
+                                props.onSetProviderAccountToken(account.id, token);
+                                setAccountTokens({ ...accountTokens, [account.id]: "" });
+                              }}>Store token</button>
+                            </div>
                           </div>
                         )}
-                        <div className="account-controls">
-                          <label className="toggle-row compact-toggle"><input type="checkbox" checked={account.enabled} onChange={(event) => updateAccount(account.id, { enabled: event.target.checked })} /><span>Enabled</span></label>
-                          {account.agent === "codex" ? (
-                            <label className="toggle-row compact-toggle" title="Redeem an earned Codex rate-limit reset when this slot reaches its limit.">
-                              <input type="checkbox" checked={account.use_credits} onChange={(event) => event.target.checked ? setCreditConfirmId(account.id) : updateAccount(account.id, { use_credits: false })} />
-                              <span>Use reset credits</span>
-                            </label>
-                          ) : null}
+                        <div className="account-preferences">
+                          <label className="toggle-row"><span>Enabled</span><input type="checkbox" checked={account.enabled} onChange={(event) => updateAccount(account.id, { enabled: event.target.checked })} /></label>
+                          {account.agent === "codex" && <label className="toggle-row" title="Redeem an earned Codex rate-limit reset when this slot reaches its limit."><span>Use reset credits</span><input type="checkbox" checked={account.use_credits} onChange={(event) => event.target.checked ? setCreditConfirmId(account.id) : updateAccount(account.id, { use_credits: false })} /></label>}
                         </div>
-                        <div className="account-actions">
-                          <button type="button" className="primary-btn account-sign-in" onClick={() => props.onSignInProviderAccount(account.id)}>{account.auth_mode === "oauth_token" ? "Generate token" : status?.authenticated ? "Re-authenticate" : "Sign in"}</button>
-                          {status?.detail && <span className="account-detail">{status.detail}</span>}
+                        <div className="account-footer-actions">
+                          <button type="button" className="account-remove" onClick={() => {
+                            if (saved) setRemoveConfirmId(account.id);
+                            else saveAccounts(accounts.filter((item) => item.id !== account.id));
+                          }}><Icon name="trash" /><span>Remove</span></button>
+                          <button type="button" className="primary-btn" onClick={() => props.onSignInProviderAccount(account.id)}>{account.auth_mode === "oauth_token" ? "Generate token" : status?.authenticated ? "Sign in again" : "Sign in"}</button>
                         </div>
-                      </div>
-                      <div className="account-order-actions">
-                        <button type="button" aria-label="Move account up" title="Move up" disabled={index === 0} onClick={() => moveAccount(index, -1)}><Icon name="up" /></button>
-                        <button type="button" aria-label="Move account down" title="Move down" disabled={index === accounts.length - 1} onClick={() => moveAccount(index, 1)}><Icon name="down" /></button>
-                        <button type="button" className="danger" aria-label="Remove account" title="Remove account" onClick={() => {
-                          if (saved) setRemoveConfirmId(account.id);
-                          else saveAccounts(accounts.filter((item) => item.id !== account.id));
-                        }}><Icon name="trash" /></button>
                       </div>
                     </article>
                   );
@@ -4744,8 +4765,8 @@ function SettingsSheet(props: {
               </div>
             )}
           </div>
-          <div className="settings-group" data-settings-section="agents">
-            <div className="group-title">Readiness</div>
+          <div className="settings-group" data-settings-section="agents" id="settings-panel-agents" role="region" aria-labelledby="settings-nav-agents" hidden={section !== "agents"}>
+            <div className="group-title">Providers</div>
             <div className="readiness-grid">
               {props.snapshot.agents.map((agent) => (
                 <div key={agent.kind} className="readiness-row">
@@ -4835,8 +4856,67 @@ function SettingsSheet(props: {
             </button>
           </div>
 
-          <div className="settings-group" data-settings-section="switching">
-            <div className="group-title">Limit handling</div>
+          <div className="settings-group" data-settings-section="integrations" id="settings-panel-integrations" role="region" aria-labelledby="settings-nav-integrations" hidden={section !== "integrations"}>
+            <div className="group-title">Integrations</div>
+            <p className="settings-help">
+              Perpetual uses provider-owned tools from the selected account profile. It never copies tokens, browser sessions, or plugin secrets between accounts.
+            </p>
+
+            <div className="integration-list">
+              <article className="integration-card">
+                <div className="integration-heading">
+                  <span><AgentMark agent="codex" /><strong>Codex plugins, apps &amp; MCP</strong></span>
+                  <em className="integration-state supported">Supported</em>
+                </div>
+                <p>Codex app-server loads enabled tools from the isolated Codex profile and keeps provider approvals in place.</p>
+              </article>
+              <article className="integration-card">
+                <div className="integration-heading">
+                  <span><AgentMark agent="claude_code" /><strong>Claude plugins &amp; MCP</strong></span>
+                  <em className="integration-state supported">Supported</em>
+                </div>
+                <p>Claude Code loads plugins and MCP servers from the isolated Claude profile. Perpetual does not use bare mode.</p>
+              </article>
+              <article className="integration-card">
+                <div className="integration-heading">
+                  <span><Icon name="window" /><strong>Embedded browser &amp; computer use</strong></span>
+                  <em className="integration-state provider-only">Provider app only</em>
+                </div>
+                <p>Not claimed or started by Perpetual. Open ChatGPT or Claude Desktop for provider-hosted browser and desktop control.</p>
+                <div className="integration-actions">
+                  <button type="button" className="secondary-btn" onClick={() => props.onOpenExternal("https://learn.chatgpt.com/docs/browser")}>OpenAI guide</button>
+                  <button type="button" className="secondary-btn" onClick={() => props.onOpenExternal("https://code.claude.com/docs/en/computer-use")}>Claude guide</button>
+                </div>
+              </article>
+            </div>
+
+            <div className="integration-accounts">
+              <strong>Configure a selected account</strong>
+              <small>Open the provider CLI in that account's isolated profile. Installation and consent stay with the provider.</small>
+              {accounts.length === 0 ? (
+                <div className="account-empty compact"><span>Add an account first.</span></div>
+              ) : accounts.map((account) => {
+                const status = props.snapshot.providerAccounts?.find((item) => item.id === account.id);
+                const ready = account.enabled && !!status?.authenticated;
+                return (
+                  <div className="integration-account-row" key={account.id}>
+                    <span><AgentMark agent={account.agent} /><strong>{providerAccountDisplayName(account, status)}</strong></span>
+                    <small>{ready ? "Signed in" : "Sign-in required"}</small>
+                    <button
+                      type="button"
+                      className={ready ? "secondary-btn" : "primary-btn"}
+                      onClick={() => ready ? props.onOpenProviderAccountSetup(account.id) : props.onSignInProviderAccount(account.id)}
+                    >
+                      {ready ? "Open setup" : "Sign in"}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="settings-group" data-settings-section="switching" id="settings-panel-switching" role="region" aria-labelledby="settings-nav-switching" hidden={section !== "switching"}>
+            <div className="group-title">Models &amp; limits</div>
             <div className="agent-profile-grid">
               {(["claude_code", "codex"] as const).map((profileAgent) => {
                 const profile = limit.agent_profiles?.find(
@@ -5016,8 +5096,8 @@ function SettingsSheet(props: {
             </div>
           </div>
 
-          <div className="settings-group" data-settings-section="continuity">
-            <div className="group-title">Cloud continuity</div>
+          <div className="settings-group" data-settings-section="continuity" id="settings-panel-continuity" role="region" aria-labelledby="settings-nav-continuity" hidden={section !== "continuity"}>
+            <div className="group-title">Continuity</div>
             <div className="cloud-setup-grid">
               <CloudSetupCard
                 title="Claude Code on the web"
@@ -5188,8 +5268,8 @@ function SettingsSheet(props: {
             )}
           </div>
 
-          <div className="settings-group" data-settings-section="local">
-            <div className="group-title">Local model fallback</div>
+          <div className="settings-group" data-settings-section="local" id="settings-panel-local" role="region" aria-labelledby="settings-nav-local" hidden={section !== "local"}>
+            <div className="group-title">Local models</div>
             <label className="toggle">
               <input
                 type="checkbox"
@@ -5384,8 +5464,8 @@ function SettingsSheet(props: {
             )}
           </div>
 
-          <div className="settings-group" data-settings-section="sandbox">
-            <div className="group-title">Docker Sandbox</div>
+          <div className="settings-group" data-settings-section="sandbox" id="settings-panel-sandbox" role="region" aria-labelledby="settings-nav-sandbox" hidden={section !== "sandbox"}>
+            <div className="group-title">Sandbox</div>
             <label className="field">
               <span>Default runtime</span>
               <select
@@ -5494,7 +5574,7 @@ function SettingsSheet(props: {
         )}
 
         <footer>
-          <button type="button" onClick={props.onOpenSettings}>
+          <button type="button" className="secondary-btn" onClick={props.onOpenSettings}>
             VS Code settings
           </button>
           <button

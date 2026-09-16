@@ -1,0 +1,209 @@
+/* Settings and dialogs use opaque, theme-aware surfaces. Category visibility is
+   structural; layout utilities must never make inactive panels visible. */
+.app-shell { background: var(--vscode-editor-background); }
+.topbar { background: var(--vscode-editor-background); backdrop-filter: none; }
+.sheet-backdrop { padding: 16px; background: rgb(0 0 0 / 55%); backdrop-filter: none; }
+.sheet, .popover {
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  border: 1px solid var(--am-border);
+  border-radius: 10px;
+  box-shadow: 0 16px 48px rgb(0 0 0 / 28%);
+}
+.sheet > header { padding: 20px 24px; }
+.sheet .primary-btn, .sheet footer .primary {
+  background: var(--vscode-foreground);
+  color: var(--vscode-editor-background);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-weight: 600;
+}
+.sheet .primary-btn:hover:not(:disabled), .sheet footer .primary:hover { opacity: .85; background: var(--vscode-foreground); }
+.sheet button:disabled { cursor: default; opacity: .4; }
+.sheet .secondary-btn, .sheet .readiness-action { background: transparent; border: 1px solid var(--am-border); border-radius: 6px; }
+.settings-sheet {
+  display: flex;
+  flex-direction: column;
+  width: min(1000px, 100%);
+  height: min(800px, calc(100dvh - 32px));
+  max-height: calc(100dvh - 32px);
+  container-type: inline-size;
+}
+.settings-sheet > header { min-height: 76px; flex: 0 0 auto; }
+.settings-heading { gap: 5px; }
+.settings-heading strong { font-size: 16px; font-weight: 600; }
+.settings-heading > span { color: var(--am-muted); font-size: 12px; }
+.settings-layout { display: grid; grid-template-columns: 190px minmax(0, 1fr); flex: 1; min-height: 0; }
+.settings-nav { display: flex; flex-direction: column; gap: 4px; padding: 20px 12px; background: transparent; overflow-y: auto; }
+.settings-nav button { display: flex; flex: 0 0 auto; width: 100%; min-height: 54px; padding: 10px 12px; border: 1px solid transparent; border-radius: 6px; }
+.settings-nav button.active { border: 1px solid var(--am-border-soft); background: var(--am-surface-2); box-shadow: none; }
+.settings-nav-copy { gap: 4px; }
+.settings-nav-copy strong { font-size: 12px; font-weight: 550; }
+.settings-nav-copy small { font-size: 11px; }
+.settings-content { overflow-y: auto; overscroll-behavior: contain; min-height: 0; padding: 28px; }
+.settings-content .settings-group { display: grid; gap: 22px; max-width: 720px; margin: 0 auto; padding: 0; border: 0; border-radius: 0; background: transparent; }
+.settings-content [data-settings-section][hidden] { display: none !important; }
+.settings-content .account-manager { gap: 22px !important; }
+.settings-page-title, .settings-group[data-settings-section] > .group-title:first-child { font-size: 22px; font-weight: 600; letter-spacing: -.025em; }
+.settings-help { margin: -10px 0 0; line-height: 1.6; }
+.settings-sheet > footer { min-height: 68px; flex: 0 0 auto; padding: 16px 24px; gap: 10px; }
+.settings-sheet > footer button { height: 36px; border-radius: 6px; font-size: 12px; }
+.settings-sheet .field { display: grid; min-width: 0; gap: 8px; }
+.settings-sheet .field > span { font-size: 12px; }
+.settings-sheet .field input, .settings-sheet .field select, .account-token-row input { width: 100%; min-width: 0; height: 36px; border: 1px solid var(--am-border); border-radius: 6px; padding: 0 10px; background: var(--vscode-input-background); color: var(--vscode-input-foreground, var(--vscode-foreground)); }
+.settings-sheet .field-grid { gap: 18px; }
+.settings-sheet .toggle { gap: 12px; min-height: 42px; padding: 10px 0; border-bottom: 1px solid var(--am-border-soft); line-height: 1.5; font-size: 12px; }
+.sheet .toggle-row { display: inline-flex; align-items: center; gap: 10px; min-height: 32px; cursor: pointer; font-size: 12px; }
+.sheet .toggle input[type="checkbox"], .sheet .toggle-row input[type="checkbox"] { flex: 0 0 32px; }
+.sheet .toggle input[type="checkbox"]:checked, .sheet .toggle-row input[type="checkbox"]:checked { background: var(--vscode-foreground); border-color: var(--vscode-foreground); }
+.sheet .toggle input[type="checkbox"]:checked::after, .sheet .toggle-row input[type="checkbox"]:checked::after { background: var(--vscode-editor-background); }
+.account-manager-hero { align-items: center; }
+.account-count { border: 0; padding: 0; font-size: 12px; }
+.account-add-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.account-add-button { display: flex; min-width: 0; min-height: 66px; padding: 14px; gap: 12px; border-radius: 7px; }
+.account-add-button > span { display: grid; flex: 1; gap: 5px; min-width: 0; }
+.account-add-button small { color: var(--am-muted); font-size: 11px; line-height: 1.4; }
+.account-add-button > svg { width: 16px; flex: 0 0 16px; color: var(--am-muted); }
+.account-empty { border: 1px solid var(--am-border-soft); border-radius: 7px; padding: 36px 20px; gap: 8px; }
+.account-stack { display: grid; gap: 16px; border: 0; border-radius: 0; overflow: visible; }
+.provider-account { min-width: 0; border: 1px solid var(--am-border); border-radius: 8px; background: transparent; overflow: hidden; }
+.provider-account-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; min-height: 60px; padding: 8px 12px; gap: 12px; }
+.account-disclosure { display: grid; grid-template-columns: 14px 22px minmax(0, 1fr); align-items: center; gap: 10px; min-width: 0; min-height: 40px; padding: 6px; border: 0; border-radius: 4px; background: transparent; text-align: left; cursor: pointer; }
+.account-disclosure > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
+.account-disclosure .agent-mark { width: 22px; height: 22px; }
+.account-disclosure > svg:first-child { width: 14px; height: 14px; color: var(--am-muted); transform: rotate(-90deg); transition: transform 120ms ease; }
+.account-disclosure[aria-expanded="true"] > svg:first-child { transform: rotate(0deg); }
+.account-disclosure:hover, .account-reorder button:hover:not(:disabled) { background: var(--am-surface); }
+.account-reorder { display: flex; align-items: center; gap: 2px; padding-left: 10px; border-left: 1px solid var(--am-border-soft); }
+.account-reorder button { display: grid; place-items: center; width: 30px; height: 32px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--am-muted); cursor: pointer; }
+.account-reorder svg { width: 15px; height: 15px; }
+.provider-account-body { display: grid; gap: 20px; padding: 18px; border-top: 1px solid var(--am-border-soft); }
+.provider-account-body[hidden] { display: none !important; }
+.account-status-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--am-muted); font-size: 11px; }
+.account-status { text-align: right; }
+.account-status.ready { color: var(--am-ok); }
+.account-identity { font-size: 11px; color: var(--am-muted); overflow-wrap: anywhere; line-height: 1.5; }
+.account-token-field { display: grid; min-width: 0; gap: 8px; }
+.account-token-entry { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.account-token-entry input { width: 100%; min-width: 0; height: 36px; padding: 0 10px; border: 1px solid var(--am-border); border-radius: 6px; background: var(--vscode-input-background); color: var(--vscode-input-foreground, var(--vscode-foreground)); }
+.account-token-entry button { height: 36px; padding: 0 12px; white-space: nowrap; }
+.account-preferences { display: grid; gap: 0; padding-top: 4px; border-top: 1px solid var(--am-border-soft); }
+.account-preferences .toggle-row { display: flex; justify-content: space-between; min-height: 40px; padding: 8px 0; }
+.account-footer-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 16px; border-top: 1px solid var(--am-border-soft); }
+.account-footer-actions button { height: 36px; padding: 0 12px; border-radius: 6px; }
+.account-remove { display: inline-flex; align-items: center; gap: 7px; border: 1px solid transparent; background: transparent; color: var(--am-muted); cursor: pointer; }
+.account-remove svg { width: 15px; height: 15px; }
+.account-remove:hover { color: var(--vscode-errorForeground); background: var(--am-surface); }
+.account-card, .account-card:last-child { grid-template-columns: 24px minmax(0, 1fr) 28px; padding: 20px 16px; gap: 12px; border: 1px solid var(--am-border); border-radius: 7px; background: transparent; }
+.account-card:hover { background: transparent; border-color: var(--am-border); }
+.account-priority { min-height: 0; width: 24px; height: 30px; padding: 0; border: 0; border-radius: 0; background: transparent; font-weight: 400; }
+.account-card-main { gap: 20px; }
+.account-card-heading { flex-wrap: wrap; gap: 8px; }
+.account-name-input { width: 100px; min-width: 60px; }
+.account-state { border: 0; border-radius: 0; padding: 0; font-size: 11px; background: transparent; }
+.account-card-footer { gap: 16px; padding-top: 12px; border-top: 1px solid var(--am-border-soft); }
+.account-controls { gap: 12px 24px; }
+.account-sign-in { height: 34px; margin-left: auto; }
+.settings-sheet .compact-field { grid-template-columns: 1fr; }
+.account-token-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.account-token-row input { flex: 1 1 180px; }
+.account-token-row button { flex: 0 0 auto; height: 36px; }
+.agent-profile-grid, .cloud-setup-grid { grid-template-columns: 1fr; gap: 20px; }
+.agent-profile-card, .cloud-setup-card { padding: 18px; gap: 18px; border-radius: 7px; background: transparent; }
+.readiness-grid { border: 1px solid var(--am-border-soft); border-radius: 7px; overflow: hidden; }
+.readiness-row { padding: 12px 14px; min-height: 54px; gap: 12px; }
+.integration-list { display: grid; gap: 12px; }
+.integration-card { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--am-border-soft); border-radius: 7px; }
+.integration-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.integration-heading > span, .integration-account-row > span { display: inline-flex; align-items: center; gap: 9px; min-width: 0; }
+.integration-heading .agent-mark { width: 20px; height: 20px; }
+.integration-heading svg { width: 18px; height: 18px; color: var(--am-muted); }
+.integration-heading strong, .integration-account-row strong { overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+.integration-card p { margin: 0; color: var(--am-muted); font-size: 12px; line-height: 1.55; }
+.integration-state { flex: 0 0 auto; font-size: 10px; font-style: normal; font-weight: 600; }
+.integration-state.supported { color: var(--am-ok); }
+.integration-state.provider-only { color: var(--am-muted); }
+.integration-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.integration-actions button { min-height: 32px; padding: 0 10px; font-size: 11px; }
+.integration-accounts { display: grid; gap: 10px; padding-top: 4px; }
+.integration-accounts > strong { font-size: 13px; }
+.integration-accounts > small { margin-top: -5px; color: var(--am-muted); line-height: 1.5; }
+.integration-account-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; min-height: 54px; padding: 10px 12px; border: 1px solid var(--am-border-soft); border-radius: 7px; }
+.integration-account-row > small { color: var(--am-muted); font-size: 11px; }
+.integration-account-row > button { min-width: 86px; height: 34px; padding: 0 10px; }
+.account-empty.compact { padding: 18px; }
+.collaboration-body { padding: 24px; }
+.collaboration-sheet { container-type: inline-size; }
+.collaboration-sheet .collaboration-body { gap: 24px; }
+.collaboration-heading { gap: 6px; }
+.collaboration-heading small { line-height: 1.5; overflow-wrap: anywhere; }
+.collaboration-secure-bar { padding: 0 0 18px; gap: 12px; border: 0; border-bottom: 1px solid var(--am-border-soft); border-radius: 0; background: transparent; }
+.collaboration-secure-bar > span:first-child { color: var(--am-muted); gap: 8px; }
+.collaboration-secure-bar > span:last-child { white-space: nowrap; }
+.collaboration-secure-bar svg { width: 14px; height: 14px; color: var(--am-ok); }
+.invite-panel { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 20px; padding: 0 0 24px; border: 0; border-bottom: 1px solid var(--am-border-soft); border-radius: 0; background: transparent; }
+.invite-panel > div { gap: 7px; }
+.invite-panel strong { font-size: 13px; font-weight: 600; }
+.invite-panel small { line-height: 1.6; font-size: 12px; }
+.invite-panel button { display: inline-flex; justify-content: center; align-items: center; gap: 8px; height: 36px; padding: 0 14px; white-space: nowrap; }
+.collaboration-section { gap: 14px; }
+.collaboration-section-title { justify-content: space-between; }
+.collaboration-section-title span { padding: 0; background: transparent; font-size: 12px; }
+.device-card { padding: 16px; gap: 12px; border-radius: 7px; background: transparent; }
+.presence-dot.online { box-shadow: none; }
+.device-main { gap: 7px; }
+.device-main > strong { flex-wrap: wrap; gap: 6px 12px; overflow-wrap: anywhere; }
+.device-main em { padding: 0; color: var(--am-muted); background: transparent; font-size: 10px; font-weight: 400; text-transform: none; }
+.device-main > small { font-size: 11px; }
+.agent-badges { gap: 8px 16px; margin-top: 5px; }
+.agent-badges span { padding: 0; gap: 6px; background: transparent; border-radius: 0; font-size: 11px; }
+.agent-badges span.ready { color: var(--am-muted); }
+.agent-badges svg { width: 13px; height: 13px; }
+.collaboration-sheet > footer { padding: 16px 24px; gap: 12px; }
+.collaboration-sheet > footer button { height: 34px; background: transparent; border-radius: 6px; font-size: 12px; }
+.collaboration-onboarding { gap: 24px; }
+.collaboration-hero { justify-items: start; text-align: left; padding: 0; gap: 10px; }
+.collaboration-hero strong { font-size: 20px; font-weight: 600; letter-spacing: -.02em; }
+.collaboration-hero p { max-width: none; line-height: 1.65; }
+.collaboration-choice { padding: 18px 16px; border-radius: 7px; background: transparent; gap: 14px; }
+.collaboration-choice:hover { border-color: var(--am-border); }
+.choice-icon { color: var(--am-muted); background: transparent; width: 20px; height: 24px; border-radius: 0; }
+.collaboration-choice > span:nth-child(2) { gap: 6px; }
+.collaboration-join { gap: 10px; padding-top: 0; }
+.collaboration-join > div { gap: 10px; }
+.collaboration-join input, .collaboration-join button { height: 36px; border-radius: 6px; }
+.settings-confirm-backdrop { backdrop-filter: none; }
+.settings-confirm { border-color: var(--am-border); border-radius: 8px; background: var(--vscode-editorWidget-background, var(--vscode-editor-background)); }
+@container (max-width: 720px) {
+  .settings-layout { grid-template-columns: 150px minmax(0, 1fr); }
+  .settings-nav { padding: 16px 8px; }
+  .settings-nav button { padding: 9px 10px; }
+  .settings-nav-copy small { display: none; }
+  .settings-content { padding: 24px 20px; }
+  .account-add-row { grid-template-columns: 1fr; }
+  .account-state { flex-basis: 100%; padding-left: 27px; }
+  .account-card, .account-card:last-child { grid-template-columns: minmax(0, 1fr) 28px; padding: 16px; }
+  .account-priority { display: none; }
+  .settings-sheet .field-grid { grid-template-columns: 1fr; }
+}
+@container (max-width: 470px) {
+  .provider-account-header { padding: 8px; gap: 6px; }
+  .account-disclosure { gap: 8px; }
+  .account-reorder { padding-left: 6px; }
+  .provider-account-body { padding: 16px; }
+  .invite-panel { grid-template-columns: 1fr; gap: 14px; justify-items: start; }
+  .settings-layout { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .settings-nav { display: flex; flex-direction: row; flex-wrap: wrap; gap: 4px; padding: 12px; border-right: 0; border-bottom: 1px solid var(--am-border-soft); }
+  .settings-nav button { width: auto; min-height: 34px; padding: 7px 9px; }
+  .settings-nav-copy strong { font-size: 11px; }
+  .settings-content { padding: 20px 16px; }
+  .integration-heading { align-items: flex-start; }
+  .integration-account-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .integration-account-row > small { display: none; }
+}
+@media (max-width: 520px) {
+  .sheet-backdrop { padding: 8px; }
+  .settings-sheet { height: calc(100dvh - 16px); max-height: calc(100dvh - 16px); }
+  .settings-sheet > header { padding: 16px; min-height: 68px; }
+  .settings-sheet > footer { padding: 12px 16px; min-height: 60px; }
+  .collaboration-body, .sheet > header { padding: 18px; }
+}
