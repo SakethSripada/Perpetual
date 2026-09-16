@@ -499,3 +499,19 @@ test("new provider accounts persist before authentication", () => {
   assert.doesNotMatch(app, /Apply settings before authenticating/);
   assert.doesNotMatch(app, /disabled=\{!saved\} onClick=\{\(\) => props\.onSignInProviderAccount/);
 });
+
+test("settings stay legible and compact at narrow panel widths", () => {
+  const app = readFileSync(
+    path.resolve(__dirname, "../../webview/src/App.tsx"),
+    "utf8",
+  );
+  const styles = readFileSync(
+    path.resolve(__dirname, "../../webview/src/styles.css"),
+    "utf8",
+  );
+  assert.doesNotMatch(app, /Private by design/);
+  assert.doesNotMatch(app, /Configure how Perpetual runs and hands off work/);
+  assert.match(styles, /\.sheet footer button \{[\s\S]*color: var\(--vscode-button-secondaryForeground/);
+  assert.match(styles, /@media \(max-width: 700px\)[\s\S]*\.settings-nav \{[\s\S]*overflow-x: auto/);
+  assert.doesNotMatch(styles, /grid-template-columns: repeat\(6, minmax\(72px, 1fr\)\)/);
+});

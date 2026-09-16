@@ -32,6 +32,7 @@ export class DaemonManager implements vscode.Disposable {
   private disposed = false;
   private stdoutBuffer = "";
   private stderrBuffer = "";
+  private daemonErrorTail: string[] = [];
   private readonly events = new vscode.EventEmitter<AppEvent>();
 
   readonly onEvent = this.events.event;
@@ -232,6 +233,7 @@ export class DaemonManager implements vscode.Disposable {
 
     fs.mkdirSync(dataDir, { recursive: true });
     fs.rmSync(endpointPath, { force: true });
+    this.daemonErrorTail = [];
 
     this.output.appendLine(`[daemon] starting ${binary}`);
     const child = spawn(binary, [], {
@@ -258,7 +260,10 @@ export class DaemonManager implements vscode.Disposable {
     try {
       const endpoint = await waitForEndpoint(endpointPath, () => {
         if (child.exitCode !== null) {
-          throw new Error(`am-daemon exited before writing endpoint file (code ${child.exitCode})`);
+          const detail = this.daemonErrorTail.at(-1);
+          throw new Error(
+            `Perpetual could not start its background service (code ${child.exitCode})${detail ? `: ${detail}` : ". Check the Perpetual output log for details."}`,
+          );
         }
       });
       const client = await DaemonClient.connect(endpoint.port, endpoint.token);
@@ -305,6 +310,10 @@ export class DaemonManager implements vscode.Disposable {
         this.stderrBuffer = current.slice(idx + 1);
       }
       if (!line.trim()) continue;
+      if (kind === "err") {
+        this.daemonErrorTail.push(summarizeDaemonLine(line));
+        this.daemonErrorTail = this.daemonErrorTail.slice(-8);
+      }
       emitted += 1;
       if (emitted <= 20) {
         this.output.appendLine(`[daemon:${kind}] ${summarizeDaemonLine(line)}`);
