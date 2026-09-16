@@ -317,6 +317,7 @@ export interface ProviderAccount {
   auth_mode: ProviderAccountAuthMode;
 }
 export interface ProviderAccountStatus extends ProviderAccount {
+  email?: string | null;
   authenticated: boolean;
   availability: AvailabilityState;
   reset_at: string | null;

@@ -233,7 +233,13 @@ fn build_args(spec: &SessionSpec, resume: Option<&SessionRef>) -> Vec<String> {
     args
 }
 
-fn push_policy_args(args: &mut Vec<String>, policy: &crate::AgentPolicyRuntime) {
+/// Append Codex CLI `-c` overrides for Perpetual's effective tool policy.
+///
+/// Both `codex exec` and `codex app-server` accept the same config override
+/// syntax. Keeping this translation shared is important: host runs normally use
+/// app-server, and silently applying MCP restrictions only to the exec fallback
+/// would make the effective policy depend on which transport happened to start.
+pub(crate) fn push_policy_args(args: &mut Vec<String>, policy: &crate::AgentPolicyRuntime) {
     if !policy.allowed_mcp_servers.is_empty() {
         for server in &policy.allowed_mcp_servers {
             if server == "perpetual" {

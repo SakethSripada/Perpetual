@@ -31,6 +31,9 @@ pub struct ProviderAccountStatus {
     #[serde(flatten)]
     pub account: ProviderAccount,
     pub authenticated: bool,
+    /// Display-only identity reported by this isolated provider profile.
+    #[serde(default)]
+    pub email: Option<String>,
     pub availability: crate::AvailabilityState,
     pub reset_at: Option<chrono::DateTime<chrono::Utc>>,
     pub detail: Option<String>,

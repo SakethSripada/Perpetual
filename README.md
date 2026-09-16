@@ -43,6 +43,12 @@ switch between sessions without losing their transcripts or repository state.
   read-only workflow.
 - **Codex** runs through its app-server adapter, including live in-workbench
   approval cards for commands, file changes, and other tool actions.
+
+Perpetual also passes through provider-owned skills, plugins, MCP servers, and
+Codex apps/connectors when they are available in the selected provider profile.
+It does not scrape or control the proprietary desktop apps. See the
+[provider capability boundary](docs/provider-capabilities.md) for the supported
+matrix, account-isolation behavior, and safety invariants.
 - Agent events are normalized into the same transcript so status changes,
   queued turns, rate limits, handoffs, approvals, and results remain readable.
 

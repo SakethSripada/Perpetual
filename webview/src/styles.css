@@ -2797,18 +2797,8 @@ textarea {
 }
 @media (max-width: 620px) {
   .settings-layout { grid-template-columns: 1fr; }
-  .settings-nav {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-    border-right: 0;
-    border-bottom: 1px solid var(--am-border-soft);
-    overflow-x: auto;
-  }
-  .settings-nav button { justify-content: center; padding: 0 8px; }
-  .settings-nav button span { display: none; }
   .settings-content { padding: 14px; }
   .agent-profile-grid { grid-template-columns: 1fr; }
-  .account-card { grid-template-columns: 24px minmax(0, 1fr); }
-  .account-order-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; }
 }
 .settings-help {
   margin: -2px 0 0;
@@ -3638,6 +3628,9 @@ textarea {
 .settings-layout {
   grid-template-columns: 230px minmax(0, 1fr);
 }
+.settings-section-picker {
+  display: none;
+}
 .settings-nav {
   gap: 3px;
   padding: 18px 12px;
@@ -3834,6 +3827,13 @@ textarea {
 .account-actions {
   gap: 11px;
 }
+.account-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
 .account-sign-in {
   height: 32px;
   padding: 0 13px;
@@ -3988,29 +3988,30 @@ textarea {
     grid-template-columns: 1fr;
   }
   .settings-nav {
-    display: flex;
-    gap: 4px;
-    padding: 8px;
-    overflow-x: auto;
-    scrollbar-width: none;
+    display: none;
   }
-  .settings-nav button {
-    display: inline-flex;
-    flex: 0 0 auto;
-    gap: 6px;
-    min-height: 36px;
-    padding: 4px 9px;
-  }
-  .settings-nav-icon {
+  .settings-section-picker {
     display: grid;
-    width: 24px;
-    height: 24px;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--am-border-soft);
+    color: var(--am-muted);
+    font-size: 11px;
+    font-weight: 600;
   }
-  .settings-nav-copy {
-    display: block;
+  .settings-section-picker select {
+    width: 100%;
+    height: 34px;
+    padding: 0 10px;
+    border: 1px solid var(--am-border-soft);
+    border-radius: 8px;
+    color: var(--vscode-dropdown-foreground, var(--vscode-foreground));
+    background: var(--vscode-dropdown-background, var(--vscode-input-background));
   }
   .settings-content {
-    padding: 22px 20px 28px;
+    padding: 18px 16px 22px;
   }
 }
 
@@ -4024,11 +4025,40 @@ textarea {
     border-radius: 13px;
   }
   .settings-sheet > header {
-    min-height: 62px;
-    padding: 12px 14px;
+    min-height: 48px;
+    padding: 8px 12px;
   }
   .settings-sheet > footer {
-    padding: 10px 14px;
+    min-height: 48px;
+    padding: 7px 12px;
+  }
+  .settings-sheet > footer button {
+    height: 32px;
+    padding: 0 10px;
+    font-size: 11px;
+  }
+  .settings-heading strong {
+    font-size: 15px;
+  }
+  .settings-section-picker {
+    padding: 8px 12px;
+  }
+  .settings-content {
+    padding: 14px 12px 18px;
+  }
+  .settings-page-title,
+  .settings-group[data-settings-section] > .group-title:first-child {
+    font-size: 17px;
+  }
+  .account-manager {
+    gap: 12px !important;
+  }
+  .account-manager-hero {
+    align-items: center;
+  }
+  .account-add-button {
+    min-height: 34px;
+    padding: 0 10px;
   }
   .settings-save-note {
     display: none;
@@ -4040,12 +4070,38 @@ textarea {
     grid-template-columns: 1fr;
   }
   .account-card {
-    grid-template-columns: 28px minmax(0, 1fr);
-    padding: 13px;
+    grid-template-columns: 26px minmax(0, 1fr) 28px;
+    gap: 8px;
+    padding: 10px;
   }
   .account-order-actions {
-    grid-column: 1 / -1;
-    display: flex;
-    justify-content: flex-end;
+    grid-column: auto;
+    display: grid;
+    justify-content: initial;
+  }
+  .account-card-main {
+    gap: 9px;
+  }
+  .account-card-heading {
+    gap: 7px;
+  }
+  .account-controls {
+    gap: 10px;
+  }
+  .compact-toggle {
+    gap: 6px;
+    font-size: 11px;
+  }
+  .account-card-footer {
+    gap: 9px;
+  }
+  .account-sign-in {
+    height: 30px;
+    margin-left: auto;
+    padding: 0 11px;
+  }
+  .account-state {
+    padding: 3px 7px;
+    font-size: 9px;
   }
 }
