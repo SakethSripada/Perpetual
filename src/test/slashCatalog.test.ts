@@ -57,10 +57,11 @@ test("slash commands resolve to app actions, settings, or structured runs", () =
   assert.match(appSource, /function permissionFromCommand/);
 });
 
-test("unknown slash commands are rejected instead of passed to a CLI", () => {
-  assert.match(appSource, /is not supported in Perpetual/);
+test("provider-native slash commands pass through as ordinary provider input", () => {
+  assert.match(appSource, /Anything Perpetual does not own is ordinary provider input/);
+  assert.match(appSource, /if \(!command\) return null/);
   assert.match(appSource, /const message = run\?\.message \?\? text/);
-  assert.doesNotMatch(appSource, /isNativeSlashCommandText/);
+  assert.doesNotMatch(appSource, /is not supported in Perpetual/);
 });
 
 test("plan commands request structured clarification without exposing their prompt", () => {

@@ -86,6 +86,54 @@ impl AppCore {
         })
     }
 
+    /// Opens the provider-owned interactive CLI for one isolated account slot.
+    /// The CLI remains responsible for plugin and MCP discovery, authentication,
+    /// permissions, and persistence; Perpetual only selects the account profile.
+    pub async fn provider_account_tooling_launch(
+        &self,
+        id: &str,
+    ) -> Result<ProviderAccountAuthLaunch, CoreError> {
+        let account = self.account_by_id(id).await?;
+        if !matches!(account.agent, AgentKind::Codex | AgentKind::ClaudeCode) {
+            return Err(CoreError::Other(
+                "Provider account tools currently support Codex and Claude only".into(),
+            ));
+        }
+        let binary = am_agents::find_binary(if account.agent == AgentKind::Codex {
+            "codex"
+        } else {
+            "claude"
+        })
+        .ok_or_else(|| {
+            CoreError::Other(format!("{} CLI is not installed", account.agent.label()))
+        })?;
+        let home = self.ensure_account_home(&account)?;
+        let token = account_token(&account)?;
+        if account.auth_mode == ProviderAccountAuthMode::OauthToken && token.is_none() {
+            return Err(CoreError::Other(
+                "Store a valid Claude setup token before opening this account CLI".into(),
+            ));
+        }
+        let command_hint = if account.agent == AgentKind::Codex {
+            "/plugins or /mcp"
+        } else {
+            "/plugin or /mcp"
+        };
+        let label = account.label.clone();
+        let env = selector_env(&account, &home, token.as_deref());
+        Ok(ProviderAccountAuthLaunch {
+            account_id: account.id,
+            label: label.clone(),
+            agent: account.agent,
+            binary: binary.to_string_lossy().into_owned(),
+            args: Vec::new(),
+            env,
+            instructions: format!(
+                "Using {label}. Manage tools with {command_hint}; changes apply to new Perpetual sessions."
+            ),
+        })
+    }
+
     pub async fn set_provider_account_token(&self, id: &str, token: &str) -> Result<(), CoreError> {
         let account = self.account_by_id(id).await?;
         if account.agent != AgentKind::ClaudeCode

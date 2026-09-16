@@ -39,7 +39,8 @@ pub struct ProviderAccountStatus {
     pub detail: Option<String>,
 }
 
-/// Credential-free description of a provider-owned interactive login process.
+/// Description of a provider-owned interactive process. Environment values are
+/// local-only launch data and must never be logged or sent to the webview.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderAccountAuthLaunch {
     pub account_id: String,

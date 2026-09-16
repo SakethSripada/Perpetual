@@ -101,6 +101,7 @@ export interface DaemonApi {
   setLimitPolicy(policy: LimitPolicy): Promise<LimitPolicy>;
   providerAccountStatuses(): Promise<ProviderAccountStatus[]>;
   providerAccountAuthLaunch(accountId: string): Promise<ProviderAccountAuthLaunch>;
+  providerAccountToolingLaunch(accountId: string): Promise<ProviderAccountAuthLaunch>;
   setProviderAccountToken(accountId: string, token: string): Promise<void>;
   deleteProviderAccount(accountId: string): Promise<void>;
   detectSandboxRuntime(): Promise<SandboxRuntimeStatus>;

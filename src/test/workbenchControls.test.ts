@@ -532,7 +532,7 @@ test("settings stay legible and compact at narrow panel widths", () => {
     path.resolve(__dirname, "../../webview/src/settings.css"), "utf8",
   );
   // Inactive categories must stay hidden even when a layout rule sets display.
-  for (const section of ["accounts", "agents", "integrations", "switching", "continuity", "local", "sandbox"]) {
+  for (const section of ["accounts", "agents", "switching", "continuity", "local", "sandbox"]) {
     assert.ok(app.includes(`hidden={section !== "${section}"}`));
     assert.ok(app.includes(`id="settings-panel-${section}"`));
   }
@@ -540,20 +540,58 @@ test("settings stay legible and compact at narrow panel widths", () => {
   assert.match(settingsStyles, /@container \(max-width: 470px\)/);
 });
 
-test("integration setup stays inside the selected isolated provider profile", () => {
+test("provider integrations do not add a separate settings surface", () => {
+  const app = readFileSync(
+    path.resolve(__dirname, "../../webview/src/App.tsx"),
+    "utf8",
+  );
   const controller = readFileSync(
     path.resolve(__dirname, "../../src/node/workbenchController.ts"),
     "utf8",
   );
+
+  assert.doesNotMatch(app, /settings-panel-integrations/);
+  assert.doesNotMatch(app, /Provider app only/);
+  assert.doesNotMatch(controller, /openProviderAccountSetup/);
+  assert.match(app, /Manage plugins and MCP for this account/);
+  assert.match(app, /<span>Open CLI<\/span>/);
+  assert.match(controller, /client\.providerAccountToolingLaunch\(accountId\)/);
+  assert.doesNotMatch(app, /How plugins work|Integration setup|Computer use setup/);
+});
+
+test("session budget shows only reported Codex usage in a compact label", () => {
+  const app = readFileSync(
+    path.resolve(__dirname, "../../webview/src/App.tsx"),
+    "utf8",
+  );
+  const styles = readFileSync(
+    path.resolve(__dirname, "../../webview/src/styles.css"),
+    "utf8",
+  );
+
+  assert.match(app, /weeklySupported && weeklyWindow && weeklyRemaining !== null/);
+  assert.match(app, /className="budget-usage"/);
+  assert.doesNotMatch(app, /className="usage-summary"/);
+  assert.match(styles, /\.budget-usage \{/);
+  assert.doesNotMatch(styles, /\.usage-summary \{/);
+});
+
+test("slash command metadata stays aligned across command lengths", () => {
+  const styles = readFileSync(
+    path.resolve(__dirname, "../../webview/src/styles.css"),
+    "utf8",
+  );
+
+  assert.match(styles, /\.slash-item \{[\s\S]*grid-template-columns: 120px minmax\(0, 1fr\)/);
+  assert.match(styles, /\.slash-item span \{[\s\S]*text-overflow: ellipsis/);
+});
+
+test("continuity is consistently labeled Cloud Continuity", () => {
   const app = readFileSync(
     path.resolve(__dirname, "../../webview/src/App.tsx"),
     "utf8",
   );
 
-  assert.match(controller, /case "openProviderAccountSetup"/);
-  assert.match(controller, /providerAccountAuthLaunch\(accountId\)/);
-  assert.match(controller, /env: Object\.fromEntries\(launch\.env\)/);
-  assert.match(controller, /shellArgs: \[\]/);
-  assert.match(app, /Provider app only/);
-  assert.match(app, /never copies tokens, browser sessions, or plugin secrets/);
+  assert.match(app, /\["continuity", "Cloud Continuity", "Keep work moving"\]/);
+  assert.doesNotMatch(app, /className="group-title">Continuity</);
 });

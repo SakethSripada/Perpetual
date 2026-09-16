@@ -355,6 +355,11 @@ async fn dispatch(core: &AppCore, req: DaemonRequest) -> Result<DaemonResponse, 
                 .await
                 .map_err(s)?,
         ),
+        Q::ProviderAccountToolingLaunch { account_id } => A::ProviderAccountToolingLaunch(
+            core.provider_account_tooling_launch(&account_id)
+                .await
+                .map_err(s)?,
+        ),
         Q::SetProviderAccountToken { account_id, token } => {
             core.set_provider_account_token(&account_id, &token)
                 .await

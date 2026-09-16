@@ -90,6 +90,9 @@
 .account-preferences .toggle-row { display: flex; justify-content: space-between; min-height: 40px; padding: 8px 0; }
 .account-footer-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 16px; border-top: 1px solid var(--am-border-soft); }
 .account-footer-actions button { height: 36px; padding: 0 12px; border-radius: 6px; }
+.account-primary-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.account-cli { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.account-cli svg { width: 14px; height: 14px; }
 .account-remove { display: inline-flex; align-items: center; gap: 7px; border: 1px solid transparent; background: transparent; color: var(--am-muted); cursor: pointer; }
 .account-remove svg { width: 15px; height: 15px; }
 .account-remove:hover { color: var(--vscode-errorForeground); background: var(--am-surface); }
@@ -111,26 +114,6 @@
 .agent-profile-card, .cloud-setup-card { padding: 18px; gap: 18px; border-radius: 7px; background: transparent; }
 .readiness-grid { border: 1px solid var(--am-border-soft); border-radius: 7px; overflow: hidden; }
 .readiness-row { padding: 12px 14px; min-height: 54px; gap: 12px; }
-.integration-list { display: grid; gap: 12px; }
-.integration-card { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--am-border-soft); border-radius: 7px; }
-.integration-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.integration-heading > span, .integration-account-row > span { display: inline-flex; align-items: center; gap: 9px; min-width: 0; }
-.integration-heading .agent-mark { width: 20px; height: 20px; }
-.integration-heading svg { width: 18px; height: 18px; color: var(--am-muted); }
-.integration-heading strong, .integration-account-row strong { overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
-.integration-card p { margin: 0; color: var(--am-muted); font-size: 12px; line-height: 1.55; }
-.integration-state { flex: 0 0 auto; font-size: 10px; font-style: normal; font-weight: 600; }
-.integration-state.supported { color: var(--am-ok); }
-.integration-state.provider-only { color: var(--am-muted); }
-.integration-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.integration-actions button { min-height: 32px; padding: 0 10px; font-size: 11px; }
-.integration-accounts { display: grid; gap: 10px; padding-top: 4px; }
-.integration-accounts > strong { font-size: 13px; }
-.integration-accounts > small { margin-top: -5px; color: var(--am-muted); line-height: 1.5; }
-.integration-account-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; min-height: 54px; padding: 10px 12px; border: 1px solid var(--am-border-soft); border-radius: 7px; }
-.integration-account-row > small { color: var(--am-muted); font-size: 11px; }
-.integration-account-row > button { min-width: 86px; height: 34px; padding: 0 10px; }
-.account-empty.compact { padding: 18px; }
 .collaboration-body { padding: 24px; }
 .collaboration-sheet { container-type: inline-size; }
 .collaboration-sheet .collaboration-body { gap: 24px; }
@@ -190,15 +173,14 @@
   .account-disclosure { gap: 8px; }
   .account-reorder { padding-left: 6px; }
   .provider-account-body { padding: 16px; }
+  .account-footer-actions { align-items: flex-end; }
+  .account-primary-actions { flex-wrap: wrap; }
   .invite-panel { grid-template-columns: 1fr; gap: 14px; justify-items: start; }
   .settings-layout { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
   .settings-nav { display: flex; flex-direction: row; flex-wrap: wrap; gap: 4px; padding: 12px; border-right: 0; border-bottom: 1px solid var(--am-border-soft); }
   .settings-nav button { width: auto; min-height: 34px; padding: 7px 9px; }
   .settings-nav-copy strong { font-size: 11px; }
   .settings-content { padding: 20px 16px; }
-  .integration-heading { align-items: flex-start; }
-  .integration-account-row { grid-template-columns: minmax(0, 1fr) auto; }
-  .integration-account-row > small { display: none; }
 }
 @media (max-width: 520px) {
   .sheet-backdrop { padding: 8px; }

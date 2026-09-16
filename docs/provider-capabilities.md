@@ -37,19 +37,18 @@ slot, because its configuration may contain account-specific OAuth state or
 secrets. Install or configure the integration in each account slot that should
 be allowed to use it.
 
-## Setup in Perpetual
+## Using provider tools
 
-Open **Settings > Integrations**, choose a signed-in account, and select
-**Open setup**. Perpetual launches the provider's own interactive CLI with that
-account's `CODEX_HOME` or `CLAUDE_CONFIG_DIR` already selected:
+There is no separate integrations screen in Perpetual. Tools already available
+to the selected provider profile are loaded with an ordinary host session. Ask
+for them in the prompt. Perpetual forwards slash-shaped text it does not own as
+ordinary provider input, but interactive setup commands belong in the provider
+CLI.
 
-- Codex: run `/plugins`; use the Codex MCP controls for MCP servers.
-- Claude: run `/plugin`; use `/mcp` for MCP servers.
-
-Installation, OAuth, permissions, and secret storage stay inside the provider.
-Closing the terminal without sending a model prompt does not start a Perpetual
-task. Newly installed tools are available to new Perpetual sessions for that
-same account profile.
+To configure an isolated account, expand it in **Settings → Accounts** and
+choose **Open CLI**. Use `/plugins` or `/mcp` in Codex and `/plugin` or `/mcp`
+in Claude, then start a new Perpetual session. Availability, installation,
+OAuth, permissions, and secret storage remain provider-owned.
 
 ## Safety invariants
 

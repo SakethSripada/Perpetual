@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.6.1
+
+- Stop rejecting provider-native slash-shaped input while keeping interactive
+  plugin and MCP setup in the provider's own CLI.
+- Add a compact account-scoped **Open CLI** action for managing provider tools
+  inside each isolated signed-in profile without copying credentials.
+- Simplify Settings and session budgets by removing unsupported integration
+  controls, verbose fallback copy, and the oversized usage summary.
+- Show reported Codex weekly usage as a small label only when that telemetry is
+  available, and hide unsupported budget choices.
+- Align slash-command provider badges and rename Continuity to Cloud Continuity
+  throughout the UI and documentation.
+- Emphasize seamless task continuation across multiple signed-in accounts in
+  the README and Marketplace listing.
+
 ## 0.5.2
 
 - Fix daemon startup for existing databases when migration files were embedded

@@ -19,6 +19,9 @@ and optional cloud runs without copying prompts or rebuilding context by hand.
   provider reaches a usage limit, Perpetual can pause the run and continue the
   same task on the other ready agent with its context, repository state, and
   transcript intact.
+- **Keep working across multiple signed-in accounts.** Add and prioritize your
+  Codex and Claude accounts once. When one account reaches its limit, Perpetual
+  continues the same task on the next ready account without losing progress.
 - **Wait for recovery and resume automatically.** If no fallback agent is
   ready, Perpetual can wait for the provider's reset, resume the task when it is
   available again, and switch back to the original provider when configured.
@@ -46,6 +49,8 @@ switch between sessions without losing their transcripts or repository state.
 
 Perpetual also passes through provider-owned skills, plugins, MCP servers, and
 Codex apps/connectors when they are available in the selected provider profile.
+Expand a signed-in account and choose **Open CLI** to manage that profile with
+the provider's own plugin or MCP commands.
 It does not scrape or control the proprietary desktop apps. See the
 [provider capability boundary](docs/provider-capabilities.md) for the supported
 matrix, account-isolation behavior, and safety invariants.
@@ -140,14 +145,18 @@ provider failures.
 
 ### Multiple subscription accounts
 
-Settings → Accounts can hold an ordered pool of Codex and Claude subscription
-accounts. Each Codex slot uses its own `CODEX_HOME`; each Claude slot uses its
-own `CLAUDE_CONFIG_DIR`. Claude setup tokens are stored in the operating
-system's credential vault, never in Perpetual's policy, database, repository,
-or transcript. When one account reports a usage limit, Perpetual marks only
-that slot limited and continues with the next authenticated slot in the global
-order. If every slot is exhausted, the scheduler waits for the earliest known
-reset and resumes without asking the user to sign in again.
+Sign into multiple Codex and Claude subscription accounts in Settings →
+Accounts, then arrange them in the order you want Perpetual to use them. When
+one account reports a usage limit, Perpetual marks only that account limited
+and seamlessly continues the same task with the next ready account, preserving
+its context, repository state, queued turns, and transcript. If every account
+is exhausted, it waits for the earliest known reset and resumes without asking
+you to sign in again.
+
+Each Codex account uses its own `CODEX_HOME`; each Claude account uses its own
+`CLAUDE_CONFIG_DIR`. Claude setup tokens are stored in the operating system's
+credential vault, never in Perpetual's policy, database, repository, or
+transcript.
 
 Earned Codex usage-reset credits are disabled for every account by default.
 Enabling them requires a per-account confirmation, uses Codex's supported
