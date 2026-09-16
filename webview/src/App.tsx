@@ -4636,7 +4636,6 @@ function SettingsSheet(props: {
         <header>
           <div className="settings-heading">
             <strong>Settings</strong>
-            <small>Configure how Perpetual runs and hands off work.</small>
           </div>
           <IconButton title="Close" onClick={props.onClose}>
             <Icon name="close" />
@@ -4646,13 +4645,13 @@ function SettingsSheet(props: {
         <div className="settings-layout">
           <nav className="settings-nav" aria-label="Settings sections">
             {([
-              ["accounts", "Accounts", "Sign-in and priority", "devices"],
-              ["agents", "Providers", "Readiness and access", "agent"],
-              ["switching", "Models & fallback", "Defaults and limits", "sliders"],
-              ["continuity", "Continuity", "Cloud handoff", "cloud"],
-              ["local", "Local models", "Offline fallback", "cube"],
-              ["sandbox", "Sandbox", "Isolation and resources", "shield"],
-            ] as const).map(([value, label, description, icon]) => (
+              ["accounts", "Accounts", "devices"],
+              ["agents", "Providers", "agent"],
+              ["switching", "Models", "sliders"],
+              ["continuity", "Continuity", "cloud"],
+              ["local", "Local", "cube"],
+              ["sandbox", "Sandbox", "shield"],
+            ] as const).map(([value, label, icon]) => (
               <button
                 key={value}
                 type="button"
@@ -4662,7 +4661,6 @@ function SettingsSheet(props: {
                 <span className="settings-nav-icon"><Icon name={icon} /></span>
                 <span className="settings-nav-copy">
                   <strong>{label}</strong>
-                  <small>{description}</small>
                 </span>
               </button>
             ))}
@@ -4672,21 +4670,17 @@ function SettingsSheet(props: {
             <div className="account-manager-hero">
               <div>
                 <div className="settings-page-title">Accounts</div>
-                <p className="settings-help">
-                  Add every subscription you use. Perpetual keeps each sign-in isolated and follows
-                  this priority order when an account reaches its limit.
-                </p>
               </div>
-              <span className="account-count">{accounts.length} configured</span>
+              <span className="account-count">{accounts.length} {accounts.length === 1 ? "account" : "accounts"}</span>
             </div>
             <div className="account-add-row">
-              <button type="button" className="account-add-button" onClick={() => addAccount("codex")}><AgentMark agent="codex" /><span><strong>Add Codex account</strong><small>Isolated Codex profile</small></span><Icon name="plus" /></button>
-              <button type="button" className="account-add-button" onClick={() => addAccount("claude_code")}><AgentMark agent="claude_code" /><span><strong>Add Claude account</strong><small>Token or isolated profile</small></span><Icon name="plus" /></button>
+              <button type="button" className="account-add-button" onClick={() => addAccount("codex")}><AgentMark agent="codex" /><strong>Add Codex</strong></button>
+              <button type="button" className="account-add-button" onClick={() => addAccount("claude_code")}><AgentMark agent="claude_code" /><strong>Add Claude</strong></button>
             </div>
             {accounts.length === 0 ? (
               <div className="account-empty">
-                <strong>No account pool yet</strong>
-                <span>Add each subscription you want in the rotation. Existing single-account behavior remains unchanged.</span>
+                <strong>No accounts</strong>
+                <span>Add Codex or Claude to begin.</span>
               </div>
             ) : (
               <div className="account-stack">
@@ -4729,11 +4723,11 @@ function SettingsSheet(props: {
                               <input type="checkbox" checked={account.use_credits} onChange={(event) => event.target.checked ? setCreditConfirmId(account.id) : updateAccount(account.id, { use_credits: false })} />
                               <span>Use reset credits</span>
                             </label>
-                          ) : <span className="account-credit-note">Paid extra usage stays off; manage it in Claude.</span>}
+                          ) : null}
                         </div>
                         <div className="account-actions">
                           <button type="button" className="primary-btn account-sign-in" onClick={() => props.onSignInProviderAccount(account.id)}>{account.auth_mode === "oauth_token" ? "Generate token" : status?.authenticated ? "Re-authenticate" : "Sign in"}</button>
-                          <span className="account-detail">{status?.detail ?? "Credentials stay outside project files."}</span>
+                          {status?.detail && <span className="account-detail">{status.detail}</span>}
                         </div>
                       </div>
                       <div className="account-order-actions">
@@ -4749,7 +4743,6 @@ function SettingsSheet(props: {
                 })}
               </div>
             )}
-            <div className="account-security-note"><Icon name="shield" /><span><strong>Private by design.</strong> Each account gets its own provider profile. Claude setup tokens are kept in your operating system credential vault, never in the project.</span></div>
           </div>
           <div className="settings-group" data-settings-section="agents">
             <div className="group-title">Readiness</div>
@@ -4844,10 +4837,6 @@ function SettingsSheet(props: {
 
           <div className="settings-group" data-settings-section="switching">
             <div className="group-title">Limit handling</div>
-            <p className="settings-help">
-              Choose exactly which model and effort each provider should use. These
-              profiles also apply when Perpetual switches providers automatically.
-            </p>
             <div className="agent-profile-grid">
               {(["claude_code", "codex"] as const).map((profileAgent) => {
                 const profile = limit.agent_profiles?.find(
@@ -5029,11 +5018,6 @@ function SettingsSheet(props: {
 
           <div className="settings-group" data-settings-section="continuity">
             <div className="group-title">Cloud continuity</div>
-            <p className="settings-help">
-              Set up either cloud here, then turn on continuity to keep work
-              running when this machine sleeps or shuts down. Click Apply to
-              save your setup.
-            </p>
             <div className="cloud-setup-grid">
               <CloudSetupCard
                 title="Claude Code on the web"
@@ -5041,8 +5025,7 @@ function SettingsSheet(props: {
                   (item) => item.agent === "claude_code",
                 )?.ready ?? false}
                 steps={[
-                  "Sign in with a Claude.ai subscription in the Claude Code CLI.",
-                  "Refresh readiness once sign-in is complete.",
+                  "Sign in, then refresh status.",
                 ]}
                 primaryLabel="Sign in to Claude"
                 onPrimary={() => props.onSignInAgent("claude_code")}
@@ -5055,8 +5038,7 @@ function SettingsSheet(props: {
                   (item) => item.agent === "codex",
                 )?.ready ?? false}
                 steps={[
-                  "Sign in to the Codex CLI.",
-                  "Create or choose an environment in Codex Cloud, then paste its ID below.",
+                  "Sign in and enter an environment ID.",
                 ]}
                 primaryLabel="Sign in to Codex"
                 onPrimary={() => props.onSignInAgent("codex")}
@@ -5482,7 +5464,7 @@ function SettingsSheet(props: {
             <div className="settings-confirm" role="dialog" aria-modal="true" aria-labelledby="credit-confirm-title" onMouseDown={(event) => event.stopPropagation()}>
               <Icon name="bolt" />
               <strong id="credit-confirm-title">Allow automatic reset-credit use?</strong>
-              <p>When this Codex account reaches its included limit, Perpetual may redeem one earned usage-reset credit and continue. This is off by default and never purchases credits.</p>
+              <p>Use an earned reset credit when this account reaches its limit? This never purchases credits.</p>
               <div className="settings-confirm-actions">
                 <button type="button" className="secondary-btn" onClick={() => setCreditConfirmId(null)}>Keep off</button>
                 <button type="button" className="primary-btn" onClick={() => {
@@ -5498,7 +5480,7 @@ function SettingsSheet(props: {
             <div className="settings-confirm" role="dialog" aria-modal="true" aria-labelledby="remove-account-title" onMouseDown={(event) => event.stopPropagation()}>
               <Icon name="trash" />
               <strong id="remove-account-title">Remove this account slot?</strong>
-              <p>Perpetual will remove this slot, its saved limit state, isolated provider directory, and any Claude token stored for it in the OS credential vault. Your provider account itself is not changed.</p>
+              <p>Remove this account and its local credentials?</p>
               <div className="settings-confirm-actions">
                 <button type="button" className="secondary-btn" onClick={() => setRemoveConfirmId(null)}>Cancel</button>
                 <button type="button" className="primary-btn danger-confirm" onClick={() => {
@@ -5515,9 +5497,6 @@ function SettingsSheet(props: {
           <button type="button" onClick={props.onOpenSettings}>
             VS Code settings
           </button>
-          <span className="settings-save-note">
-            {section === "accounts" ? "Account changes save automatically" : "Save to apply this section"}
-          </span>
           <button
             type="button"
             className="primary"

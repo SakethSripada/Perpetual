@@ -2068,6 +2068,7 @@ textarea {
   border: 1px solid var(--am-border);
   border-radius: var(--am-radius-sm);
   background: var(--vscode-button-secondaryBackground, var(--am-surface-2));
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
   cursor: pointer;
 }
 .sheet footer button:hover {
@@ -3609,6 +3610,7 @@ textarea {
 .settings-sheet > footer {
   min-height: 62px;
   padding: 13px 20px;
+  justify-content: flex-end;
 }
 .settings-sheet > footer button {
   height: 34px;
@@ -3742,17 +3744,15 @@ textarea {
   font-size: 10px;
 }
 .account-add-row {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  display: flex;
+  gap: 8px;
 }
 .account-add-button {
-  display: grid;
-  grid-template-columns: 26px minmax(0, 1fr) 18px;
+  display: inline-flex;
   align-items: center;
-  gap: 11px;
-  min-height: 58px;
-  padding: 10px 12px;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 12px;
   border: 1px solid var(--am-border-soft);
   border-radius: 11px;
   background: transparent;
@@ -3768,20 +3768,9 @@ textarea {
   width: 22px;
   height: 22px;
 }
-.account-add-button > span {
-  display: grid;
-  gap: 2px;
-}
 .account-add-button strong {
   font-size: 12px;
   font-weight: 600;
-}
-.account-add-button small {
-  color: var(--am-muted);
-  font-size: 10px;
-}
-.account-add-button > svg {
-  color: var(--am-muted);
 }
 .account-empty {
   padding: 36px 20px;
@@ -3942,6 +3931,9 @@ textarea {
   height: 32px;
   border-radius: 8px;
 }
+.secondary-btn {
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+}
 .toggle input[type="checkbox"],
 .toggle-row input[type="checkbox"] {
   position: relative;
@@ -3996,22 +3988,26 @@ textarea {
     grid-template-columns: 1fr;
   }
   .settings-nav {
-    grid-template-columns: repeat(6, minmax(72px, 1fr));
+    display: flex;
+    gap: 4px;
     padding: 8px;
+    overflow-x: auto;
+    scrollbar-width: none;
   }
   .settings-nav button {
-    display: flex;
-    justify-content: center;
-    min-height: 42px;
-    padding: 4px;
+    display: inline-flex;
+    flex: 0 0 auto;
+    gap: 6px;
+    min-height: 36px;
+    padding: 4px 9px;
   }
   .settings-nav-icon {
     display: grid;
-    width: 30px;
-    height: 30px;
+    width: 24px;
+    height: 24px;
   }
   .settings-nav-copy {
-    display: none;
+    display: block;
   }
   .settings-content {
     padding: 22px 20px 28px;
@@ -4037,7 +4033,9 @@ textarea {
   .settings-save-note {
     display: none;
   }
-  .account-add-row,
+  .account-add-row {
+    flex-wrap: wrap;
+  }
   .agent-profile-grid {
     grid-template-columns: 1fr;
   }

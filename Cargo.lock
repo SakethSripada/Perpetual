@@ -77,6 +77,7 @@ dependencies = [
  "am-proto",
  "chrono",
  "serde_json",
+ "sha2",
  "sqlx",
  "thiserror",
  "tokio",

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.5.2
+
+- Fix daemon startup for existing databases when migration files were embedded
+  with different Windows and Unix line endings.
+- Surface the daemon's actual startup failure instead of only reporting exit
+  code 1.
+- Replace narrow settings icon tiles with a labeled, scrollable section bar and
+  ensure secondary actions remain visible across VS Code themes.
+- Simplify account actions, remove detached plus icons, and trim verbose helper
+  copy throughout Settings.
+
 ## 0.5.1
 
 - Redesign Settings around a calm, spacious navigation and content hierarchy
