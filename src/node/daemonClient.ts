@@ -174,6 +174,10 @@ export class DaemonClient extends EventEmitter implements DaemonApi {
     return responsePayload(await this.requestRaw(variant("provider_account_auth_launch", { account_id: accountId })), "provider_account_auth_launch");
   }
 
+  async providerAccountToolingLaunch(accountId: string) {
+    return responsePayload(await this.requestRaw(variant("provider_account_tooling_launch", { account_id: accountId })), "provider_account_tooling_launch");
+  }
+
   async setProviderAccountToken(accountId: string, token: string) {
     await this.requestRaw(variant("set_provider_account_token", { account_id: accountId, token }));
   }

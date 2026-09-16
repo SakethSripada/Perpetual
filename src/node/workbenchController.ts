@@ -86,7 +86,7 @@ type WebviewMessage =
   | { type: "sandboxLogin"; codex?: boolean }
   | { type: "signInAgent"; agent: AgentKind }
   | { type: "signInProviderAccount"; accountId: string }
-  | { type: "openProviderAccountSetup"; accountId: string }
+  | { type: "openProviderAccountCli"; accountId: string }
   | { type: "setProviderAccountToken"; accountId: string; token: string }
   | { type: "deleteProviderAccount"; accountId: string }
   | { type: "githubSignIn" | "refreshReadiness" }
@@ -352,8 +352,8 @@ export class WorkbenchController implements vscode.Disposable {
         case "signInProviderAccount":
           await this.startProviderAccountSignIn(message.accountId, reply);
           return;
-        case "openProviderAccountSetup":
-          await this.openProviderAccountSetup(message.accountId, reply);
+        case "openProviderAccountCli":
+          await this.openProviderAccountCli(message.accountId, reply);
           return;
         case "setProviderAccountToken":
           await this.withLocalClient((client) =>
@@ -1234,30 +1234,23 @@ export class WorkbenchController implements vscode.Disposable {
     this.notice(reply, launch.instructions);
   }
 
-  /** Open the provider CLI inside this account's isolated profile. */
-  private async openProviderAccountSetup(
+  private async openProviderAccountCli(
     accountId: string,
     reply?: WebviewReply,
   ): Promise<void> {
     this.assertTrusted();
     const launch = await this.withLocalClient((client) =>
-      client.providerAccountAuthLaunch(accountId),
+      client.providerAccountToolingLaunch(accountId),
     );
-    const command = launch.agent === "codex" ? "/plugins" : "/plugin";
     const terminal = vscode.window.createTerminal({
-      name: `${launch.label} · Integrations`,
+      name: `${launch.label} · Tools`,
       shellPath: launch.binary,
-      shellArgs: [],
+      shellArgs: launch.args,
       env: Object.fromEntries(launch.env),
-      message:
-        `This terminal uses only the isolated ${launch.label} profile. ` +
-        `Run ${command} to manage plugins; use the provider's MCP menu or commands for MCP servers.`,
+      message: launch.instructions,
     });
     terminal.show(true);
-    this.notice(
-      reply,
-      `Opened ${launch.label}. Run ${command} to manage integrations for this account.`,
-    );
+    this.notice(reply, `Opened ${launch.label} CLI.`);
   }
 
   private async loadDiff(threadId: string): Promise<void> {

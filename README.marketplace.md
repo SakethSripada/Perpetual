@@ -3,9 +3,10 @@
 Keep coding when your AI agent hits a limit.
 
 Perpetual is a VS Code workbench for Claude Code and Codex that keeps tasks
-moving across providers, limit resets, and optional cloud execution. Your
-transcript, repository context, approvals, and worktree stay attached to the
-same task instead of getting lost in a new chat or a copied prompt.
+moving across providers, multiple signed-in accounts, limit resets, and
+optional cloud execution. Your transcript, repository context, approvals, and
+worktree stay attached to the same task instead of getting lost in a new chat
+or a copied prompt.
 
 ![Perpetual workbench preview](media/PerpetualDemoImage.png)
 
@@ -33,13 +34,18 @@ latest-tracking aliases alongside exact model versions.
 
 ### Rotate across your paid accounts
 
-Add multiple Codex and Claude subscriptions in the polished Accounts manager,
-order them once, and keep their provider-owned authentication isolated. When a
-slot reaches its limit, Perpetual continues with the next ready account—even
-across providers. If all slots are exhausted, it waits for the earliest reset
-and resumes automatically. Earned Codex reset credits are off by default and
-require explicit confirmation for each account; Claude paid extra usage is
-never enabled by Perpetual.
+Sign into multiple Codex and Claude accounts, put them in your preferred order,
+and let Perpetual continue the same task on the next ready account when one
+reaches its limit. Context, repository state, queued turns, and the transcript
+stay attached throughout the switch. If every account is exhausted, Perpetual
+waits for the earliest reset and resumes automatically. Authentication remains
+isolated per account. Earned Codex reset credits are off by default and require
+explicit confirmation for each account; Claude paid extra usage is never
+enabled by Perpetual.
+
+Provider-owned plugins and MCP servers work from the selected account profile.
+Expand a signed-in account and choose **Open CLI** to manage them with the
+provider's own commands.
 
 ### Continue work in the cloud
 

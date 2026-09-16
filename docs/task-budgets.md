@@ -58,9 +58,9 @@ fallback and queued-turn draining, and does not spend a separate summary turn.
 The final response may therefore overshoot the configured target by one
 provider response.
 
-Raw usage values, quota windows, and private steering instructions are not
-published to the webview or transcript. Users see the configured static cap
-and the final work summary.
+Raw quota payloads and private steering instructions are not published to the
+webview or transcript. When Codex reports a valid 7-day window, the budget menu
+shows one compact remaining-usage label; otherwise no usage UI is rendered.
 
 ## Changing a budget
 
@@ -71,7 +71,7 @@ the session's prior consumption and allows it to resume.
 
 Token targets accept 10,000 through 10,000,000 tokens. Weekly allocations
 accept integer values from 1 through 100 percentage points. The composer uses
-static labels such as `50k` and `5%`; it never displays live consumption.
+static budget labels such as `50k` and `5%`.
 
 These guarantees are intentionally approximate because provider accounting,
 stream timing, and account-level quota activity can vary at response

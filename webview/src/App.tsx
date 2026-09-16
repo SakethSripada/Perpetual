@@ -31,7 +31,6 @@ import type {
   PermissionPolicy,
   ProviderAccount,
   ProviderUsage,
-  ProviderUsageWindow,
   SandboxPolicy,
   TaskBudget,
   ThreadDetails,
@@ -618,12 +617,6 @@ export default function App() {
     const text = raw.trim();
     if (!text) return false;
     const command = resolveAppCommand(text, agent);
-    if (command?.kind === "unsupported") {
-      setNotice(
-        `/${command.name} is not supported in Perpetual. Choose a command from the picker.`,
-      );
-      return false;
-    }
     if (command?.kind === "error") {
       setNotice(command.message);
       return false;
@@ -819,6 +812,9 @@ export default function App() {
       setBackend("host");
       setLocalProvider("");
       setLocalBaseUrl("");
+      if (taskBudget.mode === "weekly_percent") {
+        setTaskBudget({ mode: "unlimited" });
+      }
     }
     if (!snapshot) {
       setModel("");
@@ -1182,8 +1178,8 @@ export default function App() {
           onSignInProviderAccount={(accountId) =>
             vscode.postMessage({ type: "signInProviderAccount", accountId })
           }
-          onOpenProviderAccountSetup={(accountId) =>
-            vscode.postMessage({ type: "openProviderAccountSetup", accountId })
+          onOpenProviderAccountCli={(accountId) =>
+            vscode.postMessage({ type: "openProviderAccountCli", accountId })
           }
           onSetProviderAccountToken={(accountId, token) =>
             vscode.postMessage({ type: "setProviderAccountToken", accountId, token })
@@ -2754,10 +2750,6 @@ function Composer(props: ComposerProps) {
                   props.snapshot?.agents.find((item) => item.kind === props.agent)
                     ?.usage ?? null
                 }
-                hasMessages={
-                  props.snapshot?.details?.events.some((event) => event.role === "user") ??
-                  false
-                }
                 backend={props.backend}
                 localOn={localOn}
                 authenticated={
@@ -2988,80 +2980,6 @@ function Composer(props: ComposerProps) {
   );
 }
 
-function ProviderUsageSummary(props: {
-  agent: AgentKind;
-  usage: ProviderUsage | null;
-  hasMessages: boolean;
-}) {
-  if (props.agent !== "codex") return null;
-  const windows: { key: string; label: string; window: ProviderUsageWindow | null }[] = [
-    { key: "weekly", label: "Codex · 7-day", window: props.usage?.weekly ?? null },
-  ];
-
-  return (
-    <section className="usage-summary" aria-label="Current provider usage">
-      <div className="usage-summary-grid">
-        {windows.map(({ key, label, window }) => (
-          <UsageWindowCard
-            key={key}
-            label={label}
-            window={window}
-            missingLabel={
-              props.hasMessages ? "Not reported yet" : "Send a message to see usage"
-            }
-          />
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function UsageWindowCard(props: {
-  label: string;
-  window: ProviderUsageWindow | null;
-  missingLabel?: string;
-}) {
-  if (!props.window) {
-    return (
-      <div className="usage-window missing">
-        <div className="usage-window-head">
-          <span className="usage-window-label">{props.label}</span>
-          <span className="usage-window-missing">
-            {props.missingLabel ?? "Not reported yet"}
-          </span>
-        </div>
-      </div>
-    );
-  }
-
-  const used = Number.isFinite(props.window.used_percent)
-    ? Math.max(0, Math.min(100, props.window.used_percent))
-    : 0;
-  const remaining = Math.max(0, 100 - used);
-  const level = used >= 85 ? " high" : used >= 65 ? " medium" : "";
-  return (
-    <div className="usage-window">
-      <div className="usage-window-head">
-        <span className="usage-window-label">{props.label}</span>
-        <strong className="usage-window-value">
-          {formatUsagePercent(remaining)} left
-        </strong>
-      </div>
-      <div
-        className="usage-bar"
-        role="progressbar"
-        aria-label={`${props.label} usage`}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={used}
-      >
-        <span className={`usage-bar-fill${level}`} style={{ width: `${used}%` }} />
-      </div>
-      <span className="usage-window-reset">{usageResetLabel(props.window.reset_at)}</span>
-    </div>
-  );
-}
-
 function formatUsagePercent(value: number): string {
   return `${value % 1 === 0 ? value.toFixed(0) : value.toFixed(1)}%`;
 }
@@ -3082,7 +3000,6 @@ function BudgetMenu(props: {
   budget: TaskBudget;
   agent: AgentKind;
   usage: ProviderUsage | null;
-  hasMessages: boolean;
   backend: ExecutionBackend;
   localOn: boolean;
   authenticated: boolean;
@@ -3093,16 +3010,20 @@ function BudgetMenu(props: {
   onNotice(message: string): void;
 }) {
   const hostSupported = props.backend === "host" && !props.localOn;
-  const weeklySupported = hostSupported && props.agent === "codex" && props.authenticated;
+  const reportedWeekly = props.agent === "codex" ? props.usage?.weekly ?? null : null;
+  const weeklyWindow =
+    reportedWeekly && Number.isFinite(reportedWeekly.used_percent)
+      ? reportedWeekly
+      : null;
+  const weeklyRemaining = weeklyWindow
+    ? Math.max(0, Math.min(100, 100 - weeklyWindow.used_percent))
+    : null;
+  const weeklySupported =
+    hostSupported && props.authenticated && weeklyWindow !== null;
   const selectedTokenBudget =
     props.budget.mode === "tokens" ? props.budget.limit_tokens : null;
   const selectedWeeklyBudget =
     props.budget.mode === "weekly_percent" ? props.budget.limit_percent : null;
-  const unsupportedReason = props.localOn
-    ? "Budgets require a hosted agent; local model runs are not metered here."
-    : props.backend !== "host"
-      ? "Budgets require Host execution."
-      : "Weekly % requires Codex Host with a reported 7-day account usage window.";
   const applyCustom = () => {
     const normalized = props.customValue.replace(/[,\s]/g, "");
     if (!/^\d+$/.test(normalized)) {
@@ -3126,15 +3047,21 @@ function BudgetMenu(props: {
   };
   return (
     <div className="menu budget-menu" role="listbox" aria-label="Session budget">
-      <div className="menu-head">Session budget</div>
+      <div className="menu-head budget-menu-head">
+        <span>Session budget</span>
+        {weeklySupported && weeklyWindow && weeklyRemaining !== null && (
+          <span
+            className="budget-usage"
+            title={usageResetLabel(weeklyWindow.reset_at)}
+            aria-label={`Codex 7-day usage: ${formatUsagePercent(weeklyRemaining)} left`}
+          >
+            Codex {formatUsagePercent(weeklyRemaining)} left
+          </span>
+        )}
+      </div>
       {props.isRunning && (
         <div className="budget-note">Stop the session to adjust its cap.</div>
       )}
-      <ProviderUsageSummary
-        agent={props.agent}
-        usage={props.usage}
-        hasMessages={props.hasMessages}
-      />
       <button
         type="button"
         role="option"
@@ -3146,19 +3073,19 @@ function BudgetMenu(props: {
         <span>No limit</span>
         {props.budget.mode === "unlimited" && <Icon name="check" />}
       </button>
-      <button
-        type="button"
-        role="option"
-        aria-selected={props.budget.mode === "tokens"}
-        disabled={!hostSupported}
-        className={props.budget.mode === "tokens" ? "menu-item selected" : "menu-item"}
-        title={!hostSupported ? unsupportedReason : undefined}
-        onClick={() => props.onSelect({ mode: "tokens", limit_tokens: 50_000 }, false)}
-      >
-        <Icon name="clock" />
-        <span>Tokens</span>
-        {props.budget.mode === "tokens" && <Icon name="check" />}
-      </button>
+      {hostSupported && (
+        <button
+          type="button"
+          role="option"
+          aria-selected={props.budget.mode === "tokens"}
+          className={props.budget.mode === "tokens" ? "menu-item selected" : "menu-item"}
+          onClick={() => props.onSelect({ mode: "tokens", limit_tokens: 50_000 }, false)}
+        >
+          <Icon name="clock" />
+          <span>Tokens</span>
+          {props.budget.mode === "tokens" && <Icon name="check" />}
+        </button>
+      )}
       {props.budget.mode === "tokens" && hostSupported && (
         <div className="budget-presets">
           {[25_000, 50_000, 100_000].map((value) => (
@@ -3177,19 +3104,17 @@ function BudgetMenu(props: {
           ))}
         </div>
       )}
-      {props.agent === "codex" && (
+      {weeklySupported && (
         <>
           <button
             type="button"
             role="option"
             aria-selected={props.budget.mode === "weekly_percent"}
-            disabled={!weeklySupported}
             className={
               props.budget.mode === "weekly_percent"
                 ? "menu-item selected"
                 : "menu-item"
             }
-            title={!weeklySupported ? unsupportedReason : undefined}
             onClick={() =>
               props.onSelect({ mode: "weekly_percent", limit_percent: 5 }, false)
             }
@@ -3198,7 +3123,7 @@ function BudgetMenu(props: {
             <span>Weekly %</span>
             {props.budget.mode === "weekly_percent" && <Icon name="check" />}
           </button>
-          {props.budget.mode === "weekly_percent" && weeklySupported && (
+          {props.budget.mode === "weekly_percent" && (
             <div className="budget-presets">
               {[1, 2, 5, 10].map((value) => (
                 <button
@@ -3219,13 +3144,6 @@ function BudgetMenu(props: {
             </div>
           )}
         </>
-      )}
-      {!hostSupported && <div className="budget-note">{unsupportedReason}</div>}
-      {hostSupported && props.agent === "codex" && !weeklySupported && (
-        <div className="budget-note">
-          Weekly % needs Codex Host execution and a reported 7-day account
-          window.
-        </div>
       )}
       {props.budget.mode !== "unlimited" && hostSupported && (
         <div className="budget-custom">
@@ -3325,8 +3243,7 @@ type AppCommandResolution =
       kind: "local";
       action: "diff" | "help" | "new" | "resume" | "settings" | "status" | "stop";
     }
-  | { kind: "error"; message: string }
-  | { kind: "unsupported"; name: string };
+  | { kind: "error"; message: string };
 
 // Perpetual owns these commands. They never pass slash text to a headless CLI:
 // each one either changes an app run setting or produces a read-only request.
@@ -3524,7 +3441,9 @@ function resolveAppCommand(
   const command = availableSlashCommands(agent).find((candidate) =>
     [candidate.name, ...(candidate.aliases ?? [])].includes(name),
   );
-  if (!command) return { kind: "unsupported", name: rawName };
+  // Anything Perpetual does not own is ordinary provider input. This keeps
+  // provider/plugin slash commands available without duplicating their catalog.
+  if (!command) return null;
 
   switch (command.action) {
     case "model":
@@ -4477,7 +4396,7 @@ function MonitorSheet(props: {
           </div>
 
           <div className="settings-group">
-            <div className="group-title">Continuity</div>
+            <div className="group-title">Cloud Continuity</div>
             <div className="monitor-actions">
               <button
                 type="button"
@@ -4542,9 +4461,8 @@ function resetSummary(agents: AgentStatus[]): string {
 const SETTINGS_SECTIONS = [
   ["accounts", "Accounts", "Manage sign-ins"],
   ["agents", "Providers", "Check connections"],
-  ["integrations", "Integrations", "Provider-owned tools"],
   ["switching", "Models & limits", "Defaults and routing"],
-  ["continuity", "Continuity", "Keep work moving"],
+  ["continuity", "Cloud Continuity", "Keep work moving"],
   ["local", "Local models", "Offline fallback"],
   ["sandbox", "Sandbox", "Isolated execution"],
 ] as const;
@@ -4570,7 +4488,7 @@ function SettingsSheet(props: {
   onOpenExternal(url: string): void;
   onSignInAgent(agent: AgentKind): void;
   onSignInProviderAccount(accountId: string): void;
-  onOpenProviderAccountSetup(accountId: string): void;
+  onOpenProviderAccountCli(accountId: string): void;
   onSetProviderAccountToken(accountId: string, token: string): void;
   onDeleteProviderAccount(accountId: string): void;
   onSaveLimitPolicy(policy: LimitPolicy): void;
@@ -4756,7 +4674,12 @@ function SettingsSheet(props: {
                             if (saved) setRemoveConfirmId(account.id);
                             else saveAccounts(accounts.filter((item) => item.id !== account.id));
                           }}><Icon name="trash" /><span>Remove</span></button>
-                          <button type="button" className="primary-btn" onClick={() => props.onSignInProviderAccount(account.id)}>{account.auth_mode === "oauth_token" ? "Generate token" : status?.authenticated ? "Sign in again" : "Sign in"}</button>
+                          <div className="account-primary-actions">
+                            {saved && status?.authenticated && (
+                              <button type="button" className="secondary-btn account-cli" title="Manage plugins and MCP for this account" onClick={() => props.onOpenProviderAccountCli(account.id)}><Icon name="terminal" /><span>Open CLI</span></button>
+                            )}
+                            <button type="button" className="primary-btn" onClick={() => props.onSignInProviderAccount(account.id)}>{account.auth_mode === "oauth_token" ? "Generate token" : status?.authenticated ? "Sign in again" : "Sign in"}</button>
+                          </div>
                         </div>
                       </div>
                     </article>
@@ -4854,65 +4777,6 @@ function SettingsSheet(props: {
               <Icon name="refresh" />
               <span>Refresh readiness</span>
             </button>
-          </div>
-
-          <div className="settings-group" data-settings-section="integrations" id="settings-panel-integrations" role="region" aria-labelledby="settings-nav-integrations" hidden={section !== "integrations"}>
-            <div className="group-title">Integrations</div>
-            <p className="settings-help">
-              Perpetual uses provider-owned tools from the selected account profile. It never copies tokens, browser sessions, or plugin secrets between accounts.
-            </p>
-
-            <div className="integration-list">
-              <article className="integration-card">
-                <div className="integration-heading">
-                  <span><AgentMark agent="codex" /><strong>Codex plugins, apps &amp; MCP</strong></span>
-                  <em className="integration-state supported">Supported</em>
-                </div>
-                <p>Codex app-server loads enabled tools from the isolated Codex profile and keeps provider approvals in place.</p>
-              </article>
-              <article className="integration-card">
-                <div className="integration-heading">
-                  <span><AgentMark agent="claude_code" /><strong>Claude plugins &amp; MCP</strong></span>
-                  <em className="integration-state supported">Supported</em>
-                </div>
-                <p>Claude Code loads plugins and MCP servers from the isolated Claude profile. Perpetual does not use bare mode.</p>
-              </article>
-              <article className="integration-card">
-                <div className="integration-heading">
-                  <span><Icon name="window" /><strong>Embedded browser &amp; computer use</strong></span>
-                  <em className="integration-state provider-only">Provider app only</em>
-                </div>
-                <p>Not claimed or started by Perpetual. Open ChatGPT or Claude Desktop for provider-hosted browser and desktop control.</p>
-                <div className="integration-actions">
-                  <button type="button" className="secondary-btn" onClick={() => props.onOpenExternal("https://learn.chatgpt.com/docs/browser")}>OpenAI guide</button>
-                  <button type="button" className="secondary-btn" onClick={() => props.onOpenExternal("https://code.claude.com/docs/en/computer-use")}>Claude guide</button>
-                </div>
-              </article>
-            </div>
-
-            <div className="integration-accounts">
-              <strong>Configure a selected account</strong>
-              <small>Open the provider CLI in that account's isolated profile. Installation and consent stay with the provider.</small>
-              {accounts.length === 0 ? (
-                <div className="account-empty compact"><span>Add an account first.</span></div>
-              ) : accounts.map((account) => {
-                const status = props.snapshot.providerAccounts?.find((item) => item.id === account.id);
-                const ready = account.enabled && !!status?.authenticated;
-                return (
-                  <div className="integration-account-row" key={account.id}>
-                    <span><AgentMark agent={account.agent} /><strong>{providerAccountDisplayName(account, status)}</strong></span>
-                    <small>{ready ? "Signed in" : "Sign-in required"}</small>
-                    <button
-                      type="button"
-                      className={ready ? "secondary-btn" : "primary-btn"}
-                      onClick={() => ready ? props.onOpenProviderAccountSetup(account.id) : props.onSignInProviderAccount(account.id)}
-                    >
-                      {ready ? "Open setup" : "Sign in"}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
           </div>
 
           <div className="settings-group" data-settings-section="switching" id="settings-panel-switching" role="region" aria-labelledby="settings-nav-switching" hidden={section !== "switching"}>
@@ -5097,7 +4961,7 @@ function SettingsSheet(props: {
           </div>
 
           <div className="settings-group" data-settings-section="continuity" id="settings-panel-continuity" role="region" aria-labelledby="settings-nav-continuity" hidden={section !== "continuity"}>
-            <div className="group-title">Continuity</div>
+            <div className="group-title">Cloud Continuity</div>
             <div className="cloud-setup-grid">
               <CloudSetupCard
                 title="Claude Code on the web"

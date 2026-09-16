@@ -78,6 +78,9 @@ test("serializes provider account vault and sign-in requests", () => {
   assert.deepEqual(variant("provider_account_auth_launch", { account_id: "codex-dummy-1" }), {
     provider_account_auth_launch: { account_id: "codex-dummy-1" },
   });
+  assert.deepEqual(variant("provider_account_tooling_launch", { account_id: "codex-dummy-1" }), {
+    provider_account_tooling_launch: { account_id: "codex-dummy-1" },
+  });
   assert.deepEqual(variant("set_provider_account_token", {
     account_id: "claude-dummy-1",
     token: "dummy-token-never-persisted-in-policy",

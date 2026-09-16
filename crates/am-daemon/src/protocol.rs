@@ -177,6 +177,9 @@ pub enum DaemonRequest {
     ProviderAccountAuthLaunch {
         account_id: String,
     },
+    ProviderAccountToolingLaunch {
+        account_id: String,
+    },
     SetProviderAccountToken {
         account_id: String,
         token: String,
@@ -427,6 +430,7 @@ pub enum DaemonResponse {
     LimitPolicy(LimitPolicy),
     ProviderAccountStatuses(Vec<ProviderAccountStatus>),
     ProviderAccountAuthLaunch(ProviderAccountAuthLaunch),
+    ProviderAccountToolingLaunch(ProviderAccountAuthLaunch),
     SandboxRuntimeStatus(SandboxRuntimeStatus),
     SandboxLoginPrompt(SandboxLoginPrompt),
     SandboxPolicy(SandboxPolicy),

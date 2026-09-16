@@ -961,7 +961,7 @@ textarea {
 }
 .slash-item {
   display: grid;
-  grid-template-columns: minmax(82px, auto) minmax(0, 1fr);
+  grid-template-columns: 120px minmax(0, 1fr);
   align-items: center;
   gap: 10px;
   min-height: 30px;
@@ -977,6 +977,10 @@ textarea {
   background: var(--am-hover);
 }
 .slash-item span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--vscode-foreground);
   font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
   font-size: 12px;
@@ -1283,87 +1287,23 @@ textarea {
   font-size: 10px;
   line-height: 1.4;
 }
-.usage-summary {
-  min-width: 0;
-  margin: 0 10px 8px;
-  padding: 9px 10px 10px;
-  border: 1px solid var(--am-border-soft);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--am-surface-2) 66%, transparent);
-  box-sizing: border-box;
-}
-.usage-summary-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 7px;
-  min-width: 0;
-}
-.usage-window {
-  display: grid;
-  min-width: 0;
-  gap: 4px;
-  padding: 7px 8px;
-  border: 1px solid var(--am-border);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--am-surface-2) 54%, transparent);
-  box-sizing: border-box;
-}
-.usage-window.missing {
-  align-content: center;
-  min-height: 52px;
-}
-.usage-window-head {
+.budget-menu-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
+  gap: 10px;
   min-width: 0;
 }
-.usage-window-label,
-.usage-window-value,
-.usage-window-missing,
-.usage-window-reset {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.usage-window-label {
-  color: var(--am-muted);
-  font-size: 10px;
-}
-.usage-window-value {
+.budget-usage {
+  padding: 2px 5px;
   color: var(--vscode-foreground);
-  font-size: 11px;
-  font-weight: 650;
-}
-.usage-window-missing {
-  color: var(--am-muted);
-  font-size: 10px;
-}
-.usage-window-reset {
-  color: var(--am-muted);
   font-size: 9px;
-}
-.usage-bar {
-  height: 4px;
-  margin-top: 2px;
-  overflow: hidden;
+  font-weight: 650;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--am-border) 72%, transparent);
-}
-.usage-bar-fill {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--am-accent);
-  transition: width 180ms ease, background-color 180ms ease;
-}
-.usage-bar-fill.medium {
-  background: var(--vscode-editorWarning-foreground, #d7ba7d);
-}
-.usage-bar-fill.high {
-  background: var(--vscode-errorForeground, #f85149);
+  background: var(--am-control-bg-hover);
 }
 .budget-presets {
   display: grid;
@@ -1459,12 +1399,6 @@ textarea {
   width: 13px;
   height: 13px;
 }
-@container (max-width: 460px) {
-  .usage-summary-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
 /* Collapse the agent label when the composer gets narrow */
 @container (max-width: 380px) {
   .agent-chip {
