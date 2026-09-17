@@ -3,7 +3,7 @@
 Perpetual is an open-source VS Code extension for running and coordinating
 Claude Code and Codex sessions without leaving your editor. It gives each task
 a persistent workbench, repository context, explicit execution controls,
-reviewable changes, durable transcripts, and optional cloud continuity.
+reviewable changes, durable transcripts, and automatic account rotation.
 
 ![Perpetual workbench preview](media/PerpetualDemoImage.png)
 
@@ -12,8 +12,8 @@ reviewable changes, durable transcripts, and optional cloud continuity.
 ## Keep your work moving
 
 Perpetual is built for the moment when an agent stops being available but the
-work is not finished. Keep one task moving across local agents, limit resets,
-and optional cloud runs without copying prompts or rebuilding context by hand.
+work is not finished. Keep one task moving across local agents, signed-in
+accounts, and limit resets without copying prompts or rebuilding context by hand.
 
 - **Switch between Claude Code and Codex when limits hit.** When the active
   provider reaches a usage limit, Perpetual can pause the run and continue the
@@ -25,11 +25,6 @@ and optional cloud runs without copying prompts or rebuilding context by hand.
 - **Wait for recovery and resume automatically.** If no fallback agent is
   ready, Perpetual can wait for the provider's reset, resume the task when it is
   available again, and switch back to the original provider when configured.
-- **Hand work to the cloud when local execution cannot continue.** Carry an
-  eligible task to Claude Code on the web or Codex Cloud during sleep, shutdown,
-  connectivity loss, or another configured handoff event. Perpetual monitors the
-  cloud run and brings the result back into the local managed worktree for
-  review.
 - **Keep every transition reviewable.** Durable transcripts, queued turns,
   checkpoints, managed worktrees, diffs, and approval state stay attached to
   the same task as it moves between agents and execution environments.
@@ -73,22 +68,6 @@ You can:
   existing provider history.
 - Organize longer tasks with plans, work nodes, handoffs, and durable progress
   markers.
-
-### Multi-device agent collaboration
-
-Share a Perpetual workspace across computers on the same LAN, even when their
-Claude Code or Codex installations use different provider accounts. An
-encrypted invite connects each device, and the shared workbench shows exact
-handoff prompts, live progress, follow-up turns, approvals, and returned
-changes. Select the computer and agent for each turn directly from the
-composer.
-
-Remote runs use isolated worktrees and coordinator-side repository writer
-leases. Their changes return to the host for apply, reject, conflict review, or
-an explicit recoverable overwrite; Perpetual never silently replaces the host
-checkout. Coordination uses compact bounded handoffs and no additional model
-calls. See [Multi-device collaboration](docs/multi-device-collaboration.md) for
-setup, security, repository matching, and recovery details.
 
 ### Repository-aware workspaces
 
@@ -270,9 +249,7 @@ and start a session.
 
 Perpetual keeps its daemon on a loopback-only authenticated socket. The bundled
 `am-daemon` process owns the SQLite database, agent subprocesses, worktrees,
-and local JSON-RPC transport. Multi-device collaboration adds a separate,
-opt-in encrypted LAN proxy while the user is hosting; that proxy exposes only
-an allowlisted collaboration RPC surface and can be stopped at any time.
+and local JSON-RPC transport.
 
 Permission choices are explicit:
 
@@ -348,13 +325,8 @@ am-daemon -- am-core -- am-agents -- Claude Code / Codex
     |          |          |
     |          |          +-- provider adapters and event normalization
     |          +-- orchestration, scheduling, policy, approvals, handoffs
-    +-- SQLite state, worktrees, process lifecycle, local/cloud/sandbox runtime
+    +-- SQLite state, worktrees, process lifecycle, local/sandbox runtime
 ```
-
-When multi-device sharing is enabled, the extension host also runs the
-encrypted, RPC-allowlisted LAN proxy. Every worker keeps its own daemon,
-provider credentials, CLI process, and isolated worktree; the coordinator
-stores only shared task state and review artifacts.
 
 The repository is intentionally split into small Rust crates:
 
@@ -392,13 +364,9 @@ Code settings search. Important groups include:
   model targets.
 - `perpetual.autoSwitchOnLimit`, `switchBackOnRecovery`, and fallback priority
   for provider fallback behavior.
-- `perpetual.cloud.*` for cloud provider strategy, approval, concurrency, and
-  Codex Cloud environment configuration.
-- `perpetual.local.*` for local fallback, cloud recovery, and probe timing.
+- `perpetual.local.*` for local fallback and probe timing.
 - `perpetual.sandbox.*` for Docker Sandbox concurrency and resource/network
   limits.
-- `perpetual.collaboration.deviceName` for the name shown to other paired
-  devices.
 - `perpetual.daemonPath` to use a custom daemon binary during development.
 
 ## Troubleshooting

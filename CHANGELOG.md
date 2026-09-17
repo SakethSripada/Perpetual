@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 0.6.2
+
+- Make isolated Codex and Claude account sign-in update in place as soon as
+  authentication completes, using bounded status checks that never start a
+  model turn or consume provider usage.
+- Replace the oversized account editor with compact account rows, focused
+  connection actions, and collapsed advanced settings.
+- Refine account removal, reset-credit confirmation, alerts, responsive layout,
+  and provider-error handling with quieter, theme-native UI.
+- Preserve provider account state during settings changes so newly added or
+  authenticated accounts no longer disappear behind a stale detection cache.
+- Temporarily disable and hide Cloud Continuity and same-network collaboration
+  at both the UI and runtime boundaries while preserving their implementation.
+
 ## 0.6.1
 
 - Stop rejecting provider-native slash-shaped input while keeping interactive

@@ -37,6 +37,7 @@ import type {
   WorkbenchSnapshot,
 } from "./types";
 import { BrandMark, Icon } from "./icons";
+import { CLOUD_CONTINUITY_ENABLED, LAN_COLLABORATION_ENABLED } from "./featureFlags";
 import { Markdown } from "./markdown";
 import {
   buildTranscriptItems,
@@ -116,7 +117,12 @@ export default function App() {
   const [repoIds, setRepoIds] = useState<string[]>(persisted.repoIds ?? []);
   const repoIdsRef = useRef(repoIds);
   repoIdsRef.current = repoIds;
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNoticeText] = useState<string | null>(null);
+  const [noticeIsError, setNoticeIsError] = useState(false);
+  const setNotice = (message: string | null, isError = false) => {
+    setNoticeIsError(isError);
+    setNoticeText(message);
+  };
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [monitorOpen, setMonitorOpen] = useState(false);
   const [collaborationOpen, setCollaborationOpen] = useState(false);
@@ -230,7 +236,9 @@ export default function App() {
         }
         snapshotRef.current = incoming.snapshot;
         setSnapshot(incoming.snapshot);
-        if (incoming.snapshot.error) setNotice(incoming.snapshot.error);
+        if (incoming.snapshot.error) {
+          setNotice(incoming.snapshot.error, true);
+        }
         // Clear the optimistic navigation once the daemon agrees on the selection.
         setNavThreadId((nav) =>
           nav === undefined || nav === incoming.snapshot.selectedThreadId
@@ -298,11 +306,11 @@ export default function App() {
             );
           }
         }
-        setNotice(incoming.message);
+        setNotice(incoming.message, true);
         return;
       }
       if (incoming.type === "notice" || incoming.type === "error") {
-        setNotice(incoming.message);
+        setNotice(incoming.message, incoming.type === "error");
         if (incoming.type === "error") setPending([]);
         return;
       }
@@ -912,18 +920,20 @@ export default function App() {
           <IconButton title="Settings" onClick={() => setSettingsOpen(true)}>
             <Icon name="settings" />
           </IconButton>
-          <button
-            type="button"
-            className={`collaboration-trigger${snapshot?.collaboration.connected ? " connected" : ""}${snapshot?.collaboration.change_sets.some((change) => change.status === "pending" || change.status === "conflict") ? " attention" : ""}`}
-            title="Devices and shared workspace"
-            aria-label="Devices and shared workspace"
-            onClick={() => setCollaborationOpen(true)}
-          >
-            <Icon name="devices" />
-            {snapshot?.collaboration.connected && (
-              <span>{onlineCollaborationDevices(snapshot).length}</span>
-            )}
-          </button>
+          {LAN_COLLABORATION_ENABLED && (
+            <button
+              type="button"
+              className={`collaboration-trigger${snapshot?.collaboration.connected ? " connected" : ""}${snapshot?.collaboration.change_sets.some((change) => change.status === "pending" || change.status === "conflict") ? " attention" : ""}`}
+              title="Devices and shared workspace"
+              aria-label="Devices and shared workspace"
+              onClick={() => setCollaborationOpen(true)}
+            >
+              <Icon name="devices" />
+              {snapshot?.collaboration.connected && (
+                <span>{onlineCollaborationDevices(snapshot).length}</span>
+              )}
+            </button>
+          )}
           <IconButton title="Status monitor" onClick={() => setMonitorOpen(true)}>
             <Icon name="clock" />
           </IconButton>
@@ -945,7 +955,7 @@ export default function App() {
       </header>
 
       {notice && (
-        <div className="notice" role="status">
+        <div className={`notice${noticeIsError ? " error" : ""}`} role={noticeIsError ? "alert" : "status"}>
           <span>{notice}</span>
           <IconButton title="Dismiss" onClick={() => setNotice(null)}>
             <Icon name="close" />
@@ -953,7 +963,7 @@ export default function App() {
         </div>
       )}
 
-      <CloudStatusBar
+      {CLOUD_CONTINUITY_ENABLED && <CloudStatusBar
         selectedThread={selectedThread}
         activeRuns={activeCloudRuns}
         policy={snapshot?.cloudPolicy ?? null}
@@ -973,7 +983,7 @@ export default function App() {
             threadId: selectedThread.id,
           })
         }
-      />
+      />}
 
       <section className="conversation">
         <div
@@ -1161,7 +1171,9 @@ export default function App() {
               type: "setSandboxPolicy",
               policy: sandboxPolicy,
             });
-            vscode.postMessage({ type: "setCloudPolicy", policy: cloudPolicy });
+            if (CLOUD_CONTINUITY_ENABLED) {
+              vscode.postMessage({ type: "setCloudPolicy", policy: cloudPolicy });
+            }
             vscode.postMessage({
               type: "setLocalModelPolicy",
               policy: localModelPolicy,
@@ -1228,7 +1240,7 @@ export default function App() {
         />
       )}
 
-      {collaborationOpen && snapshot && (
+      {LAN_COLLABORATION_ENABLED && collaborationOpen && snapshot && (
         <CollaborationSheet
           snapshot={snapshot}
           invite={collaborationInvite}
@@ -4319,9 +4331,9 @@ function MonitorSheet(props: {
   onReclaimCloud(): void;
 }) {
   const thread = props.selectedThread;
-  const activeCloud = props.details?.cloudRuns.find((run) =>
-    isActiveCloudRun(run.status),
-  );
+  const activeCloud = CLOUD_CONTINUITY_ENABLED
+    ? props.details?.cloudRuns.find((run) => isActiveCloudRun(run.status))
+    : undefined;
   const agent = thread?.active_agent ?? thread?.preferred_agent ?? null;
   const activeTurn = props.details?.turns.find((turn) => !turn.ended_at);
   const cloudReady =
@@ -4383,19 +4395,15 @@ function MonitorSheet(props: {
               label="Queued"
               value={`${props.details?.queued.length ?? 0} follow-up${props.details?.queued.length === 1 ? "" : "s"}`}
             />
-            <MonitorMetric
-              label="Cloud"
-              value={
-                activeCloud
-                  ? `${labelAgent(activeCloud.agent_kind)} ${humanize(activeCloud.status)}`
-                  : props.snapshot.cloudPolicy?.enabled
-                    ? "Armed"
-                    : "Off"
-              }
-            />
+            {CLOUD_CONTINUITY_ENABLED && (
+              <MonitorMetric
+                label="Cloud"
+                value={activeCloud ? `${labelAgent(activeCloud.agent_kind)} ${humanize(activeCloud.status)}` : "Off"}
+              />
+            )}
           </div>
 
-          <div className="settings-group">
+          {CLOUD_CONTINUITY_ENABLED && <div className="settings-group">
             <div className="group-title">Cloud Continuity</div>
             <div className="monitor-actions">
               <button
@@ -4421,7 +4429,7 @@ function MonitorSheet(props: {
                 <span>Settings</span>
               </button>
             </div>
-          </div>
+          </div>}
 
         </div>
       </section>
@@ -4462,12 +4470,11 @@ const SETTINGS_SECTIONS = [
   ["accounts", "Accounts", "Manage sign-ins"],
   ["agents", "Providers", "Check connections"],
   ["switching", "Models & limits", "Defaults and routing"],
-  ["continuity", "Cloud Continuity", "Keep work moving"],
   ["local", "Local models", "Offline fallback"],
   ["sandbox", "Sandbox", "Isolated execution"],
 ] as const;
 
-type SettingsSection = (typeof SETTINGS_SECTIONS)[number][0];
+type SettingsSection = (typeof SETTINGS_SECTIONS)[number][0] | "continuity";
 
 export function providerAccountDisplayName(account: ProviderAccount, status?: { authenticated: boolean; email?: string | null }): string {
   const label = account.label.trim();
@@ -4607,8 +4614,8 @@ function SettingsSheet(props: {
               <span className="account-count">{accounts.length} {accounts.length === 1 ? "account" : "accounts"}</span>
             </div>
             <div className="account-add-row">
-              <button type="button" className="account-add-button" onClick={() => addAccount("codex")}><AgentMark agent="codex" /><span><strong>Add Codex</strong><small>New isolated profile</small></span><Icon name="plus" /></button>
-              <button type="button" className="account-add-button" onClick={() => addAccount("claude_code")}><AgentMark agent="claude_code" /><span><strong>Add Claude</strong><small>Token or isolated profile</small></span><Icon name="plus" /></button>
+              <button type="button" className="account-add-button" onClick={() => addAccount("codex")}><AgentMark agent="codex" /><span>Add Codex</span><Icon name="plus" /></button>
+              <button type="button" className="account-add-button" onClick={() => addAccount("claude_code")}><AgentMark agent="claude_code" /><span>Add Claude</span><Icon name="plus" /></button>
             </div>
             {accounts.length === 0 ? (
               <div className="account-empty">
@@ -4620,7 +4627,8 @@ function SettingsSheet(props: {
                 {accounts.map((account, index) => {
                   const status = props.snapshot.providerAccounts?.find((item) => item.id === account.id);
                   const saved = !!status;
-                  const state = !account.enabled ? "Paused" : !saved ? "Ready to sign in" : !status.authenticated ? "Sign-in required" : status.availability === "limited" ? (status.reset_at ? `Limited · ${formatResetTime(status.reset_at)}` : "Limited") : "Ready";
+                  const authPending = props.snapshot.authPendingAccountIds?.includes(account.id) ?? false;
+                  const state = authPending ? "Connecting…" : !account.enabled ? "Paused" : !saved ? "Ready to sign in" : !status.authenticated ? "Sign-in required" : status.availability === "limited" ? (status.reset_at ? `Limited · ${formatResetTime(status.reset_at)}` : "Limited") : "Ready";
                   const token = accountTokens[account.id] ?? "";
                   const displayName = providerAccountDisplayName(account, status);
                   const expanded = !!expandedAccounts[account.id];
@@ -4632,32 +4640,29 @@ function SettingsSheet(props: {
                           <AgentMark agent={account.agent} />
                           <span title={displayName}>{displayName}</span>
                         </button>
+                        <span className={`account-status${status?.authenticated && !authPending ? " ready" : ""}${authPending ? " pending" : ""}`}>{state}</span>
                         <div className="account-reorder" role="group" aria-label={`Order for ${displayName}`}>
                           <button type="button" disabled={index === 0} aria-label={`Move ${displayName} up`} title="Move up" onClick={() => moveAccount(index, -1)}><Icon name="up" /></button>
                           <button type="button" disabled={index === accounts.length - 1} aria-label={`Move ${displayName} down`} title="Move down" onClick={() => moveAccount(index, 1)}><Icon name="down" /></button>
                         </div>
                       </div>
                       <div className="provider-account-body" id={`account-details-${account.id}`} hidden={!expanded}>
-                        <div className="account-status-line"><span>{labelAgent(account.agent)}</span><span className={status?.authenticated ? "account-status ready" : "account-status"}>{state}</span></div>
-                        <label className="field">
-                          <span>Account name</span>
-                          <input aria-label="Account name" value={account.label} onChange={(event) => updateAccount(account.id, { label: event.target.value }, false)} onBlur={() => props.onSaveLimitPolicy(limit)} />
-                          {status?.authenticated && status.email && <small className="account-identity">Signed in as {status.email}</small>}
-                        </label>
-                        {account.agent === "claude_code" && (
-                          <label className="field">
-                            <span>Authentication</span>
-                            <select value={account.auth_mode} onChange={(event) => updateAccount(account.id, { auth_mode: event.target.value as ProviderAccount["auth_mode"] })}>
-                              <option value="oauth_token">Secure setup token</option>
-                              <option value="isolated_cli">Isolated CLI profile</option>
-                            </select>
-                          </label>
-                        )}
+                        <div className="account-auth-row">
+                          <div className="account-auth-copy">
+                            <strong>{status?.authenticated ? status.email || "Authenticated" : account.auth_mode === "oauth_token" ? "Connect with a setup token" : "Connect this account"}</strong>
+                            <small>{status?.authenticated ? "Credentials are stored in this isolated profile." : account.auth_mode === "oauth_token" ? "Generate a token, then paste it below." : "Finish sign-in in the terminal that opens."}</small>
+                          </div>
+                          <div className="account-primary-actions">
+                            {saved && status?.authenticated && (
+                              <button type="button" className="secondary-btn account-cli" title="Manage plugins and MCP for this account" onClick={() => props.onOpenProviderAccountCli(account.id)}><Icon name="terminal" /><span>Open CLI</span></button>
+                            )}
+                            <button type="button" className="primary-btn" disabled={authPending} onClick={() => props.onSignInProviderAccount(account.id)}>{authPending ? "Connecting…" : account.auth_mode === "oauth_token" ? "Generate token" : status?.authenticated ? "Sign in again" : "Sign in"}</button>
+                          </div>
+                        </div>
                         {account.agent === "claude_code" && account.auth_mode === "oauth_token" && (
                           <div className="account-token-field">
-                            <label className="field" htmlFor={`account-token-${account.id}`}><span>Setup token</span></label>
                             <div className="account-token-entry">
-                              <input id={`account-token-${account.id}`} type="password" autoComplete="off" placeholder="Paste your setup token" value={token} onChange={(event) => setAccountTokens({ ...accountTokens, [account.id]: event.target.value })} />
+                              <input aria-label="Setup token" id={`account-token-${account.id}`} type="password" autoComplete="off" placeholder="Paste setup token" value={token} onChange={(event) => setAccountTokens({ ...accountTokens, [account.id]: event.target.value })} />
                               <button type="button" className="secondary-btn" disabled={!token.trim()} onClick={() => {
                                 props.onSetProviderAccountToken(account.id, token);
                                 setAccountTokens({ ...accountTokens, [account.id]: "" });
@@ -4665,22 +4670,32 @@ function SettingsSheet(props: {
                             </div>
                           </div>
                         )}
-                        <div className="account-preferences">
-                          <label className="toggle-row"><span>Enabled</span><input type="checkbox" checked={account.enabled} onChange={(event) => updateAccount(account.id, { enabled: event.target.checked })} /></label>
-                          {account.agent === "codex" && <label className="toggle-row" title="Redeem an earned Codex rate-limit reset when this slot reaches its limit."><span>Use reset credits</span><input type="checkbox" checked={account.use_credits} onChange={(event) => event.target.checked ? setCreditConfirmId(account.id) : updateAccount(account.id, { use_credits: false })} /></label>}
-                        </div>
-                        <div className="account-footer-actions">
+                        <details className="account-advanced">
+                          <summary>Account settings</summary>
+                          <div className="account-settings-grid">
+                            <label className="field">
+                              <span>Account name</span>
+                              <input aria-label="Account name" value={account.label} onChange={(event) => updateAccount(account.id, { label: event.target.value }, false)} onBlur={() => props.onSaveLimitPolicy(limit)} />
+                            </label>
+                            {account.agent === "claude_code" && (
+                              <label className="field">
+                                <span>Authentication</span>
+                                <select value={account.auth_mode} onChange={(event) => updateAccount(account.id, { auth_mode: event.target.value as ProviderAccount["auth_mode"] })}>
+                                  <option value="oauth_token">Setup token</option>
+                                  <option value="isolated_cli">CLI profile</option>
+                                </select>
+                              </label>
+                            )}
+                          </div>
+                          <div className="account-preferences">
+                            <label className="toggle-row"><span>Available for tasks</span><input type="checkbox" checked={account.enabled} onChange={(event) => updateAccount(account.id, { enabled: event.target.checked })} /></label>
+                            {account.agent === "codex" && <label className="toggle-row" title="Redeem an earned Codex rate-limit reset when this account reaches its limit."><span>Use reset credits</span><input type="checkbox" checked={account.use_credits} onChange={(event) => event.target.checked ? setCreditConfirmId(account.id) : updateAccount(account.id, { use_credits: false })} /></label>}
+                          </div>
                           <button type="button" className="account-remove" onClick={() => {
                             if (saved) setRemoveConfirmId(account.id);
                             else saveAccounts(accounts.filter((item) => item.id !== account.id));
-                          }}><Icon name="trash" /><span>Remove</span></button>
-                          <div className="account-primary-actions">
-                            {saved && status?.authenticated && (
-                              <button type="button" className="secondary-btn account-cli" title="Manage plugins and MCP for this account" onClick={() => props.onOpenProviderAccountCli(account.id)}><Icon name="terminal" /><span>Open CLI</span></button>
-                            )}
-                            <button type="button" className="primary-btn" onClick={() => props.onSignInProviderAccount(account.id)}>{account.auth_mode === "oauth_token" ? "Generate token" : status?.authenticated ? "Sign in again" : "Sign in"}</button>
-                          </div>
-                        </div>
+                          }}><Icon name="trash" /><span>Remove account</span></button>
+                        </details>
                       </div>
                     </article>
                   );
@@ -5137,19 +5152,6 @@ function SettingsSheet(props: {
             <label className="toggle">
               <input
                 type="checkbox"
-                checked={localPolicy.auto_resume_cloud}
-                onChange={(event) =>
-                  setLocalPolicy({
-                    ...localPolicy,
-                    auto_resume_cloud: event.target.checked,
-                  })
-                }
-              />
-              <span>Resume cloud agents when the network comes back</span>
-            </label>
-            <label className="toggle">
-              <input
-                type="checkbox"
                 checked={localPolicy.use_local_fallback}
                 onChange={(event) =>
                   setLocalPolicy({
@@ -5158,21 +5160,7 @@ function SettingsSheet(props: {
                   })
                 }
               />
-              <span>Use local models while cloud agents are unavailable</span>
-            </label>
-            <label className="toggle">
-              <input
-                type="checkbox"
-                checked={localPolicy.switch_back_to_cloud}
-                disabled={!localPolicy.use_local_fallback}
-                onChange={(event) =>
-                  setLocalPolicy({
-                    ...localPolicy,
-                    switch_back_to_cloud: event.target.checked,
-                  })
-                }
-              />
-              <span>Switch back from local models when cloud is stable</span>
+              <span>Use local models when providers are unavailable</span>
             </label>
             {localPolicy.use_local_fallback && (
               <>
@@ -5406,15 +5394,14 @@ function SettingsSheet(props: {
         {creditConfirmId && (
           <div className="settings-confirm-backdrop" role="presentation" onMouseDown={() => setCreditConfirmId(null)}>
             <div className="settings-confirm" role="dialog" aria-modal="true" aria-labelledby="credit-confirm-title" onMouseDown={(event) => event.stopPropagation()}>
-              <Icon name="bolt" />
-              <strong id="credit-confirm-title">Allow automatic reset-credit use?</strong>
-              <p>Use an earned reset credit when this account reaches its limit? This never purchases credits.</p>
+              <strong id="credit-confirm-title">Use reset credits?</strong>
+              <p>Perpetual can redeem an earned credit when this account reaches its limit. It will never purchase credits.</p>
               <div className="settings-confirm-actions">
-                <button type="button" className="secondary-btn" onClick={() => setCreditConfirmId(null)}>Keep off</button>
+                <button type="button" className="secondary-btn" onClick={() => setCreditConfirmId(null)}>Cancel</button>
                 <button type="button" className="primary-btn" onClick={() => {
                   updateAccount(creditConfirmId, { use_credits: true });
                   setCreditConfirmId(null);
-                }}>Allow for this account</button>
+                }}>Allow</button>
               </div>
             </div>
           </div>
@@ -5422,16 +5409,15 @@ function SettingsSheet(props: {
         {removeConfirmId && (
           <div className="settings-confirm-backdrop" role="presentation" onMouseDown={() => setRemoveConfirmId(null)}>
             <div className="settings-confirm" role="dialog" aria-modal="true" aria-labelledby="remove-account-title" onMouseDown={(event) => event.stopPropagation()}>
-              <Icon name="trash" />
-              <strong id="remove-account-title">Remove this account slot?</strong>
-              <p>Remove this account and its local credentials?</p>
+              <strong id="remove-account-title">Remove account?</strong>
+              <p>Its isolated sign-in data will be deleted from this device.</p>
               <div className="settings-confirm-actions">
                 <button type="button" className="secondary-btn" onClick={() => setRemoveConfirmId(null)}>Cancel</button>
                 <button type="button" className="primary-btn danger-confirm" onClick={() => {
                   props.onDeleteProviderAccount(removeConfirmId);
                   setLimit({ ...limit, accounts: accounts.filter((item) => item.id !== removeConfirmId) });
                   setRemoveConfirmId(null);
-                }}>Remove slot</button>
+                }}>Remove</button>
               </div>
             </div>
           </div>

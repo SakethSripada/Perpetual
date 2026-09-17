@@ -4,9 +4,9 @@ Keep coding when your AI agent hits a limit.
 
 Perpetual is a VS Code workbench for Claude Code and Codex that keeps tasks
 moving across providers, multiple signed-in accounts, limit resets, and
-optional cloud execution. Your transcript, repository context, approvals, and
-worktree stay attached to the same task instead of getting lost in a new chat
-or a copied prompt.
+automatic recovery. Your transcript, repository context, approvals, and worktree
+stay attached to the same task instead of getting lost in a new chat or a copied
+prompt.
 
 ![Perpetual workbench preview](media/PerpetualDemoImage.png)
 
@@ -47,31 +47,11 @@ Provider-owned plugins and MCP servers work from the selected account profile.
 Expand a signed-in account and choose **Open CLI** to manage them with the
 provider's own commands.
 
-### Continue work in the cloud
-
-When local execution cannot continue, optional Cloud Continuity can hand an
-eligible task to Claude Code on the web or Codex Cloud. Perpetual can carry work
-over during sleep or shutdown, monitor the cloud run, and bring the result back
-into the local managed worktree for review.
-
 ### Keep transitions reviewable
 
 Every task has durable transcripts, checkpoints, managed worktrees, diffs, and
 approval state. Changes return as a reviewable local result instead of silently
 replacing your checkout.
-
-### Coordinate agents across your computers
-
-Connect desktop, laptop, and other Perpetual installations with a short-lived
-encrypted LAN invite, even when they use different Claude Code or Codex
-accounts. Pick a device and agent from the composer, then see the exact handoff
-prompt, live progress, follow-ups, and approval requests in one workbench.
-
-Remote agents work in isolated worktrees. Repository writer leases prevent
-accidental overlap, and returned patches wait for host-side apply, reject, or
-conflict review. An explicit overwrite keeps a recovery backup. The coordination
-layer uses bounded state and no extra model calls, so it does not consume
-provider usage by itself.
 
 ### Budget each task or session
 
@@ -89,8 +69,6 @@ draining your quota.
 - Local model fallback through Ollama or LM Studio.
 - Optional Docker Sandbox execution for Codex.
 - GitHub repository sign-in, selection, cloning, diffs, and change review.
-- Encrypted multi-device execution with shared prompts, progress, approvals,
-  repository locks, and returned-change review.
 
 ## Get started
 
@@ -100,12 +78,12 @@ Code. Install and authenticate at least one supported provider:
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview)
 - [Codex](https://github.com/openai/codex)
 
-To use provider switching, install and authenticate both. Cloud Continuity,
-Docker Sandbox, GitHub repositories, and local models require their respective
-accounts or local services.
+To use provider switching, install and authenticate both. Docker Sandbox,
+GitHub repositories, and local models require their respective accounts or
+local services.
 
-Perpetual is designed for trusted workspaces. Review the permission and cloud
-handoff settings before enabling autonomous or remote execution.
+Perpetual is designed for trusted workspaces. Review the permission settings
+before enabling autonomous execution.
 
 ## Learn more
 

@@ -532,7 +532,7 @@ test("settings stay legible and compact at narrow panel widths", () => {
     path.resolve(__dirname, "../../webview/src/settings.css"), "utf8",
   );
   // Inactive categories must stay hidden even when a layout rule sets display.
-  for (const section of ["accounts", "agents", "switching", "continuity", "local", "sandbox"]) {
+  for (const section of ["accounts", "agents", "switching", "local", "sandbox"]) {
     assert.ok(app.includes(`hidden={section !== "${section}"}`));
     assert.ok(app.includes(`id="settings-panel-${section}"`));
   }
@@ -586,12 +586,53 @@ test("slash command metadata stays aligned across command lengths", () => {
   assert.match(styles, /\.slash-item span \{[\s\S]*text-overflow: ellipsis/);
 });
 
-test("continuity is consistently labeled Cloud Continuity", () => {
+test("paused cloud and LAN implementations are runtime-gated", () => {
+  const webFlags = readFileSync(
+    path.resolve(__dirname, "../../webview/src/featureFlags.ts"), "utf8",
+  );
+  const nodeFlags = readFileSync(
+    path.resolve(__dirname, "../../src/node/featureFlags.ts"), "utf8",
+  );
+  const controller = readFileSync(
+    path.resolve(__dirname, "../../src/node/workbenchController.ts"), "utf8",
+  );
+  const manager = readFileSync(
+    path.resolve(__dirname, "../../src/node/daemonManager.ts"), "utf8",
+  );
+
+  assert.match(webFlags, /CLOUD_CONTINUITY_ENABLED = false/);
+  assert.match(webFlags, /LAN_COLLABORATION_ENABLED = false/);
+  assert.match(nodeFlags, /CLOUD_CONTINUITY_ENABLED = false/);
+  assert.match(nodeFlags, /LAN_COLLABORATION_ENABLED = false/);
+  assert.match(controller, /CLOUD_MESSAGE_TYPES\.has\(message\.type\)/);
+  assert.match(controller, /COLLABORATION_MESSAGE_TYPES\.has\(message\.type\)/);
+  assert.match(manager, /if \(!LAN_COLLABORATION_ENABLED\) return local/);
+  assert.match(manager, /client\.setCloudPolicy\(\{ \.\.\.policy, enabled: false \}\)/);
+});
+
+test("provider authentication refreshes in place without starting model work", () => {
+  const app = readFileSync(
+    path.resolve(__dirname, "../../webview/src/App.tsx"), "utf8",
+  );
+  const controller = readFileSync(
+    path.resolve(__dirname, "../../src/node/workbenchController.ts"), "utf8",
+  );
+
+  assert.match(controller, /watchProviderAuthentication\(accountId, launch\.label, reply\)/);
+  assert.match(controller, /client\.providerAccountStatuses\(\)/);
+  assert.match(controller, /authPendingAccountIds: \[\.\.\.this\.authPendingAccounts\]/);
+  assert.doesNotMatch(controller, /watchProviderAuthentication[\s\S]{0,2500}submitAgentThread/);
+  assert.match(app, /authPendingAccountIds\?\.includes\(account\.id\)/);
+  assert.match(app, /<summary>Account settings<\/summary>/);
+  assert.doesNotMatch(app, /New isolated profile|Token or isolated profile/);
+});
+
+test("paused cloud features stay out of settings navigation", () => {
   const app = readFileSync(
     path.resolve(__dirname, "../../webview/src/App.tsx"),
     "utf8",
   );
 
-  assert.match(app, /\["continuity", "Cloud Continuity", "Keep work moving"\]/);
+  assert.doesNotMatch(app, /\["continuity", "Cloud Continuity"/);
   assert.doesNotMatch(app, /className="group-title">Continuity</);
 });
