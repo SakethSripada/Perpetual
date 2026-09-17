@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 import * as vscode from "vscode";
+import { CLOUD_CONTINUITY_ENABLED, LAN_COLLABORATION_ENABLED } from "./featureFlags";
 import type { DaemonApi } from "./protocol";
 import type { DaemonManager } from "./daemonManager";
 import type {
@@ -110,6 +111,26 @@ type WebviewMessage =
   | { type: "applyCollaborationChangeSet"; changeSetId: string; overwrite?: boolean }
   | { type: "rejectCollaborationChangeSet"; changeSetId: string };
 
+const CLOUD_MESSAGE_TYPES = new Set<string>([
+  "setCloudPolicy",
+  "launchCloudHandoff",
+  "reclaimCloudRun",
+]);
+
+const COLLABORATION_MESSAGE_TYPES = new Set<string>([
+  "hostCollaboration",
+  "copyCollaborationInvite",
+  "joinCollaboration",
+  "leaveCollaboration",
+  "revokeCollaborationDevice",
+  "cancelCollaborationAssignment",
+  "dismissCollaborationAssignmentIssue",
+  "retryCollaborationAssignment",
+  "addCollaborationRepoAndRetry",
+  "applyCollaborationChangeSet",
+  "rejectCollaborationChangeSet",
+]);
+
 // Agent/sandbox detection shells out to CLIs, so we cache it briefly to keep the
 // frequent event-driven refreshes from re-probing on every tick.
 const DETECTION_TTL_MS = 15_000;
@@ -144,6 +165,8 @@ export class WorkbenchController implements vscode.Disposable {
   private lastSyncedSettings = "";
   private disposed = false;
   private detectionCache: DetectionCache | null = null;
+  private readonly authPendingAccounts = new Set<string>();
+  private readonly authWatchTimers = new Map<string, NodeJS.Timeout>();
   private diffCache = new Map<string, DiffCacheEntry>();
   private applyResults = new Map<string, AgentThreadApplyResult>();
   private autoApplyInFlight = new Set<string>();
@@ -182,6 +205,8 @@ export class WorkbenchController implements vscode.Disposable {
   dispose(): void {
     this.disposed = true;
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    for (const timer of this.authWatchTimers.values()) clearTimeout(timer);
+    this.authWatchTimers.clear();
     this.snapshots.dispose();
     this.threadEvents.dispose();
   }
@@ -202,6 +227,12 @@ export class WorkbenchController implements vscode.Disposable {
     reply?: WebviewReply,
   ): Promise<void> {
     try {
+      if (!LAN_COLLABORATION_ENABLED && COLLABORATION_MESSAGE_TYPES.has(message.type)) {
+        throw new Error("Shared workspaces are temporarily unavailable.");
+      }
+      if (!CLOUD_CONTINUITY_ENABLED && CLOUD_MESSAGE_TYPES.has(message.type)) {
+        throw new Error("Cloud Continuity is temporarily unavailable.");
+      }
       switch (message.type) {
         case "refresh":
           // Manual refresh should re-probe agents/sandbox, not serve the cache.
@@ -301,10 +332,8 @@ export class WorkbenchController implements vscode.Disposable {
               client.setLimitPolicy(policy),
             );
             await this.mirrorLimitPolicyToConfig(applied);
+            await this.refreshProviderAccounts(applied);
           }
-          this.lastSyncedSettings = "";
-          this.detectionCache = null;
-          await this.refresh();
           return;
         case "setSandboxPolicy":
           {
@@ -320,7 +349,10 @@ export class WorkbenchController implements vscode.Disposable {
         case "setCloudPolicy":
           {
             const applied = await this.withLocalClient((client) =>
-              client.setCloudPolicy(message.policy),
+              client.setCloudPolicy({
+                ...message.policy,
+                enabled: CLOUD_CONTINUITY_ENABLED && message.policy.enabled,
+              }),
             );
           // Mirror into VS Code settings so the next settings sync doesn't undo
           // what the user just applied from the in-webview sheet.
@@ -334,7 +366,11 @@ export class WorkbenchController implements vscode.Disposable {
           {
             const applied = await this.withLocalClient((client) =>
               client.setLocalModelPolicy(
-                normalizeLocalModelPolicy(message.policy),
+                normalizeLocalModelPolicy({
+                  ...message.policy,
+                  auto_resume_cloud: CLOUD_CONTINUITY_ENABLED && message.policy.auto_resume_cloud,
+                  switch_back_to_cloud: CLOUD_CONTINUITY_ENABLED && message.policy.switch_back_to_cloud,
+                }),
               ),
             );
             await this.mirrorLocalModelPolicyToConfig(applied);
@@ -359,16 +395,16 @@ export class WorkbenchController implements vscode.Disposable {
           await this.withLocalClient((client) =>
             client.setProviderAccountToken(message.accountId, message.token),
           );
-          this.detectionCache = null;
-          this.notice(reply, "Claude account token stored in the OS credential vault.");
-          await this.refresh();
+          this.stopAuthenticationWatch(message.accountId);
+          this.notice(reply, "Claude account connected.");
+          await this.refreshProviderAccounts();
           return;
         case "deleteProviderAccount":
+          this.stopAuthenticationWatch(message.accountId);
           await this.withLocalClient((client) =>
             client.deleteProviderAccount(message.accountId),
           );
-          this.detectionCache = null;
-          await this.refresh();
+          await this.refreshProviderAccounts();
           return;
         case "githubSignIn":
           await this.githubToken();
@@ -539,7 +575,7 @@ export class WorkbenchController implements vscode.Disposable {
           return;
       }
     } catch (err) {
-      const text = err instanceof Error ? err.message : String(err);
+      const text = friendlyError(err);
       this.output.appendLine(`[workbench] ${text}`);
       reply?.(
         message.type === "assignRepos"
@@ -550,7 +586,9 @@ export class WorkbenchController implements vscode.Disposable {
             }
           : { type: "error", message: text },
       );
-      await this.refresh(text);
+      // Action failures are transient UI feedback, not a fatal snapshot state.
+      // Keeping them out of the snapshot avoids duplicate/sticky error banners.
+      await this.refresh();
     }
   }
 
@@ -792,6 +830,7 @@ export class WorkbenchController implements vscode.Disposable {
         defaultRepoIds,
         limitPolicy,
         providerAccounts,
+        authPendingAccountIds: [...this.authPendingAccounts],
         sandboxPolicy,
         sandboxRuntime,
         cloudPolicy,
@@ -1231,7 +1270,77 @@ export class WorkbenchController implements vscode.Disposable {
       message: launch.instructions,
     });
     terminal.show(true);
-    this.notice(reply, launch.instructions);
+    this.authPendingAccounts.add(accountId);
+    this.notice(reply, `Waiting for ${launch.label} sign-in…`);
+    await this.refresh();
+    this.watchProviderAuthentication(accountId, launch.label, reply);
+  }
+
+  private watchProviderAuthentication(
+    accountId: string,
+    label: string,
+    reply?: WebviewReply,
+  ): void {
+    this.stopAuthenticationWatch(accountId, false);
+    this.authPendingAccounts.add(accountId);
+    const startedAt = Date.now();
+    const check = async () => {
+      if (this.disposed || !this.authPendingAccounts.has(accountId)) return;
+      try {
+        const statuses = await this.refreshProviderAccounts();
+        const status = statuses.find((item) => item.id === accountId);
+        if (!status) {
+          this.stopAuthenticationWatch(accountId);
+          return;
+        }
+        if (status.authenticated) {
+          this.stopAuthenticationWatch(accountId);
+          this.notice(reply, `${label} connected.`);
+          await this.refresh();
+          return;
+        }
+      } catch (err) {
+        this.output.appendLine(
+          `[workbench] account sign-in check delayed: ${formatError(err)}`,
+        );
+      }
+      if (Date.now() - startedAt >= 10 * 60_000) {
+        this.stopAuthenticationWatch(accountId);
+        this.notice(reply, `Sign-in is still open for ${label}. Refresh after finishing.`);
+        await this.refresh();
+        return;
+      }
+      const delay = Date.now() - startedAt < 15_000 ? 750 : 1_500;
+      this.authWatchTimers.set(accountId, setTimeout(() => void check(), delay));
+    };
+    this.authWatchTimers.set(accountId, setTimeout(() => void check(), 500));
+  }
+
+  private stopAuthenticationWatch(accountId: string, clearPending = true): void {
+    const timer = this.authWatchTimers.get(accountId);
+    if (timer) clearTimeout(timer);
+    this.authWatchTimers.delete(accountId);
+    if (clearPending) this.authPendingAccounts.delete(accountId);
+  }
+
+  private async refreshProviderAccounts(
+    limitPolicy?: LimitPolicy,
+  ): Promise<ProviderAccountStatus[]> {
+    const client = await this.daemon.getLocalClient();
+    const [providerAccounts, currentPolicy] = await Promise.all([
+      client.providerAccountStatuses(),
+      limitPolicy ? Promise.resolve(limitPolicy) : client.getLimitPolicy(),
+    ]);
+    if (this.detectionCache) {
+      this.detectionCache = {
+        ...this.detectionCache,
+        at: Date.now(),
+        limitPolicy: normalizeLimitPolicy(currentPolicy),
+        providerAccounts,
+      };
+    }
+    await this.refresh();
+    return providerAccounts;
   }
 
   private async openProviderAccountCli(
@@ -1421,7 +1530,7 @@ export class WorkbenchController implements vscode.Disposable {
       await client.setCloudPolicy(
         normalizeCloudPolicy({
           ...cloudPolicy,
-          enabled: settings.cloudAutoCarryover,
+          enabled: CLOUD_CONTINUITY_ENABLED && settings.cloudAutoCarryover,
           continue_on_sleep: settings.cloudCarryOverOnSleep,
           continue_on_shutdown: settings.cloudCarryOverOnShutdown,
           allow_cross_provider:
@@ -1437,9 +1546,9 @@ export class WorkbenchController implements vscode.Disposable {
       await client.setLocalModelPolicy(
         normalizeLocalModelPolicy({
           ...localModelPolicy,
-          auto_resume_cloud: settings.localAutoResumeCloud,
+          auto_resume_cloud: CLOUD_CONTINUITY_ENABLED && settings.localAutoResumeCloud,
           use_local_fallback: settings.localUseFallback,
-          switch_back_to_cloud: settings.localSwitchBackToCloud,
+          switch_back_to_cloud: CLOUD_CONTINUITY_ENABLED && settings.localSwitchBackToCloud,
           probe_interval_secs: settings.localProbeIntervalSeconds,
           ollama_base_url:
             blankToNull(settings.localOllamaBaseUrl) ??
@@ -1503,38 +1612,35 @@ export class WorkbenchController implements vscode.Disposable {
   private async mirrorLimitPolicyToConfig(policy: LimitPolicy): Promise<void> {
     const config = vscode.workspace.getConfiguration("perpetual");
     const target = vscode.ConfigurationTarget.Global;
-    await Promise.all([
-      config.update("autoSwitchOnLimit", policy.auto_switch, target),
-      config.update("switchBackOnRecovery", policy.switch_back, target),
-      config.update(
-        "autoResumeOnLimitReset",
-        policy.resume_with_earliest,
-        target,
-      ),
-      config.update(
-        "resumeWithEarliestAgent",
-        policy.resume_with_earliest,
-        target,
-      ),
-      config.update(
-        "unknownLimitRetrySeconds",
-        policy.unknown_reset_retry_secs,
-        target,
-      ),
-      config.update(
-        "fallbackPriority",
-        normalizeAgentPriority(policy.agent_priority),
-        target,
-      ),
+    const updates: Array<[string, unknown]> = [
+      ["autoSwitchOnLimit", policy.auto_switch],
+      ["switchBackOnRecovery", policy.switch_back],
+      ["autoResumeOnLimitReset", policy.resume_with_earliest],
+      ["resumeWithEarliestAgent", policy.resume_with_earliest],
+      ["unknownLimitRetrySeconds", policy.unknown_reset_retry_secs],
+      ["fallbackPriority", normalizeAgentPriority(policy.agent_priority)],
       ...(["claude_code", "codex"] as const).flatMap((agent) => {
         const profile = policy.agent_profiles?.find((item) => item.agent === agent);
         const prefix = agent === "codex" ? "codex" : "claude";
         return [
-          config.update(`${prefix}.model`, profile?.model ?? "", target),
-          config.update(`${prefix}.reasoning`, profile?.reasoning ?? "", target),
+          [`${prefix}.model`, profile?.model ?? ""] as [string, unknown],
+          [`${prefix}.reasoning`, profile?.reasoning ?? ""] as [string, unknown],
         ];
       }),
-    ]);
+    ];
+    await Promise.all(updates.map(async ([key, value]) => {
+      if (!config.inspect(key)) {
+        this.output.appendLine(`[workbench] skipped unavailable setting perpetual.${key}`);
+        return;
+      }
+      try {
+        await config.update(key, value, target);
+      } catch (err) {
+        this.output.appendLine(
+          `[workbench] could not mirror perpetual.${key}: ${formatError(err)}`,
+        );
+      }
+    }));
   }
 
   private async mirrorSandboxPolicyToConfig(
@@ -1561,13 +1667,7 @@ export class WorkbenchController implements vscode.Disposable {
     const config = vscode.workspace.getConfiguration("perpetual");
     const target = vscode.ConfigurationTarget.Global;
     await Promise.all([
-      config.update("local.autoResumeCloud", policy.auto_resume_cloud, target),
       config.update("local.useFallback", policy.use_local_fallback, target),
-      config.update(
-        "local.switchBackToCloud",
-        policy.switch_back_to_cloud,
-        target,
-      ),
       config.update(
         "local.probeIntervalSeconds",
         policy.probe_interval_secs,
@@ -2192,6 +2292,23 @@ function defaultLocalBaseUrl(provider: LocalModelProvider): string {
 
 function formatError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+export function friendlyError(err: unknown): string {
+  const message = formatError(err).trim();
+  if (/perpetual\.(?:claude|codex)\.[\w.-]+.*(?:configuration|available|registered|unknown)/i.test(message)) {
+    return "Provider settings are still loading. Reload the window, then try again.";
+  }
+  if (/every enabled .* account is unauthenticated or usage-limited/i.test(message)) {
+    return "No ready account is available yet. Finish sign-in or wait for the earliest limit reset.";
+  }
+  if (/provider account was not found/i.test(message)) {
+    return "That account changed before the action completed. Refresh and try again.";
+  }
+  if (/timed?\s*out|deadline/i.test(message)) {
+    return "That took longer than expected. Check the task status before trying again.";
+  }
+  return message || "Something went wrong. Try again.";
 }
 
 export function isPowerShell(shell: string | undefined): boolean {

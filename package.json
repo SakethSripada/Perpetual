@@ -1,8 +1,8 @@
 {
   "name": "perpetual-for-vscode",
   "displayName": "Perpetual for VS Code",
-  "description": "Coordinate Codex and Claude Code across devices with shared sessions, safe Git worktrees, handoffs, and review.",
-  "version": "0.6.1",
+  "description": "Run Codex and Claude Code with persistent sessions, account rotation, safe Git worktrees, and review.",
+  "version": "0.6.2",
   "publisher": "SakethSripada",
   "license": "MIT",
   "author": {
@@ -29,8 +29,7 @@
     "github",
     "docker",
     "handoff",
-    "collaboration",
-    "multi-device"
+    "account rotation"
   ],
   "icon": "media/icon.png",
   "galleryBanner": {
@@ -224,12 +223,6 @@
           "default": "",
           "description": "Codex reasoning effort used for new Codex runs and automatic switches. Empty uses the model default."
         },
-        "perpetual.collaboration.deviceName": {
-          "type": "string",
-          "default": "",
-          "maxLength": 80,
-          "description": "Friendly name shown to paired Perpetual devices. Empty uses this computer's hostname."
-        },
         "perpetual.defaultLocalProvider": {
           "type": "string",
           "enum": [
@@ -286,80 +279,10 @@
           "minimum": 0,
           "description": "Retry interval when an agent reports a usage limit without a reset time. Set 0 to wait indefinitely."
         },
-        "perpetual.cloud.autoCarryover": {
-          "type": "boolean",
-          "default": false,
-          "description": "Cloud Continuity: automatically carry active tasks over to the provider's cloud (Claude Code on the web / Codex Cloud) so they keep running when this machine can't."
-        },
-        "perpetual.cloud.carryOverOnSleep": {
-          "type": "boolean",
-          "default": true,
-          "description": "Carry running tasks over to the cloud when the machine is about to sleep. Requires auto carryover."
-        },
-        "perpetual.cloud.carryOverOnShutdown": {
-          "type": "boolean",
-          "default": true,
-          "description": "Carry running tasks over to the cloud on shutdown or when the daemon stops. Requires auto carryover."
-        },
-        "perpetual.cloud.providerStrategy": {
-          "type": "string",
-          "enum": [
-            "same_provider",
-            "switch_provider"
-          ],
-          "enumDescriptions": [
-            "Continue in the same provider's cloud (Claude Code sessions go to Claude Code on the web, Codex sessions to Codex Cloud).",
-            "Allow switching providers when the current one's cloud isn't ready (e.g. hand a Claude Code task to Codex Cloud)."
-          ],
-          "default": "same_provider",
-          "description": "Which provider's cloud receives a carried-over task."
-        },
-        "perpetual.cloud.providerPriority": {
-          "type": "array",
-          "default": [
-            "claude_code",
-            "codex"
-          ],
-          "items": {
-            "type": "string",
-            "enum": [
-              "claude_code",
-              "codex"
-            ]
-          },
-          "description": "When cross-provider cloud handoff is enabled and the current provider is not ready, choose this cloud provider first."
-        },
-        "perpetual.cloud.requireApproval": {
-          "type": "boolean",
-          "default": false,
-          "description": "Ask for approval before work is handed to Codex Cloud or Claude Code on the web."
-        },
-        "perpetual.cloud.maxConcurrentRuns": {
-          "type": "number",
-          "default": 2,
-          "minimum": 1,
-          "maximum": 8,
-          "description": "Maximum number of cloud runs carried over at the same time."
-        },
-        "perpetual.cloud.codexEnvId": {
-          "type": "string",
-          "default": "",
-          "description": "Codex Cloud environment id used for carried-over Codex tasks. Create one at chatgpt.com/codex."
-        },
-        "perpetual.local.autoResumeCloud": {
-          "type": "boolean",
-          "default": true,
-          "description": "Resume cloud agents automatically when network/cloud connectivity returns."
-        },
         "perpetual.local.useFallback": {
           "type": "boolean",
           "default": true,
           "description": "Use selected local models when cloud agents are unavailable."
-        },
-        "perpetual.local.switchBackToCloud": {
-          "type": "boolean",
-          "default": true,
-          "description": "Switch local fallback runs back to cloud agents after connectivity is stable."
         },
         "perpetual.local.probeIntervalSeconds": {
           "type": "number",

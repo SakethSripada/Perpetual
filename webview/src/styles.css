@@ -197,23 +197,29 @@ textarea {
 /* ---------- notice ---------- */
 
 .notice {
+  position: absolute;
+  top: 48px;
+  right: 10px;
+  z-index: 300;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin: 8px 10px 0;
-  padding: 8px 10px;
+  width: min(360px, calc(100% - 20px));
+  padding: 9px 9px 9px 11px;
   border: 1px solid var(--am-border);
-  border-radius: var(--am-radius-sm);
-  background: var(--am-surface-2);
-  font-size: 12px;
-  flex: 0 0 auto;
+  border-radius: 8px;
+  background: var(--vscode-notifications-background, var(--am-surface-2));
+  box-shadow: 0 12px 34px rgb(0 0 0 / 28%);
+  font-size: 11px;
+  line-height: 1.45;
   animation: subtle-in 0.14s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 .notice span {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+.notice.error { border-color: color-mix(in srgb, var(--vscode-errorForeground) 42%, var(--am-border)); }
 
 .cloud-bar {
   display: flex;

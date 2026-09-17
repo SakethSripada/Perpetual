@@ -784,6 +784,7 @@ export interface WorkbenchSnapshot {
   defaultRepoIds?: string[];
   limitPolicy: LimitPolicy | null;
   providerAccounts: ProviderAccountStatus[];
+  authPendingAccountIds?: string[];
   sandboxPolicy: SandboxPolicy | null;
   sandboxRuntime: SandboxRuntimeStatus | null;
   cloudPolicy: CloudPolicy | null;

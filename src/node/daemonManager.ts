@@ -13,6 +13,7 @@ import {
 import { CollaborationWorker } from "./collaborationWorker";
 import { DaemonClient } from "./daemonClient";
 import type { AgentStatus, AppEvent, RegisterCollaborationDevice } from "./types";
+import { CLOUD_CONTINUITY_ENABLED, LAN_COLLABORATION_ENABLED } from "./featureFlags";
 
 type Endpoint = {
   port: number;
@@ -44,6 +45,7 @@ export class DaemonManager implements vscode.Disposable {
 
   async getClient(): Promise<DaemonClient> {
     const local = await this.getLocalClient();
+    if (!LAN_COLLABORATION_ENABLED) return local;
     await this.restoreCollaboration(local);
     return this.coordinatorClient ?? local;
   }
@@ -60,6 +62,9 @@ export class DaemonManager implements vscode.Disposable {
   }
 
   async createCollaborationInvite(): Promise<string> {
+    if (!LAN_COLLABORATION_ENABLED) {
+      throw new Error("Shared workspaces are temporarily unavailable.");
+    }
     const local = await this.getLocalClient();
     if (this.coordinatorClient) {
       throw new Error("Leave the current shared workspace before hosting a new one.");
@@ -102,6 +107,9 @@ export class DaemonManager implements vscode.Disposable {
   }
 
   async joinCollaboration(inviteText: string): Promise<void> {
+    if (!LAN_COLLABORATION_ENABLED) {
+      throw new Error("Shared workspaces are temporarily unavailable.");
+    }
     if (this.collaborationHost) {
       throw new Error("Stop hosting the current shared workspace before joining another one.");
     }
@@ -174,6 +182,15 @@ export class DaemonManager implements vscode.Disposable {
     deviceName: string;
   }> {
     const identity = await this.deviceIdentity();
+    if (!LAN_COLLABORATION_ENABLED) {
+      return {
+        role: "standalone",
+        connected: false,
+        hostName: null,
+        deviceId: identity.id,
+        deviceName: identity.name,
+      };
+    }
     const saved = await this.savedPeer();
     return {
       role: this.coordinatorClient ? "member" : this.collaborationHost ? "host" : "standalone",
@@ -283,6 +300,12 @@ export class DaemonManager implements vscode.Disposable {
           child.kill();
         }
       });
+      if (!CLOUD_CONTINUITY_ENABLED) {
+        const policy = await client.getCloudPolicy();
+        if (policy.enabled) {
+          await client.setCloudPolicy({ ...policy, enabled: false });
+        }
+      }
       this.client = client;
       return client;
     } catch (err) {
