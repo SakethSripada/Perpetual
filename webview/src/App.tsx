@@ -37,6 +37,11 @@ import type {
   WorkbenchSnapshot,
 } from "./types";
 import { BrandMark, Icon } from "./icons";
+import { Accounts, AccountSwitcher, activeAccount, accountName } from "./accounts";
+import { SessionSidebar, statusLabel } from "./navigation";
+import { configureTransport, request } from "./bridge";
+import { useSheetAccessibility } from "./dialogs";
+import { mergeThreadEvents } from "./streaming";
 import { CLOUD_CONTINUITY_ENABLED, LAN_COLLABORATION_ENABLED } from "./featureFlags";
 import { Markdown } from "./markdown";
 import {
@@ -85,6 +90,8 @@ const vscode =
     setState: () => undefined,
   } satisfies VsCodeApi);
 
+configureTransport((message) => vscode.postMessage(message));
+
 function readPersistedState(): PersistedState {
   const state = vscode.getState();
   return state && typeof state === "object" ? (state as PersistedState) : {};
@@ -130,6 +137,7 @@ export default function App() {
   const [executionDeviceId, setExecutionDeviceId] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [githubOpen, setGithubOpen] = useState(false);
+  useSheetAccessibility(settingsOpen || monitorOpen || githubOpen || collaborationOpen);
   const [reviewOpen, setReviewOpen] = useState<{
     threadId: string;
     nonce: number;
@@ -140,6 +148,10 @@ export default function App() {
   // Optimistically-rendered user messages: shown the instant the user sends, then
   // dropped once the real event for them arrives in a snapshot.
   const [pending, setPending] = useState<PendingMessage[]>([]);
+  const submissionLock = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [recoveryDraft, setRecoveryDraft] = useState<{ text: string; nonce: number } | null>(null);
+  const [showLatest, setShowLatest] = useState(false);
   const [editDraft, setEditDraft] = useState<{ text: string; nonce: number } | null>(null);
   const [answeredQuestionEvents, setAnsweredQuestionEvents] = useState<Set<string>>(
     () => new Set(),
@@ -179,6 +191,13 @@ export default function App() {
   useEffect(() => {
     const onMessage = (event: MessageEvent<ExtensionMessage>) => {
       const incoming = event.data;
+      if (incoming.type === "submitFailed") {
+        setNotice(incoming.message, true);
+        setPending((current) => current.filter((item) => item.id !== incoming.clientMessageId));
+        const selected = snapshotRef.current?.selectedThreadId;
+        if (!incoming.threadId || selected === incoming.threadId) setRecoveryDraft({ text: incoming.text, nonce: Date.now() });
+        return;
+      }
       if (incoming.type === "threadEvent") {
         const current = snapshotRef.current;
         const details = current?.details;
@@ -189,10 +208,7 @@ export default function App() {
         ) {
           return;
         }
-        const events = [...details.events];
-        const index = events.findIndex((item) => item.id === incoming.event.id);
-        if (index >= 0) events[index] = incoming.event;
-        else events.push(incoming.event);
+        const events = mergeThreadEvents(details.events, [incoming.event]);
         const next = {
           ...current,
           details: { ...details, events },
@@ -220,6 +236,9 @@ export default function App() {
         const sameThread =
           !!previous &&
           previous.selectedThreadId === incoming.snapshot.selectedThreadId;
+        if (sameThread && previous.details && incoming.snapshot.details) {
+          incoming.snapshot = { ...incoming.snapshot, details: { ...incoming.snapshot.details, events: mergeThreadEvents(previous.details.events, incoming.snapshot.details.events) } };
+        }
         if (!sameThread) {
           animatedMessageIdsRef.current.clear();
         } else {
@@ -311,7 +330,7 @@ export default function App() {
       }
       if (incoming.type === "notice" || incoming.type === "error") {
         setNotice(incoming.message, incoming.type === "error");
-        if (incoming.type === "error") setPending([]);
+
         return;
       }
       if (incoming.type === "sandboxLoginPrompt") {
@@ -338,10 +357,10 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (!notice) return;
+    if (!notice || noticeIsError) return;
     const timer = window.setTimeout(() => setNotice(null), 6500);
     return () => window.clearTimeout(timer);
-  }, [notice]);
+  }, [notice, noticeIsError]);
 
   useEffect(() => {
     writePersistedState({
@@ -549,6 +568,7 @@ export default function App() {
     if (!el) return;
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     stickToBottomRef.current = distanceFromBottom < 96;
+    setShowLatest(distanceFromBottom >= 96);
   };
 
   useEffect(() => {
@@ -560,7 +580,7 @@ export default function App() {
       threadId,
       pendingCount: pending.length,
     };
-    if (threadChanged) stickToBottomRef.current = true;
+    if (threadChanged) { stickToBottomRef.current = true; setShowLatest(false); }
     if (!stickToBottomRef.current && !pendingAdded) return;
     window.requestAnimationFrame(() => {
       const el = transcriptRef.current;
@@ -623,7 +643,7 @@ export default function App() {
   // transcript; it hands us the final text here on submit.
   const send = (raw: string): boolean => {
     const text = raw.trim();
-    if (!text) return false;
+    if (!text || submissionLock.current) return false;
     const command = resolveAppCommand(text, agent);
     if (command?.kind === "error") {
       setNotice(command.message);
@@ -795,7 +815,9 @@ export default function App() {
       ...prev,
       { id: clientMessageId, text, firstTurn },
     ]);
-    vscode.postMessage({
+    submissionLock.current = true;
+    setSubmitting(true);
+    void request({
       type: "submit",
       message,
       clientMessageId,
@@ -810,7 +832,11 @@ export default function App() {
       localBaseUrl: submittedLocalProvider ? localBaseUrl.trim() || null : null,
       taskBudget,
       deviceId: executionDeviceId,
-    });
+    }).catch((error) => {
+      setNotice(error instanceof Error ? error.message : String(error), true);
+      setPending((current) => current.filter((item) => item.id !== clientMessageId));
+      setRecoveryDraft({ text, nonce: Date.now() });
+    }).finally(() => { submissionLock.current = false; setSubmitting(false); });
     return true;
   };
 
@@ -901,14 +927,17 @@ export default function App() {
 
   return (
     <main className="app-shell">
+      <SessionSidebar snapshot={snapshot} selected={selectedThread} agent={agent} onNew={newSession} onSelect={selectThread} onDelete={deleteThread} onAccounts={() => setSettingsOpen(true)} onAgent={pickAgent} onSettings={() => setSettingsOpen(true)} onReview={(id) => { selectThread(id); setReviewOpen({ threadId: id, nonce: Date.now() }); vscode.postMessage({ type: "loadDiff", threadId: id }); }} />
+      <div className="workspace-main">
       <header className="topbar">
         <div className="brand">
           <div className="brand-text">
             <strong>{selectedThread?.title ?? "New session"}</strong>
+            {selectedThread && <small className={`thread-status ${selectedThread.status}`}>{statusLabel(selectedThread.status)}{selectedThread.provider_account_id && (() => { const account = snapshot?.providerAccounts.find((a) => a.id === selectedThread.provider_account_id); return account ? ` · ${accountName(account)}` : ""; })()}</small>}
           </div>
         </div>
         <div className="top-actions">
-          <HistoryMenu
+          <span className="compact-history"><HistoryMenu
             open={historyOpen}
             setOpen={setHistoryOpen}
             snapshot={snapshot}
@@ -916,7 +945,7 @@ export default function App() {
             onNew={newSession}
             onSelect={selectThread}
             onDelete={deleteThread}
-          />
+          /></span>
           <IconButton title="Settings" onClick={() => setSettingsOpen(true)}>
             <Icon name="settings" />
           </IconButton>
@@ -985,6 +1014,7 @@ export default function App() {
         }
       />}
 
+      {showLatest && <button className="jump-to-latest" onClick={() => { transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: prefersReducedMotion() ? "auto" : "smooth" }); stickToBottomRef.current = true; setShowLatest(false); }}>↓ Latest messages</button>}
       <section className="conversation">
         <div
           className={`transcript${welcomeLeaving ? " is-starting" : ""}`}
@@ -996,6 +1026,7 @@ export default function App() {
             ((!selectedThread && pending.length === 0) || welcomeLeaving) && (
             <EmptyState
               exiting={welcomeLeaving}
+              onExample={(text) => setEditDraft({ text, nonce: Date.now() })}
             />
           )}
           {(selectedThread || pending.length > 0) &&
@@ -1065,8 +1096,12 @@ export default function App() {
         </div>
       </section>
 
+      <div className="account-dock"><AccountSwitcher snapshot={snapshot} agent={agent} onManage={() => setSettingsOpen(true)} onPickAgent={pickAgent} />{snapshot?.detectionState === "loading" && <span className="detection-hint">Updating models and accounts…</span>}</div>
       <Composer
         snapshot={snapshot}
+        submitting={submitting}
+        recoveryDraft={recoveryDraft}
+        onRecoveryConsumed={() => setRecoveryDraft(null)}
         selectedThread={selectedThread}
         agent={agent}
         setAgent={pickAgent}
@@ -1152,6 +1187,11 @@ export default function App() {
             cloudPolicy,
             localModelPolicy,
           ) => {
+            return (async () => {
+            await request({ type: "setLimitPolicy", policy: limitPolicy, preserveAccounts: true });
+            await request({ type: "setSandboxPolicy", policy: sandboxPolicy });
+            if (CLOUD_CONTINUITY_ENABLED) await request({ type: "setCloudPolicy", policy: cloudPolicy });
+            await request({ type: "setLocalModelPolicy", policy: localModelPolicy });
             const activeProfile = limitPolicy.agent_profiles?.find(
               (profile) => profile.agent === agent,
             );
@@ -1166,19 +1206,8 @@ export default function App() {
               setModel(nextModel);
               setReasoning(nextReasoning);
             }
-            vscode.postMessage({ type: "setLimitPolicy", policy: limitPolicy });
-            vscode.postMessage({
-              type: "setSandboxPolicy",
-              policy: sandboxPolicy,
-            });
-            if (CLOUD_CONTINUITY_ENABLED) {
-              vscode.postMessage({ type: "setCloudPolicy", policy: cloudPolicy });
-            }
-            vscode.postMessage({
-              type: "setLocalModelPolicy",
-              policy: localModelPolicy,
-            });
             setSettingsOpen(false);
+            })();
           }}
           onOpenSettings={() => vscode.postMessage({ type: "openSettings" })}
           onOpenExternal={(url) =>
@@ -1292,6 +1321,7 @@ export default function App() {
           }}
         />
       )}
+      </div>
     </main>
   );
 }
@@ -2299,6 +2329,9 @@ function ApprovalCard(props: {
 }
 
 type ComposerProps = {
+  submitting: boolean;
+  recoveryDraft: { text: string; nonce: number } | null;
+  onRecoveryConsumed(): void;
   snapshot: WorkbenchSnapshot | null;
   selectedThread: AgentThread | null;
   agent: AgentKind;
@@ -2352,6 +2385,7 @@ function Composer(props: ComposerProps) {
   const [draft, setDraft] = useState("");
   const [selectionStart, setSelectionStart] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => { if (props.recoveryDraft && !draft.trim()) { setDraft(props.recoveryDraft.text); props.onRecoveryConsumed(); requestAnimationFrame(() => { if (textareaRef.current) { textareaRef.current.focus(); autoGrow(textareaRef.current); } }); } }, [props.recoveryDraft?.nonce]);
   useEffect(() => {
     if (!props.editDraft) return;
     setDraft(props.editDraft.text);
@@ -2384,6 +2418,7 @@ function Composer(props: ComposerProps) {
   const isAppOnlyCommand =
     draftCommand !== null && draftCommand.kind !== "run";
   const canSend =
+    !props.submitting &&
     !!draft.trim() &&
     (isAppOnlyCommand ||
       (!!props.snapshot?.trusted &&
@@ -2407,7 +2442,7 @@ function Composer(props: ComposerProps) {
   // back into a send/queue button.
   const stopMode = props.isRunning && !draft.trim();
   const submit = () => {
-    if (!canSend) return;
+    if (!canSend || props.submitting) return;
     if (!props.onSend(draft)) return;
     setDraft("");
     const el = textareaRef.current;
@@ -2439,6 +2474,7 @@ function Composer(props: ComposerProps) {
 
   return (
     <footer className="composer">
+      {props.recoveryDraft && <div className="recovery-banner">Your previous message could not be sent.<button className="secondary-btn" onClick={() => { setDraft((current) => current ? `${current}\n\n${props.recoveryDraft!.text}` : props.recoveryDraft!.text); props.onRecoveryConsumed(); }}>Restore message</button><button className="text-btn" onClick={props.onRecoveryConsumed}>Dismiss</button></div>}
       <div className="composer-box">
         {slashState && slashMatches.length > 0 && (
           <div className="slash-menu" role="listbox">
@@ -4490,7 +4526,7 @@ function SettingsSheet(props: {
     sandboxPolicy: SandboxPolicy,
     cloudPolicy: CloudPolicy,
     localModelPolicy: LocalModelPolicy,
-  ): void;
+  ): Promise<void>;
   onOpenSettings(): void;
   onOpenExternal(url: string): void;
   onSignInAgent(agent: AgentKind): void;
@@ -4516,50 +4552,9 @@ function SettingsSheet(props: {
     () => props.snapshot.localModelPolicy ?? defaultLocalModelPolicy(),
   );
   const [section, setSection] = useState<SettingsSection>("accounts");
-  const [expandedAccounts, setExpandedAccounts] = useState<Record<string, boolean>>({});
-  const [accountTokens, setAccountTokens] = useState<Record<string, string>>({});
-  const [creditConfirmId, setCreditConfirmId] = useState<string | null>(null);
-  const [removeConfirmId, setRemoveConfirmId] = useState<string | null>(null);
-  const accounts = limit.accounts ?? [];
-  const saveAccounts = (nextAccounts: ProviderAccount[]) => {
-    const next = { ...limit, accounts: nextAccounts };
-    setLimit(next);
-    props.onSaveLimitPolicy(next);
-  };
-  const updateAccount = (
-    id: string,
-    patch: Partial<ProviderAccount>,
-    save = true,
-  ) => {
-    const nextAccounts = accounts.map((account) =>
-      account.id === id ? { ...account, ...patch } : account,
-    );
-    if (save) saveAccounts(nextAccounts);
-    else setLimit({
-      ...limit,
-      accounts: nextAccounts,
-    });
-  };
-  const addAccount = (agent: "codex" | "claude_code") => {
-    const number = accounts.filter((account) => account.agent === agent).length + 1;
-    const id = `${agent === "codex" ? "codex" : "claude"}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    setExpandedAccounts((current) => ({ ...current, [id]: true }));
-    saveAccounts([...accounts, {
-      id,
-      label: `${agent === "codex" ? "Codex" : "Claude"} ${number}`,
-      agent,
-      enabled: true,
-      use_credits: false,
-      auth_mode: agent === "claude_code" ? "oauth_token" : "isolated_cli",
-    }]);
-  };
-  const moveAccount = (index: number, delta: number) => {
-    const target = index + delta;
-    if (target < 0 || target >= accounts.length) return;
-    const next = [...accounts];
-    [next[index], next[target]] = [next[target], next[index]];
-    saveAccounts(next);
-  };
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const savingRef = useRef(false);
   const updateAgentProfile = (
     agent: AgentKind,
     patch: { model?: string | null; reasoning?: string | null },
@@ -4577,10 +4572,10 @@ function SettingsSheet(props: {
   return (
     <div
       className="sheet-backdrop"
-      onMouseDown={props.onClose}
+      onMouseDown={() => { if (!saving) props.onClose(); }}
     >
       <section
-        className="sheet settings-sheet" role="dialog" aria-modal="true" aria-label="Perpetual settings"
+        className="sheet settings-sheet" role="dialog" aria-modal="true" aria-label="Perpetual settings" aria-busy={saving}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header>
@@ -4588,7 +4583,7 @@ function SettingsSheet(props: {
             <strong>Perpetual settings</strong>
             <span>Configure accounts, routing, and execution</span>
           </div>
-          <IconButton title="Close" onClick={props.onClose}>
+          <IconButton title="Close" onClick={() => { if (!saving) props.onClose(); }}>
             <Icon name="close" />
           </IconButton>
         </header>
@@ -4606,103 +4601,7 @@ function SettingsSheet(props: {
             ))}
           </nav>
           <div className="settings-content" key={section}>
-          <div className="settings-group account-manager" data-settings-section="accounts" id="settings-panel-accounts" role="region" aria-labelledby="settings-nav-accounts" hidden={section !== "accounts"}>
-            <div className="account-manager-hero">
-              <div>
-                <div className="settings-page-title">Accounts</div>
-              </div>
-              <span className="account-count">{accounts.length} {accounts.length === 1 ? "account" : "accounts"}</span>
-            </div>
-            <div className="account-add-row">
-              <button type="button" className="account-add-button" onClick={() => addAccount("codex")}><AgentMark agent="codex" /><span>Add Codex</span><Icon name="plus" /></button>
-              <button type="button" className="account-add-button" onClick={() => addAccount("claude_code")}><AgentMark agent="claude_code" /><span>Add Claude</span><Icon name="plus" /></button>
-            </div>
-            {accounts.length === 0 ? (
-              <div className="account-empty">
-                <strong>No accounts</strong>
-                <span>Add Codex or Claude to begin.</span>
-              </div>
-            ) : (
-              <div className="account-stack">
-                {accounts.map((account, index) => {
-                  const status = props.snapshot.providerAccounts?.find((item) => item.id === account.id);
-                  const saved = !!status;
-                  const authPending = props.snapshot.authPendingAccountIds?.includes(account.id) ?? false;
-                  const state = authPending ? "Connecting…" : !account.enabled ? "Paused" : !saved ? "Ready to sign in" : !status.authenticated ? "Sign-in required" : status.availability === "limited" ? (status.reset_at ? `Limited · ${formatResetTime(status.reset_at)}` : "Limited") : "Ready";
-                  const token = accountTokens[account.id] ?? "";
-                  const displayName = providerAccountDisplayName(account, status);
-                  const expanded = !!expandedAccounts[account.id];
-                  return (
-                    <article className="provider-account" key={account.id}>
-                      <div className="provider-account-header">
-                        <button type="button" className="account-disclosure" aria-expanded={expanded} aria-controls={`account-details-${account.id}`} onClick={() => setExpandedAccounts((current) => ({ ...current, [account.id]: !current[account.id] }))}>
-                          <Icon name="caret" />
-                          <AgentMark agent={account.agent} />
-                          <span title={displayName}>{displayName}</span>
-                        </button>
-                        <span className={`account-status${status?.authenticated && !authPending ? " ready" : ""}${authPending ? " pending" : ""}`}>{state}</span>
-                        <div className="account-reorder" role="group" aria-label={`Order for ${displayName}`}>
-                          <button type="button" disabled={index === 0} aria-label={`Move ${displayName} up`} title="Move up" onClick={() => moveAccount(index, -1)}><Icon name="up" /></button>
-                          <button type="button" disabled={index === accounts.length - 1} aria-label={`Move ${displayName} down`} title="Move down" onClick={() => moveAccount(index, 1)}><Icon name="down" /></button>
-                        </div>
-                      </div>
-                      <div className="provider-account-body" id={`account-details-${account.id}`} hidden={!expanded}>
-                        <div className="account-auth-row">
-                          <div className="account-auth-copy">
-                            <strong>{status?.authenticated ? status.email || "Authenticated" : account.auth_mode === "oauth_token" ? "Connect with a setup token" : "Connect this account"}</strong>
-                            <small>{status?.authenticated ? "Credentials are stored in this isolated profile." : account.auth_mode === "oauth_token" ? "Generate a token, then paste it below." : "Finish sign-in in the terminal that opens."}</small>
-                          </div>
-                          <div className="account-primary-actions">
-                            {saved && status?.authenticated && (
-                              <button type="button" className="secondary-btn account-cli" title="Manage plugins and MCP for this account" onClick={() => props.onOpenProviderAccountCli(account.id)}><Icon name="terminal" /><span>Open CLI</span></button>
-                            )}
-                            <button type="button" className="primary-btn" disabled={authPending} onClick={() => props.onSignInProviderAccount(account.id)}>{authPending ? "Connecting…" : account.auth_mode === "oauth_token" ? "Generate token" : status?.authenticated ? "Sign in again" : "Sign in"}</button>
-                          </div>
-                        </div>
-                        {account.agent === "claude_code" && account.auth_mode === "oauth_token" && (
-                          <div className="account-token-field">
-                            <div className="account-token-entry">
-                              <input aria-label="Setup token" id={`account-token-${account.id}`} type="password" autoComplete="off" placeholder="Paste setup token" value={token} onChange={(event) => setAccountTokens({ ...accountTokens, [account.id]: event.target.value })} />
-                              <button type="button" className="secondary-btn" disabled={!token.trim()} onClick={() => {
-                                props.onSetProviderAccountToken(account.id, token);
-                                setAccountTokens({ ...accountTokens, [account.id]: "" });
-                              }}>Store token</button>
-                            </div>
-                          </div>
-                        )}
-                        <details className="account-advanced">
-                          <summary>Account settings</summary>
-                          <div className="account-settings-grid">
-                            <label className="field">
-                              <span>Account name</span>
-                              <input aria-label="Account name" value={account.label} onChange={(event) => updateAccount(account.id, { label: event.target.value }, false)} onBlur={() => props.onSaveLimitPolicy(limit)} />
-                            </label>
-                            {account.agent === "claude_code" && (
-                              <label className="field">
-                                <span>Authentication</span>
-                                <select value={account.auth_mode} onChange={(event) => updateAccount(account.id, { auth_mode: event.target.value as ProviderAccount["auth_mode"] })}>
-                                  <option value="oauth_token">Setup token</option>
-                                  <option value="isolated_cli">CLI profile</option>
-                                </select>
-                              </label>
-                            )}
-                          </div>
-                          <div className="account-preferences">
-                            <label className="toggle-row"><span>Available for tasks</span><input type="checkbox" checked={account.enabled} onChange={(event) => updateAccount(account.id, { enabled: event.target.checked })} /></label>
-                            {account.agent === "codex" && <label className="toggle-row" title="Redeem an earned Codex rate-limit reset when this account reaches its limit."><span>Use reset credits</span><input type="checkbox" checked={account.use_credits} onChange={(event) => event.target.checked ? setCreditConfirmId(account.id) : updateAccount(account.id, { use_credits: false })} /></label>}
-                          </div>
-                          <button type="button" className="account-remove" onClick={() => {
-                            if (saved) setRemoveConfirmId(account.id);
-                            else saveAccounts(accounts.filter((item) => item.id !== account.id));
-                          }}><Icon name="trash" /><span>Remove account</span></button>
-                        </details>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+          <div className="settings-group" data-settings-section="accounts" id="settings-panel-accounts" role="region" aria-labelledby="settings-nav-accounts" hidden={section !== "accounts"}><Accounts snapshot={props.snapshot} /></div>
           <div className="settings-group" data-settings-section="agents" id="settings-panel-agents" role="region" aria-labelledby="settings-nav-agents" hidden={section !== "agents"}>
             <div className="group-title">Providers</div>
             <div className="readiness-grid">
@@ -4875,7 +4774,7 @@ function SettingsSheet(props: {
                 }
               />
               <span>
-                Switch to the other agent when the current one is limited
+                Switch to the next ready account when the current one is limited
               </span>
             </label>
             <label className="toggle">
@@ -5391,38 +5290,7 @@ function SettingsSheet(props: {
           </div>
         </div>
 
-        {creditConfirmId && (
-          <div className="settings-confirm-backdrop" role="presentation" onMouseDown={() => setCreditConfirmId(null)}>
-            <div className="settings-confirm" role="dialog" aria-modal="true" aria-labelledby="credit-confirm-title" onMouseDown={(event) => event.stopPropagation()}>
-              <strong id="credit-confirm-title">Use reset credits?</strong>
-              <p>Perpetual can redeem an earned credit when this account reaches its limit. It will never purchase credits.</p>
-              <div className="settings-confirm-actions">
-                <button type="button" className="secondary-btn" onClick={() => setCreditConfirmId(null)}>Cancel</button>
-                <button type="button" className="primary-btn" onClick={() => {
-                  updateAccount(creditConfirmId, { use_credits: true });
-                  setCreditConfirmId(null);
-                }}>Allow</button>
-              </div>
-            </div>
-          </div>
-        )}
-        {removeConfirmId && (
-          <div className="settings-confirm-backdrop" role="presentation" onMouseDown={() => setRemoveConfirmId(null)}>
-            <div className="settings-confirm" role="dialog" aria-modal="true" aria-labelledby="remove-account-title" onMouseDown={(event) => event.stopPropagation()}>
-              <strong id="remove-account-title">Remove account?</strong>
-              <p>Its isolated sign-in data will be deleted from this device.</p>
-              <div className="settings-confirm-actions">
-                <button type="button" className="secondary-btn" onClick={() => setRemoveConfirmId(null)}>Cancel</button>
-                <button type="button" className="primary-btn danger-confirm" onClick={() => {
-                  props.onDeleteProviderAccount(removeConfirmId);
-                  setLimit({ ...limit, accounts: accounts.filter((item) => item.id !== removeConfirmId) });
-                  setRemoveConfirmId(null);
-                }}>Remove</button>
-              </div>
-            </div>
-          </div>
-        )}
-
+        {saveError && <p className="inline-error" role="alert">{saveError}</p>}
         <footer>
           <button type="button" className="secondary-btn" onClick={props.onOpenSettings}>
             VS Code settings
@@ -5430,9 +5298,10 @@ function SettingsSheet(props: {
           <button
             type="button"
             className="primary"
-            onClick={() => props.onApply(limit, sandbox, cloud, localPolicy)}
+            disabled={saving}
+            onClick={async () => { if (savingRef.current) return; savingRef.current = true; setSaving(true); setSaveError(null); try { await props.onApply(limit, sandbox, cloud, localPolicy); } catch (error) { setSaveError(error instanceof Error ? error.message : String(error)); } finally { savingRef.current = false; setSaving(false); } }}
           >
-            Save changes
+            {saving ? "Saving…" : "Save changes"}
           </button>
         </footer>
       </section>
@@ -5541,9 +5410,11 @@ function GithubSheet(props: {
 function EmptyState({
   compact = false,
   exiting = false,
+  onExample,
 }: {
   compact?: boolean;
   exiting?: boolean;
+  onExample?(text: string): void;
 }) {
   return (
     <div
@@ -5555,8 +5426,9 @@ function EmptyState({
       aria-hidden={exiting || undefined}
     >
       <span className="empty-mark">
-        <BrandMark size={240} />
+        <BrandMark size={52} />
       </span>
+      {!compact && <div className="welcome-copy"><h1>What are we building?</h1><p>A continuous workspace for your ideas.</p><div className="welcome-suggestions"><button onClick={() => onExample?.("Help me build a new feature in this codebase.")}>Build something new</button><button onClick={() => onExample?.("Find a bug in this codebase, explain it, and fix it.")}>Find and fix a bug</button><button onClick={() => onExample?.("Explore this codebase and explain how its main components work.")}>Explore this codebase</button></div></div>}
     </div>
   );
 }

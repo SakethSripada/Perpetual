@@ -73,6 +73,7 @@ type WebviewMessage = (
   | SubmitMessage
   | { type: "stopThread"; threadId: string }
   | { type: "deleteThread"; threadId: string; force?: boolean }
+  | { type: "renameThread"; threadId: string; title: string }
   | { type: "assignRepos"; threadId: string; repoIds: string[] }
   | { type: "loadDiff"; threadId: string }
   | { type: "applyThreadChanges"; threadId: string }
@@ -284,6 +285,13 @@ export class WorkbenchController implements vscode.Disposable {
           this.notice(reply, "Stopped the active run.");
           await this.refresh();
           return;
+        case "renameThread": {
+          const title = message.title.trim();
+          if (!title || title.length > 200) throw new Error("Use a session name between 1 and 200 characters.");
+          await this.withClient((client) => client.updateAgentThread(message.threadId, { title }));
+          await this.refresh();
+          return;
+        }
         case "deleteThread": {
           await this.withClient((client) =>
             client.deleteAgentThread(message.threadId, !!message.force),
@@ -1322,6 +1330,7 @@ export class WorkbenchController implements vscode.Disposable {
     reply?: WebviewReply,
   ): Promise<void> {
     this.assertTrusted();
+    if (this.authPendingAccounts.has(accountId)) return;
     const launch = await this.withLocalClient((client) =>
       client.providerAccountAuthLaunch(accountId),
     );

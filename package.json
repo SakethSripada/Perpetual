@@ -335,7 +335,15 @@
           "description": "Optional path to an am-daemon binary. Empty uses the binary bundled with this extension."
         }
       }
-    }
+    },
+    "keybindings": [
+      {
+        "command": "perpetual.newSession",
+        "key": "ctrl+alt+n",
+        "mac": "cmd+alt+n",
+        "when": "activeWebviewPanelId == perpetual.workbench || focusedView == perpetual.workbench || focusedView == perpetual.workbench.panel"
+      }
+    ]
   },
   "scripts": {
     "clean": "node scripts/clean.mjs",
@@ -363,7 +371,8 @@
     "package:win32-arm64": "node scripts/package-target.mjs win32-arm64",
     "test:unit": "npm run compile && node scripts/run-unit-tests.mjs",
     "test:vscode": "vscode-test --config vscode-test.mjs",
-    "test": "npm run test:unit && npm run typecheck:webview"
+    "test": "npm run test:unit && npm run typecheck:webview",
+    "preview:webview": "vite --config webview/vite.config.ts --host 127.0.0.1 --port 5178 --open /preview.html"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",

@@ -240,12 +240,13 @@ export interface LimitPolicy {
   agent_priority: AgentKind[];
   agent_profiles?: AgentTargetProfile[];
   accounts?: ProviderAccount[];
+  dismissed_system_accounts?: AgentKind[];
   resume_with_earliest: boolean;
   unknown_reset_retry_secs: number;
   keep_awake: boolean;
 }
 
-export type ProviderAccountAuthMode = "isolated_cli" | "oauth_token";
+export type ProviderAccountAuthMode = "isolated_cli" | "oauth_token" | "system";
 export interface ProviderAccount {
   id: string;
   label: string;
@@ -256,6 +257,9 @@ export interface ProviderAccount {
 }
 export interface ProviderAccountStatus extends ProviderAccount {
   email?: string | null;
+  plan?: string | null;
+  installed: boolean;
+  active: boolean;
   authenticated: boolean;
   availability: AvailabilityState;
   reset_at: string | null;
@@ -368,6 +372,7 @@ export interface AgentThread {
   limit_reset_at: string | null;
   switch_back: boolean;
   handoff_state: string;
+  provider_account_id?: string | null;
   objective: string;
   decisions: string;
   progress: string;
@@ -541,6 +546,8 @@ export interface GithubRepository {
 }
 
 export type ExtensionMessage =
+  | { type: "operationResult"; requestId: string; error: string | null }
+  | { type: "submitFailed"; threadId: string | null; clientMessageId: string | null; text: string; message: string }
   | { type: "snapshot"; snapshot: WorkbenchSnapshot }
   | { type: "threadEvent"; event: AgentThreadEvent }
   | { type: "githubRepos"; repos: GithubRepository[]; status: GithubAuthStatus | null }
