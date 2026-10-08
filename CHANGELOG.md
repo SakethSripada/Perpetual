@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.7.8
+
+- Replace the ambiguous repository button with a labeled, searchable picker.
+  Separate chat selection from connection actions and confirm disconnections inline.
+- Share structured usage allowances and reset times across Accounts and Session
+  Status, including partial reports and available fallback-provider allowances.
+- Use themed choice menus in account forms, model settings and reasoning controls.
+  Add model search and explicit provider/model loading states.
+- Keep repository and status dialogs stable across content changes; preserve parent
+  surfaces and keyboard focus when nested menus are selected or dismissed.
+
 ## 0.7.7
 
 - Unify Status, repository search, composer menus, approvals and shared-workspace

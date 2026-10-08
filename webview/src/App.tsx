@@ -2383,11 +2383,9 @@ function Composer(props: ComposerProps) {
       : selectedRepos.length === 1
         ? selectedRepos[0].name
         : `${selectedRepos.length} repos`;
-  const reposTitle = reposState !== "ready" ? (reposState === "loading" ? "Loading repositories" : "Repositories unavailable") : noRepoSelected
-    ? "Select a repository for this run"
-    : selectedRepos.length === 0
-      ? "Connected repos — none attached yet"
-      : `Connected repos: ${selectedRepos.map((repo) => repo.name).join(", ")}`;
+  const reposTitle = reposState !== "ready" ? (reposState === "loading" ? "Loading repositories" : "Repositories unavailable") : selectedRepos.length
+    ? `Repositories for this chat: ${selectedRepos.map((repo) => repo.name).join(", ")}`
+    : "Choose repositories for this chat";
   const perm =
     PERMISSIONS.find((item) => item.value === props.permission) ??
     PERMISSIONS[1];
@@ -2499,7 +2497,7 @@ function Composer(props: ComposerProps) {
 
         <div className="toolbar">
           <div className="toolbar-chips">
-            <button type="button" className="chip-btn repository-trigger" title={reposTitle} aria-label="Choose repositories" aria-haspopup="dialog" aria-expanded={reposOpen} onClick={() => setReposOpen(true)}><Icon name="folder" /><span>{selectedRepos.length ? reposLabel : "Repository"}</span><Icon name="caret" /></button>
+            <button type="button" className="chip-btn repository-trigger" title={reposTitle} aria-label="Choose repositories" aria-haspopup="dialog" aria-expanded={reposOpen} onClick={() => setReposOpen(true)}><Icon name="folder" /><span>{selectedRepos.length ? reposLabel : "Repos"}</span><Icon name="caret" /></button>
             {reposOpen && <RepositoryPicker repos={repos} selected={props.repoIds} state={reposState} locked={repoSelectionLocked} shared={sharedRepoMember} onSelect={props.setRepoIds} onClose={() => setReposOpen(false)} onLocal={props.onLocalRepo} onGithub={props.onGithub} onRemove={props.onRemoveRepo} />}
 
             <Dropdown
@@ -3642,7 +3640,7 @@ function ChangesView(props: {
               onClick={() => props.onLoadDiff(props.threadId)}
             >
               <Icon name="refresh" />
-              <span>{loaded ? "Reload Diff" : "Load Diff"}</span>
+              <span>{loaded ? "Refresh diff" : "Load diff"}</span>
             </button>
             {hasManagedWorktree && (
               <button
@@ -3652,7 +3650,7 @@ function ChangesView(props: {
                 onClick={() => props.onApply(props.threadId)}
               >
                 <Icon name="check" />
-                <span>Apply to Repo</span>
+                <span>Apply changes</span>
               </button>
             )}
           </div>
@@ -3667,7 +3665,7 @@ function ChangesView(props: {
                   className="link-btn"
                   onClick={() => props.onOpenPath(repo.worktree_path!)}
                 >
-                  {isManagedThreadWorkspace(repo) ? "Open Worktree" : "Open Repo"}
+                  {isManagedThreadWorkspace(repo) ? "Open worktree" : "Open repository"}
                 </button>
               )}
             </div>

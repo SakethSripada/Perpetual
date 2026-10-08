@@ -338,3 +338,9 @@ body.vscode-high-contrast .action-menu, body.vscode-high-contrast .account-list 
 .choice-search input { width: 100%; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; outline: none; font: inherit; font-size: 12px; }
 .connection-provider { display: flex; align-items: center; gap: 9px; }
 .connection-provider svg { width: 16px; height: 16px; color: var(--am-muted); }
+/* Preserve a readable repository label in narrow sidebars. */
+.composer .repository-trigger { flex-shrink: 0; min-width: 78px; }
+@container (max-width: 340px) {
+  .composer .agent-chip { width: 30px; flex: 0 0 30px; padding: 0; gap: 0; justify-content: center; }
+  .composer .agent-chip .chip-label, .composer .agent-chip .chip-caret { display: none; }
+}
