@@ -6,6 +6,7 @@ webview/vite.config.ts
 webview/preview.html
 webview/preview.ts
 *.log
+.final-*
 scripts/**
 crates/**
 landing/**

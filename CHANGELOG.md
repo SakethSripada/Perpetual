@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 0.7.7
+
+- Unify Status, repository search, composer menus, approvals and shared-workspace
+  surfaces with the compact settings design. Show the selected account in Status.
+- Open GitHub search immediately with a spinner, recoverable inline errors and
+  retry. Keep cached results visible and respect closing during a pending fetch.
+- Publish account and model changes without rereading the workspace or sending
+  conversation history. Recheck entitlements immediately after account switching
+  and discard probes invalidated by a switch or settings change.
+- Reuse GitHub lists briefly per signed-in session, serve loaded workspaces on
+  reopening, and skip unchanged webview storage writes.
+- Preserve native input keyboard handling inside menus and restore focus on Escape.
+- Update event-listener, chacha20 and spin to compatible patched releases.
+
 ## 0.7.6
 
 - Keep settings at the same size across sections, loading and error states.
