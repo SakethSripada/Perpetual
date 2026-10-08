@@ -71,8 +71,7 @@ You can:
 
 ### Repository-aware workspaces
 
-Attach one or more repositories to a session from the local machine or through
-the GitHub repository flow. When a session starts, Perpetual creates and tracks
+Attach one or more local project folders to a session. When a session starts, Perpetual creates and tracks
 an isolated managed worktree so agent changes do not immediately mix with the
 visible checkout.
 
@@ -84,7 +83,7 @@ when you are ready.
 Repository features include:
 
 - Current VS Code workspace detection for faster local setup.
-- Local repository attachment and GitHub repository sign-in/selection.
+- Local project selection and repository attachment.
 - Multiple repository assignments for a session where supported.
 - Worktree isolation and branch tracking.
 - Diff loading and change review from the workbench.
@@ -224,7 +223,6 @@ Optional capabilities require their own installation and authentication:
 
 - Docker for isolated Codex Sandbox runs.
 - Ollama or LM Studio for local model execution.
-- GitHub sign-in or GitHub CLI for GitHub repository workflows.
 - Provider cloud access and a configured Codex Cloud environment for cloud
   continuity.
 

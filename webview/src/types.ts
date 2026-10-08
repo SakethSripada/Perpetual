@@ -43,14 +43,6 @@ export interface Repo {
   updated_at: string;
 }
 
-export interface GithubAuthStatus {
-  configured: boolean;
-  authenticated: boolean;
-  login: string | null;
-  avatar_url: string | null;
-  error: string | null;
-}
-
 export interface ActivityEvent {
   id: string;
   project_id: string | null;
@@ -532,21 +524,8 @@ export interface WorkbenchSnapshot {
   cloudPolicy: CloudPolicy | null;
   cloudAvailability: CloudAvailability[];
   details: ThreadDetails | null;
-  github: GithubAuthStatus | null;
   collaboration: WorkbenchCollaboration;
   error: string | null;
-}
-
-export interface GithubRepository {
-  id: number;
-  name: string;
-  full_name: string;
-  private: boolean;
-  html_url: string;
-  clone_url: string;
-  ssh_url: string;
-  default_branch: string;
-  updated_at: string | null;
 }
 
 export type ExtensionMessage =
@@ -555,7 +534,6 @@ export type ExtensionMessage =
   | { type: "submitFailed"; threadId: string | null; clientMessageId: string | null; text: string; message: string }
   | { type: "snapshot"; snapshot: WorkbenchSnapshot }
   | { type: "threadEvent"; event: AgentThreadEvent }
-  | { type: "githubRepos"; repos: GithubRepository[]; status: GithubAuthStatus | null }
   | { type: "repoConnected"; repo: Repo }
   | { type: "repoAssignmentFailed"; threadId: string; message: string }
   | { type: "sandboxLoginPrompt"; prompt: { code: string; url: string }; codex: boolean }

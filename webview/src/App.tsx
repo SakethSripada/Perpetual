@@ -24,7 +24,6 @@ import type {
   CollaborationDevice,
   ExecutionBackend,
   ExtensionMessage,
-  GithubRepository,
   LimitPolicy,
   LocalModelPolicy,
   LocalModelProvider,
@@ -160,25 +159,11 @@ export default function App() {
     window.addEventListener("keydown", search);
     return () => window.removeEventListener("keydown", search);
   }, []);
-  const [githubOpen, setGithubOpen] = useState(false);
-  useSheetAccessibility(settingsOpen || monitorOpen || githubOpen || collaborationOpen, settingsOpen ? (snapshot?.limitPolicy ? "settings" : "settings-pending") : monitorOpen ? "status" : githubOpen ? "github" : "collaboration");
+  useSheetAccessibility(settingsOpen || monitorOpen || collaborationOpen, settingsOpen ? (snapshot?.limitPolicy ? "settings" : "settings-pending") : monitorOpen ? "status" : "collaboration");
   const [reviewOpen, setReviewOpen] = useState<{
     threadId: string;
     nonce: number;
   } | null>(null);
-  const [githubRepos, setGithubRepos] = useState<GithubRepository[]>([]);
-  const [githubLoading, setGithubLoading] = useState(false);
-  const [githubError, setGithubError] = useState<string | null>(null);
-  const githubRequestRef = useRef<Promise<void> | null>(null);
-  const loadGithubRepos = () => {
-    setGithubOpen(true);
-    if (githubRequestRef.current) return;
-    setGithubLoading(true);
-    setGithubError(null);
-    githubRequestRef.current = request({ type: "githubList" })
-      .catch((error: unknown) => setGithubError(error instanceof Error ? error.message : String(error)))
-      .finally(() => { setGithubLoading(false); githubRequestRef.current = null; });
-  };
   const [welcomeLeaving, setWelcomeLeaving] = useState(false);
   // Optimistically-rendered user messages: shown the instant the user sends, then
   // dropped once the real event for them arrives in a snapshot.
@@ -304,10 +289,6 @@ export default function App() {
             queued,
           }),
         );
-        return;
-      }
-      if (incoming.type === "githubRepos") {
-        setGithubRepos(incoming.repos);
         return;
       }
       if (incoming.type === "repoConnected") {
@@ -1176,7 +1157,6 @@ export default function App() {
             threadId: selectedThread.id,
           })
         }
-        onGithub={loadGithubRepos}
         onLocalRepo={() => vscode.postMessage({ type: "connectLocalRepo" })}
         onRemoveRepo={(repoId) =>
           vscode.postMessage({ type: "deleteRepo", repoId })
@@ -1275,7 +1255,6 @@ export default function App() {
           onSandboxLogin={(codex) =>
             vscode.postMessage({ type: "sandboxLogin", codex })
           }
-          onGithubSignIn={() => vscode.postMessage({ type: "githubSignIn" })}
           onRefreshReadiness={() =>
             vscode.postMessage({ type: "refreshReadiness" })
           }
@@ -1353,19 +1332,6 @@ export default function App() {
         />
       )}
 
-      {githubOpen && (
-        <GithubSheet
-          loading={githubLoading}
-          error={githubError}
-          onRetry={loadGithubRepos}
-          repos={githubRepos}
-          onClose={() => setGithubOpen(false)}
-          onConnect={(repo) => {
-            setGithubOpen(false);
-            vscode.postMessage({ type: "connectGithubRepo", repo });
-          }}
-        />
-      )}
       </div>
     </main>
   );
@@ -2305,7 +2271,6 @@ type ComposerProps = {
   editDraft: { text: string; nonce: number } | null;
   onEditDraftConsumed(): void;
   onStop(): void;
-  onGithub(): void;
   onLocalRepo(): void;
   onRemoveRepo(repoId: string): void;
   onClearRepos(): void;
@@ -2526,7 +2491,7 @@ function Composer(props: ComposerProps) {
         <div className="toolbar">
           <div className="toolbar-chips">
             <button type="button" className="chip-btn repository-trigger" title={reposTitle} aria-label="Choose repositories" aria-haspopup="dialog" aria-expanded={reposOpen} onClick={() => setReposOpen(true)}><Icon name="folder" /><span className="repository-name">{selectedRepos.length ? reposLabel : "Repos"}</span><span className="repository-short">Repos</span><Icon name="caret" /></button>
-            {reposOpen && <RepositoryPicker repos={repos} selected={props.repoIds} state={reposState} locked={repoSelectionLocked} shared={sharedRepoMember} onSelect={props.setRepoIds} onClose={() => setReposOpen(false)} onLocal={props.onLocalRepo} onGithub={props.onGithub} onRemove={props.onRemoveRepo} />}
+            {reposOpen && <RepositoryPicker repos={repos} selected={props.repoIds} state={reposState} locked={repoSelectionLocked} shared={sharedRepoMember} onSelect={props.setRepoIds} onClose={() => setReposOpen(false)} onLocal={props.onLocalRepo} onRemove={props.onRemoveRepo} />}
 
             <ModelControls agent={props.agent} snapshot={props.snapshot} model={props.model} reasoning={props.reasoning} options={modelOptions(props.agent, props.snapshot, null, props.model)} onAgent={props.setAgent} onModel={props.setModel} onReasoning={props.setReasoning} />
 
@@ -4324,7 +4289,6 @@ function SettingsSheet(props: {
   onDeleteProviderAccount(accountId: string): void;
   onSaveLimitPolicy(policy: LimitPolicy): void;
   onSandboxLogin(codex: boolean): void;
-  onGithubSignIn(): void;
   onRefreshReadiness(): void;
 }) {
   const [limit, setLimit] = useState<LimitPolicy>(
@@ -4454,23 +4418,6 @@ function SettingsSheet(props: {
                     )}
                 </div>
               )}
-	              <div className="readiness-row">
-	                <span className="connection-provider"><Icon name="github" />GitHub</span>
-	                <small>
-	                  {props.snapshot.github?.authenticated
-	                    ? "Ready"
-	                    : "Use VS Code sign-in"}
-	                </small>
-	                {!props.snapshot.github?.authenticated && (
-	                  <button
-	                    type="button"
-	                    className="readiness-action"
-	                    onClick={props.onGithubSignIn}
-	                  >
-	                    Sign in
-	                  </button>
-	                )}
-	              </div>
             </div>
             <button
               type="button"
@@ -5096,72 +5043,6 @@ function CloudSetupCard(props: {
           {props.secondaryLabel}
         </button>
       </div>
-    </div>
-  );
-}
-
-function GithubSheet(props: {
-  loading: boolean;
-  error: string | null;
-  onRetry(): void;
-  repos: GithubRepository[];
-  onClose(): void;
-  onConnect(repo: GithubRepository): void;
-}) {
-  const [query, setQuery] = useState("");
-  const filtered = props.repos.filter((repo) =>
-    repo.full_name.toLowerCase().includes(query.toLowerCase()),
-  );
-  return (
-    <div className="sheet-backdrop" onMouseDown={props.onClose}>
-      <section
-        className="sheet repo-sheet"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Add from GitHub"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <header>
-          <strong>Add from GitHub</strong>
-          <IconButton title="Close" onClick={props.onClose}>
-            <Icon name="close" />
-          </IconButton>
-        </header>
-        <div className="sheet-search">
-          <Icon name="search" />
-          <input
-            autoFocus
-            aria-label="Filter repositories"
-            placeholder="Filter repositories"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-        </div>
-        <div className="github-list">
-          {props.loading && props.repos.length === 0 && <ResourceState state="loading" label="repositories" />}
-          {props.error && <div className="resource-state" role="alert"><span>{props.error}</span><button className="text-btn" onClick={props.onRetry}>Retry</button></div>}
-          {!props.loading && !props.error && filtered.length === 0 && (
-            <div className="menu-empty">{query.trim() ? "No matching repositories" : "No repositories available"}</div>
-          )}
-          {filtered.map((repo) => (
-              <button
-                key={repo.id}
-                type="button"
-                className="github-row"
-                onClick={() => props.onConnect(repo)}
-              >
-                <Icon name={repo.private ? "lock" : "github"} />
-                <span className="history-text">
-                  <span>{repo.full_name}</span>
-                  <small>
-                    {repo.private ? "Private" : "Public"} ·{" "}
-                    {repo.default_branch}
-                  </small>
-                </span>
-              </button>
-            ))}
-        </div>
-      </section>
     </div>
   );
 }

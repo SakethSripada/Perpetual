@@ -35,7 +35,7 @@ let snapshot: WorkbenchSnapshot = {
   agents: ["codex", "claude_code"].map((kind) => ({ kind, installed: true, authenticated: true, version: "1.0", availability: "available", binary_path: null, reset_at: null, last_checked: now, usage: { five_hour: { used_percent: 36, reset_at: now }, weekly: { used_percent: 24, reset_at: now } } })) as WorkbenchSnapshot["agents"],
   runDefaults: [], providerAccounts: accounts, authPendingAccountIds: [], detectionState: "ready",
   modelCatalog: [ { agent: "codex", default_model: "gpt-5.5", default_reasoning: "medium", models: [{ id: "gpt-5.5", label: "GPT-5.5", aliases: [], family: "gpt", default: true, available: true, source: "codex_app_server", reasoning: ["low", "medium", "high", "xhigh"], default_reasoning: "medium" }], reasoning: ["low", "medium", "high", "xhigh"], binary_path: null, version: "1.0", source: "codex_app_server", detected_at: now, error: null } ],
-  limitPolicy: { auto_switch: true, switch_back: true, agent_priority: ["codex", "claude_code"], accounts, agent_profiles: [], keep_awake: false, resume_with_earliest: true, unknown_reset_retry_secs: 600 }, sandboxPolicy: null, sandboxRuntime: null, cloudPolicy: null, cloudAvailability: [], localModelPolicy: null, localModels: [], details: null, github: null,
+  limitPolicy: { auto_switch: true, switch_back: true, agent_priority: ["codex", "claude_code"], accounts, agent_profiles: [], keep_awake: false, resume_with_earliest: true, unknown_reset_retry_secs: 600 }, sandboxPolicy: null, sandboxRuntime: null, cloudPolicy: null, cloudAvailability: [], localModelPolicy: null, localModels: [], details: null,
   collaboration: { role: "standalone", connected: false, host_name: null, device_id: "preview", device_name: "Preview", devices: [], assignments: [], change_sets: [], server_time: now }, error: null,
 };
 snapshot.modelCatalog!.push({agent: "claude_code", default_model: "claude-sonnet-5", default_reasoning: "high", models: [
@@ -56,7 +56,6 @@ function refresh() {
 const messages: any[] = [];
 (window as any).previewMessages = messages;
 let state: unknown = {};
-let githubAttempts = 0;
 window.acquireVsCodeApi = () => ({ getState: () => state, setState: (next) => { state = next; }, postMessage: (raw) => {
   const message = raw as any; messages.push(message);
   window.setTimeout(() => {
@@ -67,14 +66,6 @@ window.acquireVsCodeApi = () => ({ getState: () => state, setState: (next) => { 
     if (message.type === "setModelSelection") {
       snapshot.modelSelections = {...snapshot.modelSelections, [message.agent]: {model: message.model, reasoning: message.reasoning}};
       emit({type: "detectionUpdate", patch: {modelSelections: snapshot.modelSelections}});
-    }
-    if (message.type === "githubList") {
-      githubAttempts++;
-      if (params.has("github-error") && githubAttempts === 1) {
-        emit({ type: "operationResult", requestId: message.requestId, error: "GitHub is unavailable. Try again." });
-        return;
-      }
-      emit({ type: "githubRepos", status: null, repos: [{ id: 101, name: "Perpetual", full_name: "preview/Perpetual", private: true, html_url: "https://github.com/preview/Perpetual", clone_url: "https://github.com/preview/Perpetual.git", ssh_url: "git@github.com:preview/Perpetual.git", default_branch: "dev", updated_at: now }] });
     }
     if (message.type === "selectThread") {
       snapshot.selectedThreadId = message.threadId;
@@ -112,7 +103,7 @@ window.acquireVsCodeApi = () => ({ getState: () => state, setState: (next) => { 
     if (message.type === "submit") emit({ type: "submitFailed", threadId: message.threadId, clientMessageId: message.clientMessageId, text: message.message, message: "Preview mode: no provider calls are made. Your draft has been restored." });
     refresh();
     if (message.requestId) emit({ type: "operationResult", requestId: message.requestId, error: params.has("fail") && message.type === "setProviderAccountToken" ? "Could not save token. Please try again." : null });
-  }, message.type === "githubList" ? Number(params.get("github-delay") ?? 180) : 180);
+  }, 180);
 } });
 await import("./src/main");
 if (params.has("refresh")) window.setInterval(refresh, 1_000);

@@ -2995,34 +2995,6 @@ textarea {
   outline: none;
 }
 
-.github-list {
-  display: grid;
-  align-content: start;
-  gap: 2px;
-  overflow: auto;
-  padding: 10px;
-}
-.github-row {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  width: 100%;
-  padding: 8px 10px;
-  border: 0;
-  border-radius: var(--am-radius-sm);
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.github-row:hover {
-  background: var(--am-hover);
-}
-.github-row svg {
-  flex: 0 0 auto;
-  opacity: 0.8;
-}
-
 @media (max-width: 380px) {
   .field-grid {
     grid-template-columns: minmax(0, 1fr);

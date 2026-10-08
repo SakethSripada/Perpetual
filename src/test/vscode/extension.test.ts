@@ -14,12 +14,12 @@ suite("Perpetual extension", () => {
     assert.equal(extension.isActive, true);
 
     const commands = new Set(await vscode.commands.getCommands(true));
+    assert.equal(commands.has("perpetual.connectGithubRepo"), false);
     for (const command of [
       "perpetual.openWorkbench",
       "perpetual.newSession",
       "perpetual.refresh",
       "perpetual.connectLocalRepo",
-      "perpetual.connectGithubRepo",
       "perpetual.openSettings",
     ]) {
       assert.equal(commands.has(command), true, `${command} is not registered`);

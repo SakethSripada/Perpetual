@@ -26,10 +26,6 @@
 .sheet-search { margin: 0 12px 12px; padding: 0 8px; min-height: 32px; border: 1px solid var(--am-border-soft); border-radius: 6px; background: var(--am-surface); }
 .sheet-search input { height: 30px; font-size: 12px; }
 .sheet-search:focus-within { border-color: color-mix(in srgb, var(--vscode-foreground) 35%, transparent); }
-.github-row { min-height: 36px; padding: 6px 8px; border-radius: 6px; font-size: 12px; }
-.github-row .history-text { min-width: 0; overflow-wrap: anywhere; }
-.github-row .history-text small { font-size: 10px; }
-.github-list { padding: 0 12px 12px; }
 .collaboration-heading small { font-size: 11px; line-height: 1.5; }
 .collaboration-hero { padding: 4px 0; justify-items: start; text-align: left; }
 .collaboration-hero strong { font-size: 14px; font-weight: 500; }
@@ -236,11 +232,10 @@ body.vscode-high-contrast .action-menu, body.vscode-high-contrast .account-list 
 .session-history-sheet > footer { justify-content: flex-end; }
 .sheet-backdrop { backdrop-filter: none; background: #0006; }
 .sheet.settings-sheet { width: min(760px, 100%); height: min(640px, calc(100dvh - 32px)); max-height: min(640px, calc(100dvh - 32px)); border-radius: 10px; box-shadow: 0 12px 40px #0004; }
-.sheet.session-history-sheet, .sheet.repo-sheet { height: min(460px, calc(100dvh - 32px)); max-height: min(460px, calc(100dvh - 32px)); }
+.sheet.session-history-sheet { height: min(460px, calc(100dvh - 32px)); max-height: min(460px, calc(100dvh - 32px)); }
 .sheet.changes-sheet, .sheet.collaboration-sheet { height: min(640px, calc(100dvh - 32px)); max-height: min(640px, calc(100dvh - 32px)); }
 .sheet.monitor-sheet { height: min(340px, calc(100dvh - 32px)); max-height: min(340px, calc(100dvh - 32px)); }
-.sheet.repo-sheet { grid-template-rows: auto auto minmax(0, 1fr); }
-.settings-content, .sheet-body, .github-list, .session-history-sheet > .session-collection { min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
+.settings-content, .sheet-body, .session-history-sheet > .session-collection { min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
 .sheet-body { align-content: start; }
 .settings-layout { grid-template-columns: 152px minmax(0, 1fr); }
 .settings-nav button { display: flex; gap: 8px; min-height: 32px; padding: 4px 8px; border-radius: 5px; }

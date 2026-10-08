@@ -25,8 +25,6 @@ import type {
   CollaborationEventInput,
   CollaborationSnapshot,
   ExecutionBackend,
-  GithubAuthStatus,
-  GithubRepository,
   LimitPolicy,
   ProviderAccountAuthLaunch,
   ProviderAccountStatus,
@@ -35,7 +33,6 @@ import type {
   ContextPacket,
   NewAgentThread,
   NewCollaborationAssignment,
-  NewGithubRepo,
   NewLocalRepo,
   NewWorkEdge,
   NewWorkNode,
@@ -88,9 +85,6 @@ export interface DaemonApi {
   listRepos(projectId: string): Promise<Repo[]>;
   deleteRepo(repoId: string): Promise<void>;
   clearProjectRepos(projectId: string): Promise<void>;
-  githubAuthStatus(token: string): Promise<GithubAuthStatus>;
-  githubListRepositories(token: string): Promise<GithubRepository[]>;
-  connectGithubRepo(token: string, input: NewGithubRepo): Promise<Repo>;
   detectAgents(): Promise<AgentStatus[]>;
   agentRunDefaults(): Promise<AgentRunDefaults[]>;
   agentModelCatalog(): Promise<AgentModelCatalog[]>;

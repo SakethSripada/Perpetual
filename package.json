@@ -26,7 +26,6 @@
     "claude",
     "claude code",
     "ai",
-    "github",
     "docker",
     "handoff",
     "account rotation"
@@ -117,15 +116,9 @@
       },
       {
         "command": "perpetual.connectLocalRepo",
-        "title": "Connect Local Repository",
+        "title": "Select Local Project",
         "category": "Perpetual",
-        "icon": "$(repo)"
-      },
-      {
-        "command": "perpetual.connectGithubRepo",
-        "title": "Connect GitHub Repository",
-        "category": "Perpetual",
-        "icon": "$(github)"
+        "icon": "$(folder)"
       },
       {
         "command": "perpetual.openSettings",
@@ -154,9 +147,6 @@
         },
         {
           "command": "perpetual.connectLocalRepo"
-        },
-        {
-          "command": "perpetual.connectGithubRepo"
         },
         {
           "command": "perpetual.openSettings"

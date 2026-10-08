@@ -44,9 +44,6 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("perpetual.connectLocalRepo", () =>
       controller.connectLocalRepoInteractive()
     ),
-    vscode.commands.registerCommand("perpetual.connectGithubRepo", () =>
-      controller.connectGithubRepoInteractive()
-    ),
     vscode.commands.registerCommand("perpetual.openSettings", () =>
       vscode.commands.executeCommand("workbench.action.openSettings", "@ext:SakethSripada.perpetual-for-vscode")
     )

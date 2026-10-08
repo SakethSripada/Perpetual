@@ -15,7 +15,7 @@ async function bundle(entry: string, stubVscode = false): Promise<any> {
       fire(value) { for (const fn of this.listeners) fn(value); } dispose() {}
     }
     const listener = () => ({dispose(){}});
-    module.exports = { EventEmitter, extensions: {getExtension: () => globalThis.__perpetualTestGitExtension}, workspace: { isTrusted: true, getConfiguration: () => ({get: (_, fallback) => fallback, inspect: () => undefined}), onDidGrantWorkspaceTrust: listener, onDidChangeWorkspaceFolders: listener, onDidChangeConfiguration: listener }, window: { onDidChangeWindowState: listener }, authentication: {getSession: async () => globalThis.__perpetualTestGithubSession}, env: {} };
+    module.exports = { EventEmitter, extensions: {getExtension: () => globalThis.__perpetualTestGitExtension}, workspace: { isTrusted: true, getConfiguration: () => ({get: (_, fallback) => fallback, inspect: () => undefined}), onDidGrantWorkspaceTrust: listener, onDidChangeWorkspaceFolders: listener, onDidChangeConfiguration: listener }, window: { onDidChangeWindowState: listener }, env: {} };
   `);
   await build({ entryPoints: [path.resolve(entry)], outfile, bundle: true, platform: "node", format: "cjs", alias: stubVscode ? { vscode: stub } : undefined, logLevel: "silent" });
   const loaded = require(outfile);
@@ -193,29 +193,6 @@ test("invalidation during model discovery discards old entitlements and schedule
   assert.equal(controller.detectionCache.modelCatalog[0].models[0].id, "new-model");
   assert.equal(controller.detectionCache.modelState, "ready");
   controller.dispose();
-});
-
-test("GitHub repository caching is short lived, session scoped and never caches a failure", async () => {
-  const { WorkbenchController } = await bundle("src/node/workbenchController.ts", true);
-  let reads = 0, fail = false;
-  const api = { githubAuthStatus: async () => ({authenticated: true}), githubListRepositories: async () => { reads++; if (fail) throw new Error("Network interrupted"); return [{id: reads}]; } };
-  const controller = new WorkbenchController({ subscriptions: [] }, { onEvent: () => ({dispose(){}}), getClient: async () => api }, { appendLine() {} });
-  (globalThis as any).__perpetualTestGithubSession = { id: "session-a", account: {id: "user-a"}, accessToken: "test-token" };
-  try {
-    assert.equal((await controller.githubRepos()).repos[0].id, 1);
-    assert.equal((await controller.githubRepos()).repos[0].id, 1); assert.equal(reads, 1);
-    controller.githubCache.at = 0; await controller.githubRepos(); assert.equal(reads, 2);
-    (globalThis as any).__perpetualTestGithubSession.id = "session-b";
-    fail = true; await assert.rejects(controller.githubRepos(), /Network interrupted/);
-    const replies: any[] = []; let workspaceReads = 0;
-    controller.refresh = async () => { workspaceReads++; };
-    await controller.handleMessage({type: "githubList", requestId: "repos"}, (reply: any) => replies.push(reply));
-    assert.equal(workspaceReads, 0);
-    assert.deepEqual(replies, [{type: "operationResult", requestId: "repos", error: "Network interrupted"}]);
-    fail = false; assert.equal((await controller.githubRepos()).repos[0].id, 5);
-    assert.equal(controller.githubCache.sessionId, "session-b:user-a");
-    assert.ok(!JSON.stringify(controller.githubCache).includes("test-token"));
-  } finally { controller.dispose(); delete (globalThis as any).__perpetualTestGithubSession; }
 });
 
 test("token bursts bypass workspace reads but completion reconciles durable state", async () => {

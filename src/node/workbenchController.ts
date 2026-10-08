@@ -20,13 +20,10 @@ import type {
   CloudPolicy,
   CollaborationAssignment,
   ExecutionBackend,
-  GithubAuthStatus,
-  GithubRepository,
   LimitPolicy,
   LocalModelPolicy,
   LocalModelStatus,
   LocalModelProvider,
-  NewGithubRepo,
   PermissionPolicy,
   ProviderUsage,
   ProviderAccountStatus,
@@ -79,8 +76,6 @@ type WebviewMessage = (
   | { type: "reviewVisibility"; threadId: string; visible: boolean }
   | { type: "setModelSelection"; agent: AgentKind; model: string; reasoning: string }
   | { type: "applyThreadChanges"; threadId: string }
-  | { type: "githubList" }
-  | { type: "connectGithubRepo"; repo: GithubRepository }
   | { type: "deleteRepo"; repoId: string }
   | { type: "clearRepos" }
   | { type: "setLimitPolicy"; policy: LimitPolicy; preserveAccounts?: boolean }
@@ -99,7 +94,7 @@ type WebviewMessage = (
   | { type: "openProviderAccountCli"; accountId: string }
   | { type: "setProviderAccountToken"; accountId: string; token: string }
   | { type: "deleteProviderAccount"; accountId: string }
-  | { type: "githubSignIn" | "refreshReadiness" }
+  | { type: "refreshReadiness" }
   | { type: "launchCloudHandoff"; threadId: string; agent?: AgentKind | null }
   | { type: "reclaimCloudRun"; threadId: string }
   | { type: "openPath"; path: string }
@@ -202,7 +197,6 @@ export class WorkbenchController implements vscode.Disposable {
   private repoAssignmentsPending = new Map<string, string[]>();
   private repoAssignmentsInFlight = new Map<string, Promise<void>>();
   private workspaceReposReady: Promise<void> | null = null;
-  private githubCache: { sessionId: string; at: number; status: GithubAuthStatus; repos: GithubRepository[] } | null = null;
   private autoConnectSuspended = false;
 
   readonly onSnapshot = this.snapshots.event;
@@ -375,13 +369,6 @@ export class WorkbenchController implements vscode.Disposable {
         case "connectLocalRepo":
           await this.connectLocalRepoInteractive(reply);
           return;
-        case "githubList":
-          await this.postGithubRepos(reply);
-          return;
-        case "connectGithubRepo":
-          await this.connectGithubRepo(message.repo, reply);
-          await this.refresh();
-          return;
         case "deleteRepo":
           await this.deleteRepo(message.repoId);
           return;
@@ -513,12 +500,6 @@ export class WorkbenchController implements vscode.Disposable {
             client.deleteProviderAccount(message.accountId),
           );
           await this.refreshProviderAccounts();
-          return;
-        case "githubSignIn":
-          await this.githubToken();
-          this.notice(reply, "GitHub sign-in is ready.");
-          this.invalidateDetection();
-          await this.refresh();
           return;
         case "refreshReadiness":
           this.invalidateDetection();
@@ -687,9 +668,6 @@ export class WorkbenchController implements vscode.Disposable {
       operationError = text;
       if (message.type === "submit") this.submissionFailures.fire({ type: "submitFailed", threadId: message.threadId ?? null, clientMessageId: message.clientMessageId ?? null, text: message.message, message: text });
       this.output.appendLine(`[workbench] ${text}`);
-      // The repository picker handles its own request error and retry. A failed
-      // remote list should neither duplicate its alert nor reread the workspace.
-      if (message.type === "githubList" && message.requestId) return;
       reply?.(
         message.type === "assignRepos"
           ? {
@@ -774,8 +752,8 @@ export class WorkbenchController implements vscode.Disposable {
       canSelectFiles: false,
       canSelectFolders: true,
       canSelectMany: false,
-      openLabel: "Connect Repository",
-      title: "Connect Local Repository",
+      openLabel: "Select Project",
+      title: "Select Local Project",
     });
     const folder = picked?.[0]?.fsPath;
     if (!folder) return;
@@ -833,24 +811,6 @@ export class WorkbenchController implements vscode.Disposable {
     }
     await client.retryCollaborationAssignment(assignmentId);
     this.notice(reply, `${path.basename(root)} added. Device work queued again.`);
-    await this.refresh();
-  }
-
-  async connectGithubRepoInteractive(): Promise<void> {
-    this.assertTrusted();
-    const { repos } = await this.githubRepos();
-    const items: Array<vscode.QuickPickItem & { repo: GithubRepository }> =
-      repos.map((repo: GithubRepository) => ({
-        label: repo.full_name,
-        description: repo.private ? "Private" : "Public",
-        detail: repo.html_url,
-        repo,
-      }));
-    const picked = await vscode.window.showQuickPick(items, {
-      placeHolder: "Select a GitHub repository to connect",
-    });
-    if (!picked) return;
-    await this.connectGithubRepo(picked.repo);
     await this.refresh();
   }
 
@@ -964,7 +924,6 @@ export class WorkbenchController implements vscode.Disposable {
         cloudPolicy,
         cloudAvailability,
         details,
-        github: null,
         collaboration: {
           ...collaborationSnapshot,
           role: collaborationStatus.role,
@@ -1302,58 +1261,6 @@ export class WorkbenchController implements vscode.Disposable {
         }
       }
     }
-  }
-
-  private async postGithubRepos(reply?: WebviewReply): Promise<void> {
-    const { status, repos } = await this.githubRepos();
-    reply?.({ type: "githubRepos", status, repos });
-  }
-
-  private async githubRepos(): Promise<{
-    status: GithubAuthStatus;
-    repos: GithubRepository[];
-  }> {
-    this.assertTrusted();
-    const session = await vscode.authentication.getSession("github", ["repo"], { createIfNone: true });
-    const key = `${session.id}:${session.account.id}`;
-    if (this.githubCache?.sessionId === key && Date.now() - this.githubCache.at < 120_000) {
-      return { status: this.githubCache.status, repos: this.githubCache.repos };
-    }
-    const token = session.accessToken;
-    const client = await this.daemon.getClient();
-    const [status, repos] = await Promise.all([
-      client.githubAuthStatus(token),
-      client.githubListRepositories(token),
-    ]);
-    this.githubCache = { sessionId: key, at: Date.now(), status, repos };
-    return { status, repos };
-  }
-
-  private async connectGithubRepo(
-    repo: GithubRepository,
-    reply?: WebviewReply,
-  ): Promise<void> {
-    this.assertTrusted();
-    const token = await this.githubToken();
-    const client = await this.daemon.getClient();
-    const project = await client.ensureWorkbenchProject();
-    const input: NewGithubRepo = {
-      project_id: project.id,
-      name: repo.name,
-      full_name: repo.full_name,
-      clone_url: repo.clone_url,
-      ssh_url: repo.ssh_url,
-      default_branch: repo.default_branch,
-    };
-    const connected = await client.connectGithubRepo(token, input);
-    reply?.({ type: "repoConnected", repo: connected });
-  }
-
-  private async githubToken(): Promise<string> {
-    const session = await vscode.authentication.getSession("github", ["repo"], {
-      createIfNone: true,
-    });
-    return session.accessToken;
   }
 
   private async startSandboxLogin(
@@ -2170,7 +2077,6 @@ function emptySnapshot(
     cloudPolicy: null,
     cloudAvailability: [],
     details: null,
-      github: null,
       collaboration: {
         role: "standalone",
         connected: false,
