@@ -369,5 +369,6 @@ body.vscode-high-contrast .action-menu, body.vscode-high-contrast .account-list 
   .composer .repository-trigger { width: 78px; }
   .repository-trigger > .repository-name { display: none; }
   .repository-trigger > .repository-short { display: inline; }
+  .repository-trigger > svg:last-child { display: none; }
 }
 @container (max-width: 340px) { .model-choice-trigger { max-width: 120px; } }

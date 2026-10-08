@@ -125,6 +125,7 @@ export default function App() {
   const [agent, setAgent] = useState<AgentKind>(
     persisted.lastAgent ?? "claude_code",
   );
+  const providerChoiceRef = useRef<{ threadId: string | null; agent: AgentKind } | null>(null);
   const activeAgentRef = useRef(agent);
   activeAgentRef.current = agent;
   const [permission, setPermission] =
@@ -414,6 +415,7 @@ export default function App() {
   useEffect(() => {
     if (!snapshot) return;
     const nextAgent =
+      (providerChoiceRef.current?.threadId === effectiveSelectedId ? providerChoiceRef.current.agent : undefined) ??
       selectedThread?.active_agent ??
       selectedThread?.preferred_agent ??
       (effectiveSelectedId === null
@@ -886,6 +888,7 @@ export default function App() {
   const chooseReasoning = (nextReasoning: string) => saveModelSelection(model, nextReasoning);
 
   const pickAgent = (nextAgent: AgentKind) => {
+    providerChoiceRef.current = { threadId: effectiveSelectedId, agent: nextAgent };
     setAgent(nextAgent);
     if (nextAgent !== "codex") {
       setBackend("host");
