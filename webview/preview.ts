@@ -45,6 +45,8 @@ function refresh() {
   if (params.has("loading")) Object.assign(next, { loadState: "loading", detectionState: "loading", threads: [], repos: [], agents: [], providerAccounts: [], modelCatalog: [], limitPolicy: null });
   if (params.has("detection-loading")) Object.assign(next, { detectionState: "loading", agents: [], providerAccounts: [], modelCatalog: [], limitPolicy: null });
   if (params.has("load-error")) Object.assign(next, { loadState: "error", error: "Could not connect. Retry to reconnect.", threads: [], repos: [], agents: [], providerAccounts: [], modelCatalog: [], limitPolicy: null });
+  if (params.has("no-repos")) Object.assign(next, { repos: [], defaultRepoIds: [] });
+  if (params.has("usage-partial")) next.agents = next.agents.map((agent) => ({ ...agent, usage: agent.kind === "codex" ? { five_hour: null, weekly: { used_percent: 10, reset_at: new Date(Date.now() + 7200000).toISOString() } } : null }));
   emit({ type: "snapshot", snapshot: next });
 }
 const messages: any[] = [];

@@ -42,6 +42,8 @@ import { SessionSidebar, statusLabel } from "./navigation";
 import { SessionHistory } from "./sessions";
 import { resourceState, ResourceState } from "./loading";
 import { ChangeLog } from "./changeLog";
+import { UsageLimits } from "./usage";
+import { RepositoryPicker } from "./repositories";
 import { configureTransport, request } from "./bridge";
 import { useSheetAccessibility } from "./dialogs";
 import { createEventBatcher, mergeThreadEvents } from "./streaming";
@@ -2494,127 +2496,8 @@ function Composer(props: ComposerProps) {
 
         <div className="toolbar">
           <div className="toolbar-chips">
-            <Popover
-              open={reposOpen}
-              setOpen={setReposOpen}
-              placement="above"
-              fullWidth
-              trigger={({ toggle, ref }) => (
-                <button
-                  ref={ref as (el: HTMLButtonElement | null) => void}
-                  type="button"
-                  className="composer-icon-btn"
-                  title={reposTitle}
-                  aria-label={reposState === "ready" ? reposLabel : reposTitle}
-                  onClick={toggle}
-                >
-                  <Icon name={selectedRepos.length > 0 ? "folder" : "plus"} />
-                </button>
-              )}
-            >
-              <div className="menu repo-menu">
-                <div className="repo-menu-head">
-                  <span className="menu-head">Connected Repos</span>
-                  {repos.length > 0 && !repoSelectionLocked && (
-                    <button
-                      type="button"
-                      className="repo-clear"
-                      onClick={() => {
-                        setReposOpen(false);
-                        props.onClearRepos();
-                      }}
-                    >
-                      Clear all
-                    </button>
-                  )}
-                </div>
-                {resourceState(props.snapshot, "repos") !== "ready" && <ResourceState state={resourceState(props.snapshot, "repos") as "loading" | "error"} label="repositories" />}
-                {resourceState(props.snapshot, "repos") === "ready" && repos.length === 0 && (
-                  <div className="menu-empty">No repositories connected</div>
-                )}
-                {repoSelectionLocked && (
-                  <div className="menu-empty repo-lock-note">
-                    {sharedRepoMember
-                      ? "Managed by the host."
-                      : "Repository fixed for this chat."}
-                  </div>
-                )}
-                {repos.map((repo) => {
-                  const checked = props.repoIds.includes(repo.id);
-                  return (
-                    <div key={repo.id} className="repo-row">
-                      <label
-                        className={
-                          checked
-                            ? "menu-item check selected"
-                            : "menu-item check"
-                        }
-                        title={
-                          repoSelectionLocked
-                            ? "Start a new session to change repositories"
-                            : undefined
-                        }
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          disabled={repoSelectionLocked}
-                          onChange={(event) => {
-                            const next = event.target.checked
-                              ? [...props.repoIds, repo.id]
-                              : props.repoIds.filter((id) => id !== repo.id);
-                            props.setRepoIds(next);
-                          }}
-                        />
-                        <span className="history-text">
-                          <span>{repo.name}</span>
-                          <small>
-                            {repo.kind === "github" ? "GitHub" : "Local"}
-                          </small>
-                        </span>
-                      </label>
-                      <button
-                        type="button"
-                        className="history-del"
-                        title={
-                          repoSelectionLocked
-                            ? "Start a new session to change repositories"
-                            : `Disconnect ${repo.name}`
-                        }
-                        aria-label={`Disconnect ${repo.name}`}
-                        disabled={repoSelectionLocked}
-                        onClick={() => props.onRemoveRepo(repo.id)}
-                      >
-                        <Icon name="trash" />
-                      </button>
-                    </div>
-                  );
-                })}
-                {!sharedRepoMember && <div className="menu-sep" />}
-                {!sharedRepoMember && <button
-                  type="button"
-                  className="menu-item"
-                  onClick={() => {
-                    setReposOpen(false);
-                    props.onLocalRepo();
-                  }}
-                >
-                  <Icon name="folder" />
-                  <span>Add local folder</span>
-                </button>}
-                {!sharedRepoMember && <button
-                  type="button"
-                  className="menu-item"
-                  onClick={() => {
-                    setReposOpen(false);
-                    props.onGithub();
-                  }}
-                >
-                  <Icon name="github" />
-                  <span>Add from GitHub</span>
-                </button>}
-              </div>
-            </Popover>
+            <button type="button" className="chip-btn repository-trigger" title={reposTitle} aria-label="Choose repositories" aria-haspopup="dialog" aria-expanded={reposOpen} onClick={() => setReposOpen(true)}><Icon name="folder" /><span>{selectedRepos.length ? reposLabel : "Repository"}</span><Icon name="caret" /></button>
+            {reposOpen && <RepositoryPicker repos={repos} selected={props.repoIds} state={reposState} locked={repoSelectionLocked} shared={sharedRepoMember} onSelect={props.setRepoIds} onClose={() => setReposOpen(false)} onLocal={props.onLocalRepo} onGithub={props.onGithub} onRemove={props.onRemoveRepo} />}
 
             <Dropdown
               ariaLabel="Agent"
@@ -4325,14 +4208,7 @@ function MonitorSheet(props: {
                   : "Host"
               }
             />}
-            <MonitorMetric
-              label="Usage limits"
-              value={
-                thread?.limit_reset_at
-                  ? formatResetTime(thread.limit_reset_at)
-                  : resetSummary(props.snapshot.agents)
-              }
-            />
+            {thread?.limit_reset_at && <MonitorMetric label="Resume" value={formatResetTime(thread.limit_reset_at)} />}
             <MonitorMetric
               label="Queued"
               value={thread && !props.details ? "Checking…" : `${props.details?.queued.length ?? 0} follow-up${props.details?.queued.length === 1 ? "" : "s"}`}
@@ -4344,6 +4220,8 @@ function MonitorSheet(props: {
               />
             )}
           </div>
+
+          <UsageLimits agent={agent} provider={props.snapshot.agents.find((item) => item.kind === agent)} account={activeAccount(props.snapshot, agent)?.email ?? undefined} loading={props.snapshot.detectionState === "loading" || props.snapshot.detectionState === "idle"} error={props.snapshot.detectionState === "error"} />
 
           {CLOUD_CONTINUITY_ENABLED && <div className="settings-group">
             <div className="group-title">Cloud Continuity</div>
@@ -4396,16 +4274,6 @@ function routeLabel(thread: AgentThread | null, cloud: CloudRun | undefined): st
     return `${labelAgent(thread.fallback_agent)} fallback`;
   }
   return labelAgent(thread.active_agent ?? thread.preferred_agent);
-}
-
-function resetSummary(agents: AgentStatus[]): string {
-  const limited = agents.filter((agent) => agent.availability === "limited");
-  if (limited.length === 0) return "No active limits";
-  return limited
-    .map((agent) =>
-      `${labelAgent(agent.kind)} ${agent.reset_at ? formatResetTime(agent.reset_at) : "unknown"}`,
-    )
-    .join(", ");
 }
 
 const ALL_SETTINGS_SECTIONS = [

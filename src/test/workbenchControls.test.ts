@@ -397,7 +397,10 @@ test("repo assignment UI retains the serialized write and lock guidance", () => 
   assert.match(controller, /drainRepoAssignments/);
   assert.match(controller, /repoAssignmentFailed/);
   assert.match(app, /pendingRepoAssignmentRef/);
-  assert.match(app, /Start a new session to change repositories/);
+  assert.match(app, /locked=\{repoSelectionLocked\}/);
+  const picker = readFileSync(path.resolve(__dirname, "../../webview/src/repositories.tsx"), "utf8");
+  assert.match(picker, /Attached to this chat/);
+  assert.match(picker, /disabled=\{props.locked\}/);
 });
 
 type SignInModule = {

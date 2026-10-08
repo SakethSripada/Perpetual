@@ -4,6 +4,7 @@ import { Icon, ProviderLogo } from "./icons";
 import { post, request } from "./bridge";
 import { ActionMenu, MenuItem, MenuLabel, MenuSeparator } from "./controls";
 import { resourceState, ResourceState } from "./loading";
+import { UsageLimits } from "./usage";
 
 export const providers: AgentKind[] = ["codex", "claude_code"];
 export const providerName = (agent: AgentKind) => agent === "codex" ? "Codex" : "Claude Code";
@@ -116,14 +117,7 @@ export function Accounts({ snapshot }: { snapshot: WorkbenchSnapshot }) {
   return <div className="desktop-accounts">
     <div className="account-page-heading"><h2>Accounts</h2><button className="quiet-icon" title="Refresh accounts" aria-label="Refresh accounts" disabled={busy} onClick={() => void run({ type: "refreshReadiness" })}><Icon name="refresh" /></button></div>
     {error && <p className="inline-error" role="alert">{error}</p>}
-    <div className="provider-overview">{providers.map((agent) => {
-      const provider = snapshot.agents.find((item) => item.kind === agent);
-      const ready = uniqueAccountChoices(accounts).filter((account) => account.agent === agent && ["active", "ready"].includes(accountState(account))).length;
-      return <div className="provider-overview-card" key={agent}><div><ProviderBadge agent={agent} /><strong>{providerName(agent)}</strong><small>{ready} ready</small></div>{(["five_hour", "weekly"] as const).map((key) => {
-        const window = provider?.usage?.[key];
-        return window && <div className="provider-usage" key={key}><label>{key === "five_hour" ? "5-hour" : "Weekly"}<span>{Math.round(Math.max(0, 100 - window.used_percent))}% left</span></label>{window.reset_at && <small>Resets {new Date(window.reset_at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}</small>}</div>;
-      })}{!provider?.usage && <p>Usage unavailable</p>}</div>;
-    })}</div>
+    <div className="account-usage">{providers.map((agent) => <UsageLimits key={agent} agent={agent} provider={snapshot.agents.find((item) => item.kind === agent)} account={activeAccount(snapshot, agent)?.email ?? undefined} loading={snapshot.detectionState === "loading" || snapshot.detectionState === "idle"} error={snapshot.detectionState === "error"} />)}</div>
     <div className="account-list" aria-busy={busy}>
       {accounts.map((account, index) => <article className={`account-card ${accountState(account)}`} key={account.id}>
         <div className="account-card-main"><ProviderBadge agent={account.agent} /><div className="account-identity"><strong title={accountName(account)}>{accountName(account)}</strong><small>{providerName(account.agent)}{account.plan ? ` · ${planName(account.plan)}` : ""}</small></div><span className={`state-badge ${accountState(account)}`}>{snapshot.authPendingAccountIds?.includes(account.id) ? "Connecting…" : accountStateLabel(account)}</span></div>

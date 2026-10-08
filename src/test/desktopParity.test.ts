@@ -469,3 +469,19 @@ test("a failed message transport rejects cleanly and can recover on the next act
   configureTransport((message: any) => listeners[0]({ data: {type: "operationResult", requestId: message.requestId, error: null} }));
   await request({ type: "refresh" });
 });
+
+test("usage windows preserve partial reports and reject invalid values without inventing quotas", async () => {
+  const { usageWindows } = await bundle("webview/src/usageData.ts");
+  assert.deepEqual(usageWindows(null), []);
+  assert.deepEqual(usageWindows({five_hour: null, weekly: null}), []);
+  const weekly = usageWindows({five_hour: null, weekly: {used_percent: 10, reset_at: "2026-10-10T12:00:00Z"}});
+  assert.equal(weekly.length, 1);
+  assert.equal(weekly[0].key, "weekly");
+  assert.equal(weekly[0].remaining, 90);
+  assert.equal(weekly[0].reset.toISOString(), "2026-10-10T12:00:00.000Z");
+  assert.equal(usageWindows({weekly: {used_percent: 140, reset_at: "invalid"}})[0].remaining, 0);
+  assert.equal(usageWindows({weekly: {used_percent: -5, reset_at: null}})[0].remaining, 100);
+  assert.equal(usageWindows({weekly: {used_percent: 5, reset_at: "invalid"}})[0].reset, null);
+  assert.deepEqual(usageWindows({weekly: {used_percent: NaN, reset_at: null}}), []);
+  assert.deepEqual(usageWindows({weekly: {used_percent: Infinity, reset_at: null}}), []);
+});

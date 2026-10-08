@@ -88,6 +88,7 @@ test("the picker completes only the leading command token", () => {
 });
 
 test("the empty repository picker remains neutral", () => {
-  assert.match(appSource, /className="composer-icon-btn"/);
+  assert.match(appSource, /aria-label="Choose repositories"/);
+  assert.match(appSource, /<Icon name="folder" \/><span>/);
   assert.doesNotMatch(stylesSource, /\.composer-icon-btn\.warning/);
 });
