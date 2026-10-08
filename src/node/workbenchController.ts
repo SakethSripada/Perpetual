@@ -170,6 +170,7 @@ export class WorkbenchController implements vscode.Disposable {
   private refreshTimer: NodeJS.Timeout | null = null;
   private readinessTimer: NodeJS.Timeout | null = null;
   private refreshSequence = 0;
+  private lastSnapshot: WorkbenchSnapshot | null = null;
   private messageQueue: Promise<void> = Promise.resolve();
   private lastSyncedSettings = "";
   private disposed = false;
@@ -705,6 +706,7 @@ export class WorkbenchController implements vscode.Disposable {
     const sequence = ++this.refreshSequence;
     const snapshot = await this.snapshot(error);
     if (!this.disposed && sequence === this.refreshSequence) {
+      this.lastSnapshot = snapshot;
       this.snapshots.fire(snapshot);
     }
   }
@@ -885,6 +887,7 @@ export class WorkbenchController implements vscode.Disposable {
 
       const defaultRepoIds = pickDefaultRepoIds(repos);
       return {
+        loadState: "ready",
         trusted: true,
         defaults,
         project,
@@ -918,6 +921,8 @@ export class WorkbenchController implements vscode.Disposable {
         error,
       };
     } catch (err) {
+      // A transient connection failure must not erase already loaded conversations or accounts.
+      if (this.lastSnapshot?.trusted) return { ...this.lastSnapshot, loadState: "error", error: formatError(err) };
       return emptySnapshot(true, defaults, formatError(err));
     }
   }
@@ -1499,6 +1504,7 @@ export class WorkbenchController implements vscode.Disposable {
     if (this.detectInflight) return this.detectInflight;
     const accountRevision = this.accountRevision;
     this.detectInflight = (async () => {
+      let probeFailed = false;
       const [
         agents,
         runDefaults,
@@ -1516,6 +1522,7 @@ export class WorkbenchController implements vscode.Disposable {
           .detectAgents()
           .then(filterAgentStatuses)
           .catch((err) => {
+            probeFailed = true;
             this.output.appendLine(
               `[workbench] agent detection failed: ${formatError(err)}`,
             );
@@ -1528,13 +1535,18 @@ export class WorkbenchController implements vscode.Disposable {
         client
           .agentModelCatalog()
           .then(filterModelCatalog)
-          .catch(() => this.detectionCache?.modelCatalog ?? []),
+          .catch((err) => {
+            probeFailed = true;
+            this.output.appendLine(`[workbench] model detection failed: ${formatError(err)}`);
+            return this.detectionCache?.modelCatalog ?? [];
+          }),
         LOCAL_MODELS_ENABLED ? client.detectLocalModels().catch(() => []) : Promise.resolve([]),
         client
           .getLimitPolicy()
           .then(normalizeLimitPolicy)
-          .catch(() => this.detectionCache?.limitPolicy ?? null),
+          .catch(() => { probeFailed = true; return this.detectionCache?.limitPolicy ?? null; }),
         client.providerAccountStatuses().catch((err) => {
+          probeFailed = true;
           this.output.appendLine(`[workbench] account detection failed: ${formatError(err)}`);
           return this.detectionCache?.providerAccounts ?? [];
         }),
@@ -1566,7 +1578,7 @@ export class WorkbenchController implements vscode.Disposable {
         modelCatalog,
         localModels,
         localModelPolicy,
-        state: "ready",
+        state: probeFailed ? "error" : "ready",
       };
       if (accountRevision !== this.accountRevision && this.detectionCache) {
         next.providerAccounts = this.detectionCache.providerAccounts;
@@ -1971,6 +1983,7 @@ function emptySnapshot(
   error: string,
 ): WorkbenchSnapshot {
   return {
+    loadState: "error",
     trusted,
     defaults,
     project: null,

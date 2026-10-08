@@ -15,7 +15,7 @@ async function bundle(entry: string, stubVscode = false): Promise<any> {
       fire(value) { for (const fn of this.listeners) fn(value); } dispose() {}
     }
     const listener = () => ({dispose(){}});
-    module.exports = { EventEmitter, workspace: { isTrusted: true, onDidGrantWorkspaceTrust: listener, onDidChangeWorkspaceFolders: listener, onDidChangeConfiguration: listener }, window: { onDidChangeWindowState: listener }, env: {} };
+    module.exports = { EventEmitter, workspace: { isTrusted: true, getConfiguration: () => ({get: (_, fallback) => fallback, inspect: () => undefined}), onDidGrantWorkspaceTrust: listener, onDidChangeWorkspaceFolders: listener, onDidChangeConfiguration: listener }, window: { onDidChangeWindowState: listener }, env: {} };
   `);
   await build({ entryPoints: [path.resolve(entry)], outfile, bundle: true, platform: "node", format: "cjs", alias: stubVscode ? { vscode: stub } : undefined, logLevel: "silent" });
   const loaded = require(outfile);
@@ -213,6 +213,32 @@ test("conversation search matches original requests and ignores extra whitespace
   assert.deepEqual(searchSessions(threads, "  FIX   oauth ").map((item: any) => item.id), ["one"]);
   assert.equal(searchSessions(threads, "missing").length, 0);
   assert.equal(searchSessions(threads, "  ").length, 2);
+});
+
+test("resource loading never presents pending or failed probes as confirmed empty", async () => {
+  const { resourceState } = await bundle("webview/src/loading.tsx");
+  const empty = { loadState: "ready", detectionState: "loading", threads: [], repos: [], providerAccounts: [], modelCatalog: [], error: null };
+  assert.equal(resourceState(null, "threads"), "loading");
+  assert.equal(resourceState(empty, "accounts"), "loading");
+  assert.equal(resourceState(empty, "models"), "loading");
+  assert.equal(resourceState(empty, "threads"), "ready");
+  assert.equal(resourceState({ ...empty, detectionState: "error" }, "accounts"), "error");
+  assert.equal(resourceState({ ...empty, loadState: "error" }, "threads"), "error");
+  assert.equal(resourceState({ ...empty, loadState: "error", providerAccounts: [account] }, "accounts"), "ready");
+  assert.equal(resourceState({ ...empty, detectionState: "ready" }, "accounts"), "ready");
+});
+
+test("a failed refresh preserves the loaded workspace instead of publishing empty lists", async () => {
+  const { WorkbenchController } = await bundle("src/node/workbenchController.ts", true);
+  const controller = new WorkbenchController({ subscriptions: [] }, { onEvent: () => ({dispose(){}}), getClient: async () => { throw new Error("Daemon disconnected"); } }, { appendLine() {} });
+  controller.lastSnapshot = { trusted: true, threads: [{id: "existing"}], repos: [{id: "repo"}], providerAccounts: [account], selectedThreadId: "existing", detectionState: "ready" };
+  const result = await controller.snapshot(null);
+  assert.equal(result.loadState, "error");
+  assert.equal(result.threads[0].id, "existing");
+  assert.equal(result.repos[0].id, "repo");
+  assert.equal(result.providerAccounts[0].id, account.id);
+  assert.match(result.error, /Daemon disconnected/);
+  controller.dispose();
 });
 
 test("paused local and Docker features reject operations without probing or contacting providers", async () => {

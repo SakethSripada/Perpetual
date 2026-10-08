@@ -507,6 +507,7 @@ export interface ThreadDetails {
 }
 
 export interface WorkbenchSnapshot {
+  loadState?: "loading" | "ready" | "error";
   trusted: boolean;
   defaults: WorkbenchDefaults;
   project: unknown | null;
