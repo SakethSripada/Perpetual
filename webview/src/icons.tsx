@@ -130,7 +130,7 @@ export function Icon({ name, className, ...rest }: { name: IconName; className?:
       aria-hidden="true"
       {...rest}
     >
-      <path d={PATHS[name]} fillRule="evenodd" clipRule="evenodd" />
+      {name === "more" ? [3, 8, 13].map((x) => <circle key={x} cx={x} cy="8" r="1" fill="currentColor" stroke="none" />) : <path d={PATHS[name]} fillRule="evenodd" clipRule="evenodd" />}
     </svg>
   );
 }

@@ -39,6 +39,7 @@ import type {
 import { BrandMark, Icon, ProviderLogo as AgentMark } from "./icons";
 import { Accounts, AccountSwitcher, activeAccount, accountName } from "./accounts";
 import { SessionSidebar, statusLabel } from "./navigation";
+import { SessionHistory } from "./sessions";
 import { configureTransport, request } from "./bridge";
 import { useSheetAccessibility } from "./dialogs";
 import { mergeThreadEvents } from "./streaming";
@@ -135,6 +136,13 @@ export default function App() {
   const [collaborationInvite, setCollaborationInvite] = useState<string | null>(null);
   const [executionDeviceId, setExecutionDeviceId] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  useEffect(() => {
+    const search = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setHistoryOpen(true); }
+    };
+    window.addEventListener("keydown", search);
+    return () => window.removeEventListener("keydown", search);
+  }, []);
   const [githubOpen, setGithubOpen] = useState(false);
   useSheetAccessibility(settingsOpen || monitorOpen || githubOpen || collaborationOpen);
   const [reviewOpen, setReviewOpen] = useState<{
@@ -900,14 +908,15 @@ export default function App() {
     vscode.postMessage({ type: "selectThread", threadId: id });
   };
 
-  const deleteThread = (id: string, force: boolean) => {
+  const deleteThread = async (id: string, force: boolean) => {
+    await request({ type: "deleteThread", threadId: id, force });
     // Deleting clears the daemon's selection; if we're removing the open thread,
     // jump to a fresh session optimistically so the view doesn't flash stale.
     if (id === effectiveSelectedId) {
       setPending([]);
       setNavThreadId(null);
     }
-    vscode.postMessage({ type: "deleteThread", threadId: id, force });
+
   };
   const reviewChanges = () => {
     if (!selectedThread) return;
@@ -931,15 +940,7 @@ export default function App() {
         </div>
         <div className="top-actions">
           <NotificationCenter state={notifications} />
-          <span className="compact-history"><HistoryMenu
-            open={historyOpen}
-            setOpen={setHistoryOpen}
-            snapshot={snapshot}
-            selectedThread={selectedThread}
-            onNew={newSession}
-            onSelect={selectThread}
-            onDelete={deleteThread}
-          /></span>
+          <IconButton title="Search conversations" onClick={() => setHistoryOpen(true)}><Icon name="search" /></IconButton>
           <IconButton title="Settings" onClick={() => setSettingsOpen(true)}>
             <Icon name="settings" />
           </IconButton>
@@ -1166,6 +1167,8 @@ export default function App() {
           }
         />
       )}
+
+      {historyOpen && <SessionHistory snapshot={snapshot} selectedId={effectiveSelectedId} onClose={() => setHistoryOpen(false)} onNew={newSession} onSelect={selectThread} onDelete={deleteThread} onReview={(id) => { selectThread(id); setReviewOpen({ threadId: id, nonce: Date.now() }); vscode.postMessage({ type: "loadDiff", threadId: id }); }} />}
 
       {settingsOpen && snapshot && (
         <SettingsSheet
@@ -2104,96 +2107,6 @@ function ModelBrowser(props: {
   );
 }
 
-function HistoryMenu(props: {
-  open: boolean;
-  setOpen(open: boolean): void;
-  snapshot: WorkbenchSnapshot | null;
-  selectedThread: AgentThread | null;
-  onNew(): void;
-  onSelect(id: string): void;
-  onDelete(id: string, force: boolean): void;
-}) {
-  const threads = props.snapshot?.threads ?? [];
-  return (
-    <Popover
-      open={props.open}
-      setOpen={props.setOpen}
-      align="center"
-      trigger={({ toggle, ref }) => (
-        <button
-          ref={ref as (el: HTMLButtonElement | null) => void}
-          type="button"
-          className="icon-btn"
-          title="Sessions"
-          aria-label="Sessions"
-          onClick={toggle}
-        >
-          <Icon name="history" />
-        </button>
-      )}
-    >
-      <div className="menu history-menu" role="menu">
-        <div className="history-menu-head">
-          <strong>Sessions</strong>
-          <button
-            type="button"
-            className="history-new"
-            title="New session"
-            aria-label="New session"
-            onClick={props.onNew}
-          >
-            <Icon name="plus" />
-          </button>
-        </div>
-        {threads.length === 0 && (
-          <div className="menu-empty">No sessions yet</div>
-        )}
-        {threads.map((thread) => {
-          const running = thread.status === "running";
-          const selected = thread.id === props.selectedThread?.id;
-          return (
-            <div
-              key={thread.id}
-              className={selected ? "history-row selected" : "history-row"}
-            >
-              <button
-                type="button"
-                className="history-pick"
-                onClick={() => props.onSelect(thread.id)}
-                title={thread.title}
-              >
-                <span
-                  className={running ? "history-spinner" : "history-dot"}
-                  data-status={thread.status}
-                />
-                <span className="history-text">
-                  <span className="history-title">{thread.title}</span>
-                  <small>
-                    {labelAgent(thread.active_agent ?? thread.preferred_agent)}{" "}
-                    · {humanize(thread.status)}
-                  </small>
-                </span>
-              </button>
-              <button
-                type="button"
-                className="history-del"
-                title={running ? "Stop and delete session" : "Delete session"}
-                aria-label="Delete session"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  props.onDelete(thread.id, running);
-                }}
-              >
-                <Icon name="trash" />
-              </button>
-            </div>
-          );
-        })}
-      </div>
-    </Popover>
-  );
-}
-
 const APPROVAL_ICON: Record<
   ApprovalRequest["kind"],
   "terminal" | "repo" | "agent"
@@ -2834,7 +2747,7 @@ function Composer(props: ComposerProps) {
                   ref={ref as (el: HTMLButtonElement | null) => void}
                   type="button"
                   className={`composer-icon-btn${optionsActive ? " active" : ""}`}
-                  title="Model, reasoning & sandbox"
+                  title="Model and reasoning"
                   aria-label="Run options"
                   onClick={toggle}
                 >

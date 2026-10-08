@@ -1,4 +1,6 @@
 import * as Dropdown from "@radix-ui/react-dropdown-menu";
+import * as Context from "@radix-ui/react-context-menu";
+import { Fragment } from "react";
 import type { ComponentProps, ReactNode } from "react";
 
 /** The desktop's menu primitive: collision-aware placement and native key handling. */
@@ -17,4 +19,14 @@ export function MenuItem({ danger, children, ...props }: ComponentProps<typeof D
 }
 export function MenuLabel({ children }: { children: ReactNode }) { return <Dropdown.Label className="action-menu-label">{children}</Dropdown.Label>; }
 export function MenuSeparator() { return <Dropdown.Separator className="action-menu-separator" />; }
+
+export type RowAction = { label: string; icon?: ReactNode; disabled?: boolean; danger?: boolean; separated?: boolean; onSelect(): void };
+export function RowActions({ actions, context = false }: { actions: RowAction[]; context?: boolean }) {
+  const Item = context ? Context.Item : Dropdown.Item;
+  const Separator = context ? Context.Separator : Dropdown.Separator;
+  return <>{actions.map((action) => <Fragment key={action.label}>{action.separated && <Separator className="action-menu-separator" />}<Item disabled={action.disabled} onSelect={action.onSelect} className={`action-menu-item${action.danger ? " danger-text" : ""}`}>{action.icon}{action.label}</Item></Fragment>)}</>;
+}
+export function ContextActions({ actions, children }: { actions: RowAction[]; children: ReactNode }) {
+  return <Context.Root modal={false}><Context.Trigger asChild>{children}</Context.Trigger><Context.Portal><Context.Content className="action-menu" collisionPadding={12}><RowActions actions={actions} context /></Context.Content></Context.Portal></Context.Root>;
+}
 

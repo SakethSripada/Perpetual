@@ -115,3 +115,46 @@
 }
 @media (prefers-reduced-motion: reduce) { .action-menu { animation: none; } }
 body.vscode-high-contrast .action-menu, body.vscode-high-contrast .account-list { border: 1px solid var(--vscode-contrastBorder, var(--vscode-foreground)); }
+
+/* Conversation history uses the same rows in the sidebar and search dialog. */
+.session-collection { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.session-search { margin: 12px 0 0; padding: 0 8px; gap: 7px; min-height: 32px; border: 1px solid var(--am-border-soft); border-radius: 6px; background: var(--am-surface); }
+.session-search:focus-within { border-color: color-mix(in srgb, var(--vscode-foreground) 35%, transparent); }
+.session-search input { font-size: 12px; padding: 7px 0; outline: none; }
+.session-search input::-webkit-search-cancel-button { display: none; }
+.session-search .quiet-icon { width: 20px; height: 20px; }
+.sidebar-section-label { padding: 14px 7px 8px; font-size: 11px; }
+.session-row { flex-wrap: nowrap; border: 0; margin-bottom: 2px; border-radius: 6px; }
+.session-select { padding: 9px 8px; align-items: center; gap: 10px; }
+.session-select strong { font-size: 13px; line-height: 1.4; font-weight: 500; }
+.session-select small { font-size: 11px; line-height: 1.4; margin-top: 2px; }
+.session-dot { margin: 0; width: 5px; height: 5px; }
+.session-dot.running { box-shadow: none; background: var(--vscode-foreground); }
+.session-dot.review, .session-dot.done { background: var(--am-muted); }
+.session-remove { width: 26px; height: 26px; padding: 0; margin-right: 5px; }
+.new-session-button { min-height: 32px; padding: 6px 9px; border: 0; background: var(--am-surface); font-size: 12px; }
+.sidebar-brand { padding-bottom: 14px; }
+.session-history-sheet { width: min(560px, calc(100vw - 24px)); max-height: min(600px, calc(100vh - 40px)); border-radius: 10px; background: var(--am-elevated); box-shadow: 0 12px 40px #0004; }
+.session-history-sheet > header { border: 0; padding: 14px 16px 2px; }
+.session-history-sheet > .session-collection { padding: 0 12px 12px; overflow: auto; }
+.session-history-sheet .sidebar-sessions { max-height: 360px; min-height: 100px; }
+.session-history-sheet > footer { padding: 10px 16px; }
+.session-history-sheet > footer > span { color: var(--am-muted); font-size: 11px; }
+.session-history-sheet .session-remove { opacity: 1; }
+.session-empty { display: flex; align-items: center; flex-direction: column; gap: 8px; padding: 30px 12px; text-align: center; }
+.session-empty > svg { width: 20px; height: 20px; color: var(--am-muted); }
+.session-empty strong { font-weight: 500; font-size: 13px; }
+.session-empty p { font-size: 12px; line-height: 1.5; color: var(--am-muted); margin: 0; }
+.session-edit { background: var(--am-surface); border-radius: 7px; padding: 12px; margin-top: 10px; font-size: 12px; }
+.session-edit label { display: grid; gap: 6px; }
+.session-edit input { width: 100%; min-height: 30px; padding: 5px 8px; border: 1px solid var(--am-border); border-radius: 5px; background: var(--vscode-input-background); }
+.session-edit > div { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; }
+.session-edit p { color: var(--am-muted); line-height: 1.5; }
+@media (max-width: 450px) { .session-history-sheet > footer > span { max-width: 120px; line-height: 1.5; } }
+.msg-body { line-height: 1.65; }
+.msg.user .msg-body { padding: 9px 13px; border-radius: 9px; }
+.transcript { gap: 18px; }
+.msg-body .md-h { margin-top: 14px; margin-bottom: 6px; }
+.msg-body .md-list { padding-left: 20px; }
+.ai-file-chip { border: 0; height: 26px; background: var(--am-surface); }
+.welcome-suggestions button { padding: 7px 12px; border: 0; min-height: 30px; background: var(--am-surface); border-radius: 6px; }

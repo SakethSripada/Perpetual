@@ -207,11 +207,20 @@ test("provider plans use readable desktop labels", async () => {
   assert.equal(planName(null), null);
 });
 
+test("conversation search matches original requests and ignores extra whitespace", async () => {
+  const { searchSessions } = await bundle("webview/src/sessions.tsx");
+  const threads = [{ id: "one", title: "Fix login", objective: "Repair OAuth refresh" }, { id: "two", title: "Dashboard", objective: "Add widgets" }];
+  assert.deepEqual(searchSessions(threads, "  FIX   oauth ").map((item: any) => item.id), ["one"]);
+  assert.equal(searchSessions(threads, "missing").length, 0);
+  assert.equal(searchSessions(threads, "  ").length, 2);
+});
+
 test("paused local and Docker features reject operations without probing or contacting providers", async () => {
   const { WorkbenchController } = await bundle("src/node/workbenchController.ts", true);
   const called: string[] = [];
   const api = new Proxy({}, { get: (_, method) => method === "then" ? undefined : async () => { called.push(String(method)); return []; } });
   const controller = new WorkbenchController({ subscriptions: [] }, { onEvent: () => ({dispose(){}}), getLocalClient: async () => api }, { appendLine() {} });
+  controller.refresh = async () => undefined;
   await controller.runDetection(api);
   assert.ok(!called.includes("detectLocalModels"));
   assert.ok(!called.includes("detectSandboxRuntime"));
