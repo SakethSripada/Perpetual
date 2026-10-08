@@ -356,7 +356,7 @@ export class WorkbenchController implements vscode.Disposable {
               client.setLimitPolicy(policy),
             );
             await this.mirrorLimitPolicyToConfig(applied);
-            await this.refreshProviderAccounts(applied);
+            await this.refreshProviderAccounts();
           }
           return;
         case "setSandboxPolicy":
@@ -1395,9 +1395,7 @@ export class WorkbenchController implements vscode.Disposable {
     if (clearPending) this.authPendingAccounts.delete(accountId);
   }
 
-  private async refreshProviderAccounts(
-    limitPolicy?: LimitPolicy,
-  ): Promise<ProviderAccountStatus[]> {
+  private async refreshProviderAccounts(): Promise<ProviderAccountStatus[]> {
     const client = await this.daemon.getLocalClient();
     const revision = ++this.accountRevision;
     const providerAccounts = await client.providerAccountStatuses();

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { AgentKind, ProviderAccount, ProviderAccountStatus, WorkbenchSnapshot } from "./types";
-import { Icon } from "./icons";
+import { Icon, ProviderLogo } from "./icons";
 import { post, request } from "./bridge";
 
 export const providers: AgentKind[] = ["codex", "claude_code"];
@@ -34,7 +34,7 @@ export function uniqueAccountChoices(accounts: ProviderAccountStatus[]) {
   return [...choices.values()];
 }
 export function ProviderBadge({ agent }: { agent: AgentKind }) {
-  return <span className={`provider-avatar ${agent}`} aria-hidden="true">{agent === "codex" ? "◎" : "✳"}</span>;
+  return <span className={`provider-avatar ${agent}`} aria-hidden="true"><ProviderLogo agent={agent} /></span>;
 }
 
 export function AccountSwitcher({ snapshot, agent, onManage, onPickAgent }: { snapshot: WorkbenchSnapshot | null; agent: AgentKind; onManage(): void; onPickAgent?(agent: AgentKind): void }) {

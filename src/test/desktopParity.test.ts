@@ -167,6 +167,29 @@ test("desktop tool trace pairs call ids, records failures, and collects file edi
   assert.deepEqual(result.files, [{path: "app.ts", change: "modified"}]);
 });
 
+test("an older background probe cannot undo an acknowledged account change", async () => {
+  const { WorkbenchController } = await bundle("src/node/workbenchController.ts", true);
+  let finishProbe!: (value: any[]) => void;
+  const pendingProbe = new Promise<any[]>((resolve) => { finishProbe = resolve; });
+  const updated = { ...account, label: "Latest label" };
+  let probes = 0;
+  const api = new Proxy({}, { get: (_, method) => async () => {
+    if (method === "providerAccountStatuses") return ++probes === 1 ? pendingProbe : [updated];
+    if (method === "getLimitPolicy") return { accounts: [updated] };
+    return [];
+  } });
+  const controller = new WorkbenchController({ subscriptions: [] }, { onEvent: () => ({dispose(){}}), getLocalClient: async () => api }, { appendLine() {} });
+  controller.refresh = async () => undefined;
+  controller.detectionCache = { at: 0, providerAccounts: [account], state: "ready" };
+  const detection = controller.runDetection(api);
+  await controller.refreshProviderAccounts();
+  finishProbe([account]);
+  const result = await detection;
+  assert.equal(result.providerAccounts[0].label, "Latest label");
+  assert.equal(controller.detectionCache.limitPolicy.accounts[0].label, "Latest label");
+  controller.dispose();
+});
+
 test("tool groups stop at messages and separate turns without losing event order", async () => {
   const { groupToolRuns } = await bundle("webview/src/transcript.ts");
   const event = (id: string, kind: string, turn_id = "turn") => ({ type: "event", event: {id, kind, turn_id} });

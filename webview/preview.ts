@@ -23,6 +23,8 @@ const accounts: ProviderAccountStatus[] = [
   { id: "codex-work", label: "Work", agent: "codex", auth_mode: "isolated_cli", enabled: true, use_credits: false, email: "work@example.test", plan: "business", installed: true, authenticated: true, availability: "limited", reset_at: new Date(Date.now() + 7200000).toISOString(), detail: null, active: false },
   { id: "system-claude_code", label: "Claude sign-in", agent: "claude_code", auth_mode: "system", enabled: true, use_credits: false, email: "saketh@example.test", plan: "max", installed: true, authenticated: true, availability: "available", reset_at: null, detail: null, active: true },
 ];
+accounts.push({ ...accounts[0], id: 'duplicate-codex', auth_mode: 'isolated_cli', label: 'Personal profile', active: false });
+accounts.push({ ...accounts[2], id: 'duplicate-claude', auth_mode: 'isolated_cli', label: 'Claude profile', active: false });
 function thread(id: string, title: string, status: AgentThread["status"]): AgentThread {
   return { id, title, status, active_agent: "codex", preferred_agent: "codex", permission: "workspace_write", execution_backend: "host", model: "gpt-5.5", reasoning: "medium", provider_account_id: "system-codex", task_budget: { mode: "unlimited" }, updated_at: now, created_at: now } as AgentThread;
 }
@@ -48,6 +50,19 @@ window.acquireVsCodeApi = () => ({ getState: () => state, setState: (next) => { 
       snapshot.selectedThreadId = message.threadId;
       snapshot.details = message.threadId ? { events: [ { id: "user-one", thread_id: message.threadId, turn_id: "turn-one", role: "user", kind: "message", text: "Can you improve the dashboard and make the account state clearer?", data: {}, ts: now }, { id: "assistant-one", thread_id: message.threadId, turn_id: "turn-one", role: "assistant", kind: "message", text: "I updated the dashboard with a quieter layout and clear account states.\n\n### What changed\n\n- Added an account switcher near the composer.\n- Kept account identity visible throughout the session.\n- Improved spacing, keyboard focus, and narrow panel layouts.\n\nYou can review the changes and choose which account to use for your next run.", data: {}, ts: now } ], activities: [], repos: [], turns: [], queued: [], cloudRuns: [], diff: null, approvals: [] } : null;
     }
+    if (message.type === 'selectThread' && snapshot.details) {
+      const toolEvents = [
+        { id: 'call-read', thread_id: message.threadId, turn_id: 'turn-one', role: 'assistant', kind: 'tool_call', text: 'Read', data: { call_id: 'read', input: { file_path: 'src/accounts.tsx' } }, ts: now },
+        { id: 'result-read', thread_id: message.threadId, turn_id: 'turn-one', role: 'tool', kind: 'tool_result', text: 'Read 180 lines', data: { call_id: 'read', ok: true }, ts: now },
+        { id: 'call-test', thread_id: message.threadId, turn_id: 'turn-one', role: 'assistant', kind: 'tool_call', text: 'exec_command', data: { call_id: 'test', input: { command: 'npm test' } }, ts: now },
+        { id: 'result-test', thread_id: message.threadId, turn_id: 'turn-one', role: 'tool', kind: 'tool_result', text: '74 tests passed', data: { call_id: 'test', ok: true }, ts: now },
+        { id: 'file-changed', thread_id: message.threadId, turn_id: 'turn-one', role: 'assistant', kind: 'file_changed', text: 'Modified src/accounts.tsx', data: {}, ts: now },
+      ];
+      snapshot.details.events.splice(1, 0, ...toolEvents);
+      if (message.threadId === 'session-three') {
+        snapshot.details.events = snapshot.details.events.filter((event) => !['assistant-one', 'result-test'].includes(event.id));
+      }
+    }
     if (message.type === "activateProviderAccount") { const selected = snapshot.providerAccounts.find((a) => a.id === message.accountId)!; snapshot.providerAccounts.forEach((a) => { if (a.agent === selected.agent) a.active = a.id === selected.id && a.availability !== "limited"; }); }
     if (message.type === "updateProviderAccount") snapshot.providerAccounts = snapshot.providerAccounts.map((a) => a.id === message.accountId ? { ...a, ...message.patch } : a);
     if (message.type === "renameThread") snapshot.threads = snapshot.threads.map((thread) => thread.id === message.threadId ? { ...thread, title: message.title } : thread);
@@ -62,3 +77,4 @@ window.acquireVsCodeApi = () => ({ getState: () => state, setState: (next) => { 
   }, 180);
 } });
 await import("./src/main");
+if (params.has("refresh")) window.setInterval(refresh, 1_000);

@@ -1,11 +1,18 @@
 /* Desktop's quiet surfaces and density, adapted to VS Code's theme tokens. */
 :root {
+  --am-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI', 'Inter', system-ui, sans-serif;
+  --am-mono: ui-monospace, 'SF Mono', Menlo, 'Cascadia Code', 'Cascadia Mono', Consolas, monospace;
+  --am-faint: color-mix(in srgb, var(--vscode-foreground) 55%, var(--vscode-editor-background));
   --am-accent: var(--vscode-button-background, #91b7a1);
   --am-sidebar: var(--vscode-sideBar-background, var(--vscode-editor-background));
   --am-elevated: var(--vscode-editorWidget-background, var(--vscode-editor-background));
   --am-border: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
   --am-radius: 12px;
-  font-family: var(--vscode-font-family, 'Segoe UI', system-ui, sans-serif);
+  font-family: var(--am-sans);
+  font-size: 14px;
+  font-weight: 400;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
 }
 .app-shell { flex-direction: row; background: var(--vscode-editor-background); }
 .workspace-main { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
@@ -56,6 +63,19 @@
 .conversation { min-height: 0; }
 .transcript { padding: 28px max(24px, calc((100% - 780px) / 2)) 26px; gap: 22px; }
 .msg-body { font-size: 14px; line-height: 1.8; }
+.msg.pending.first-turn { animation: fade-in 180ms ease-out both; will-change: auto; }
+.empty.welcome, .empty.welcome.is-leaving { filter: none; }
+.empty.welcome { animation: fade-in 200ms ease-out both; }
+.empty.welcome.is-leaving { animation: fade-in 180ms ease-out reverse both; }
+.stream-content.is-streaming > :last-child::after { box-shadow: none; background: var(--vscode-foreground); }
+.session-select strong { font-size: 13px; font-weight: 400; }
+.session-select small { font-size: 11px; }
+.composer .chip-btn { font-size: 13px; }
+.composer .agent-chip { width: auto; gap: 6px; padding: 0 8px; }
+.composer .agent-chip .chip-label, .composer .agent-chip .chip-caret { display: inline; }
+@container (max-width: 280px) {
+  .composer .agent-chip .chip-label, .composer .agent-chip .chip-caret { display: none; }
+}
 .msg.assistant .msg-body { padding: 0; }
 .msg.user .msg-body { max-width: min(85%, 640px); border-radius: 12px; padding: 10px 15px; box-shadow: none; background: var(--am-surface-2); }
 .activity-row { font-size: 12px; }
@@ -68,18 +88,19 @@
 .account-switcher { position: relative; min-width: 0; }
 .account-switch-trigger { display: flex; align-items: center; gap: 7px; padding: 7px 8px; max-width: 100%; border: 0; border-radius: 7px; background: transparent; text-align: left; cursor: pointer; }
 .account-switch-trigger:hover, .account-switch-trigger[aria-expanded=true] { background: var(--am-hover); }
-.account-switch-trigger > span:not(.provider-avatar) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--am-muted); flex: 1; }
+.account-switch-trigger > span:not(.provider-avatar) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--vscode-foreground); flex: 1; }
 .account-switch-trigger svg { height: 12px; width: 12px; }
 .provider-avatar { display: inline-flex; align-items: center; justify-content: center; height: 26px; width: 26px; flex: 0 0 26px; border: 1px solid var(--am-border); border-radius: 7px; background: var(--am-surface); font-size: 20px; }
 .provider-avatar.claude_code { color: var(--vscode-charts-orange, #ca9075); }
+.provider-avatar .agent-mark { width: 16px; height: 16px; fill: currentColor; }
 .account-dock .provider-avatar, .sidebar-footer .provider-avatar { height: 20px; width: 20px; flex-basis: 20px; font-size: 16px; border: 0; }
-.account-switch-menu { position: absolute; bottom: calc(100% + 6px); left: 0; width: 290px; max-width: calc(100vw - 32px); max-height: min(500px, 65vh); overflow-y: auto; z-index: 70; padding: 6px; border: 1px solid var(--am-border); border-radius: 10px; background: var(--am-elevated); box-shadow: 0 12px 40px #0005; }
-.account-menu-label { padding: 10px 9px 5px; font-size: 10px; font-weight: 550; color: var(--am-muted); }
+.account-switch-menu { position: fixed; bottom: auto; width: 320px; max-width: calc(100vw - 24px); overflow-y: auto; z-index: 1000; padding: 6px; border: 1px solid var(--am-border); border-radius: 12px; background: var(--am-elevated); box-shadow: 0 8px 24px #0003; isolation: isolate; }
+.account-menu-label { padding: 12px 10px 6px; font-size: 12px; font-weight: 500; color: var(--am-muted); }
 .account-switch-menu button { display: flex; align-items: center; gap: 9px; width: 100%; padding: 9px; border: 0; border-radius: 6px; background: transparent; text-align: left; cursor: pointer; }
 .account-switch-menu button:hover:not(:disabled) { background: var(--am-hover); }
 .account-option > span:nth-child(2) { min-width: 0; flex: 1; }
-.account-option strong { display: block; overflow: hidden; text-overflow: ellipsis; font-size: 12px; font-weight: 500; white-space: nowrap; }
-.account-option small { display: block; margin-top: 3px; font-size: 10px; color: var(--am-muted); }
+.account-option strong { display: block; overflow: hidden; text-overflow: ellipsis; font-size: 14px; font-weight: 500; white-space: nowrap; }
+.account-option small { display: block; margin-top: 4px; font-size: 12px; color: var(--am-muted); }
 .account-option.active small { color: var(--am-ok); }
 .account-option.limited small { color: var(--am-warn); }
 .account-switch-menu .manage-accounts { margin-top: 7px; border-top: 1px solid var(--am-border); border-radius: 0 0 6px 6px; font-size: 12px; }
