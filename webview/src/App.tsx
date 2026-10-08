@@ -1156,7 +1156,7 @@ export default function App() {
 
       {historyOpen && <SessionHistory snapshot={snapshot} selectedId={effectiveSelectedId} onClose={() => setHistoryOpen(false)} onNew={newSession} onSelect={selectThread} onDelete={deleteThread} onReview={(id) => { selectThread(id); setReviewOpen({ threadId: id, nonce: Date.now() }); vscode.postMessage({ type: "loadDiff", threadId: id }); }} />}
 
-      {settingsOpen && (!snapshot || !snapshot.limitPolicy) && <div className="sheet-backdrop" onClick={() => setSettingsOpen(false)}><section className="sheet settings-pending-sheet" role="dialog" aria-modal="true" aria-label="Settings" onClick={(event) => event.stopPropagation()}><header><strong>Settings</strong><IconButton title="Close" onClick={() => setSettingsOpen(false)}><Icon name="close" /></IconButton></header><ResourceState state={snapshot?.error || snapshot?.detectionState === "error" ? "error" : "loading"} label="settings" /></section></div>}
+      {settingsOpen && (!snapshot || !snapshot.limitPolicy) && <div className="sheet-backdrop" onClick={() => setSettingsOpen(false)}><section className="sheet settings-sheet settings-pending-sheet" role="dialog" aria-modal="true" aria-label="Settings" onClick={(event) => event.stopPropagation()}><header><strong>Settings</strong><IconButton title="Close" onClick={() => setSettingsOpen(false)}><Icon name="close" /></IconButton></header><ResourceState state={snapshot?.error || snapshot?.detectionState === "error" ? "error" : "loading"} label="settings" /></section></div>}
       {settingsOpen && snapshot?.limitPolicy && (
         <SettingsSheet
           snapshot={snapshot}

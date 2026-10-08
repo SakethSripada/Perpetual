@@ -180,10 +180,16 @@ body.vscode-high-contrast .action-menu, body.vscode-high-contrast .account-list 
 .sidebar-section-label { padding: 12px 8px 6px; }
 .session-empty { padding: 18px 8px; font-size: 12px; color: var(--am-muted); }
 .session-history-sheet .sidebar-sessions { min-height: 0; }
-.session-history-sheet > .session-collection { flex: 0 1 auto; }
+.session-history-sheet > .session-collection { flex: 1; }
 .session-history-sheet > footer { justify-content: flex-end; }
 .sheet-backdrop { backdrop-filter: none; background: #0006; }
-.sheet.settings-sheet { width: min(760px, 100%); height: auto; max-height: min(640px, calc(100dvh - 32px)); border-radius: 10px; box-shadow: 0 12px 40px #0004; }
+.sheet.settings-sheet { width: min(760px, 100%); height: min(640px, calc(100dvh - 32px)); max-height: min(640px, calc(100dvh - 32px)); border-radius: 10px; box-shadow: 0 12px 40px #0004; }
+.sheet.session-history-sheet, .sheet.repo-sheet { height: min(460px, calc(100dvh - 32px)); max-height: min(460px, calc(100dvh - 32px)); }
+.sheet.changes-sheet, .sheet.collaboration-sheet { height: min(640px, calc(100dvh - 32px)); max-height: min(640px, calc(100dvh - 32px)); }
+.sheet.monitor-sheet { height: min(400px, calc(100dvh - 32px)); max-height: min(400px, calc(100dvh - 32px)); }
+.sheet.repo-sheet { grid-template-rows: auto auto minmax(0, 1fr); }
+.settings-content, .sheet-body, .github-list, .session-history-sheet > .session-collection { min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
+.sheet-body { align-content: start; }
 .settings-layout { grid-template-columns: 152px minmax(0, 1fr); }
 .settings-nav button { display: flex; gap: 8px; min-height: 32px; padding: 4px 8px; border-radius: 5px; }
 .settings-nav-icon { height: 22px; width: 22px; background: transparent !important; }
