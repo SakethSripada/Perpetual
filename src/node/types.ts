@@ -787,6 +787,8 @@ export interface WorkbenchSnapshot {
   localModels?: LocalModelStatus[];
   localModelPolicy: LocalModelPolicy | null;
   detectionState?: "idle" | "loading" | "ready" | "error";
+  accountDetectionState?: "loading" | "ready" | "error";
+  modelDetectionState?: "loading" | "ready" | "error";
   defaultRepoIds?: string[];
   limitPolicy: LimitPolicy | null;
   providerAccounts: ProviderAccountStatus[];

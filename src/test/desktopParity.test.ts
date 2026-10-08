@@ -83,6 +83,114 @@ test("switching cannot activate an account with a missing CLI or expired sign-in
   controller.dispose();
 });
 
+test("switching rejects limited, missing and signed-out accounts, then recovers for a ready account", async () => {
+  const { WorkbenchController } = await bundle("src/node/workbenchController.ts", true);
+  let selected: any = { ...account, availability: "limited" }, activations = 0;
+  const api = { providerAccountStatuses: async () => selected ? [selected] : [], activateProviderAccount: async () => { activations++; }, getLimitPolicy: async () => ({ accounts: [selected] }) };
+  const controller = new WorkbenchController({ subscriptions: [] }, { onEvent: () => ({dispose(){}}), getLocalClient: async () => api }, { appendLine() {} });
+  controller.refresh = async () => undefined;
+  const errors: (string | null)[] = [];
+  const switchAccount = () => controller.handleMessage({ type: "activateProviderAccount", accountId: account.id, requestId: "switch" }, (result: any) => { if (result.type === "operationResult") errors.push(result.error); });
+  await switchAccount(); selected = null; await switchAccount();
+  selected = { ...account, authenticated: false }; await switchAccount();
+  assert.equal(activations, 0);
+  assert.match(errors[0]!, /usage limit/);
+  assert.ok(errors.every(Boolean));
+  selected = { ...account }; await switchAccount();
+  assert.equal(activations, 1);
+  assert.equal(errors.at(-1), null);
+  controller.dispose();
+});
+
+test("concurrent refresh requests share reads and reconcile once more after pending changes", async () => {
+  const { WorkbenchController } = await bundle("src/node/workbenchController.ts", true);
+  const controller = new WorkbenchController({ subscriptions: [] }, { onEvent: () => ({dispose(){}}) }, { appendLine() {} });
+  let release!: () => void, reads = 0, active = 0, maximum = 0;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  controller.snapshot = async () => { reads++; maximum = Math.max(maximum, ++active); if (reads === 1) await gate; active--; return { threads: [{id: String(reads)}] }; };
+  const published: any[] = []; controller.onSnapshot((value: any) => published.push(value));
+  const requests = Array.from({ length: 25 }, () => controller.refresh());
+  assert.equal(reads, 1); release(); await Promise.all(requests);
+  assert.equal(reads, 2); assert.equal(maximum, 1);
+  assert.equal(published.at(-1).threads[0].id, "2");
+  controller.dispose(); await controller.refresh(); assert.equal(reads, 2);
+});
+
+test("accounts and their discovered policy publish before a slow model catalog finishes", async () => {
+  const { WorkbenchController } = await bundle("src/node/workbenchController.ts", true);
+  let release!: (models: any[]) => void;
+  const models = new Promise<any[]>((resolve) => { release = resolve; });
+  let policies = 0;
+  const api = new Proxy({}, { get: (_, method) => method === "then" ? undefined : async () => {
+    if (method === "agentModelCatalog") return models;
+    if (method === "providerAccountStatuses") return [account];
+    if (method === "getLimitPolicy") return { accounts: ++policies === 1 ? [] : [account] };
+    return [];
+  } });
+  const controller = new WorkbenchController({ subscriptions: [] }, { onEvent: () => ({dispose(){}}) }, { appendLine() {} });
+  controller.refresh = async () => undefined;
+  const pending = controller.runDetection(api);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(controller.detectionCache.accountState, "ready");
+  assert.equal(controller.detectionCache.providerAccounts[0].id, account.id);
+  assert.equal(controller.detectionCache.limitPolicy.accounts[0].id, account.id);
+  assert.equal(controller.detectionCache.state, "loading");
+  release([]); const result = await pending;
+  assert.equal(result.limitPolicy.accounts[0].id, account.id);
+  assert.equal(result.modelState, "ready");
+  controller.dispose();
+});
+
+test("fresh detection is reused and invalidation shares one pending probe", async () => {
+  const { WorkbenchController } = await bundle("src/node/workbenchController.ts", true);
+  const controller = new WorkbenchController({ subscriptions: [] }, { onEvent: () => ({dispose(){}}) }, { appendLine() {} });
+  let probes = 0, release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  controller.refresh = async () => undefined;
+  controller.detectionCache = { at: Date.now(), state: "ready", providerAccounts: [account] };
+  controller.runDetection = () => { probes++; controller.detectInflight = gate.finally(() => { controller.detectInflight = null; }); return controller.detectInflight; };
+  for (let index = 0; index < 50; index++) controller.detect({});
+  assert.equal(probes, 0);
+  controller.invalidateDetection(); controller.detect({}); controller.detect({});
+  assert.equal(probes, 1); release(); await gate; controller.dispose();
+});
+
+test("token bursts bypass workspace reads but completion reconciles durable state", async () => {
+  const { WorkbenchController } = await bundle("src/node/workbenchController.ts", true);
+  const controller = new WorkbenchController({ subscriptions: [] }, { onEvent: () => ({dispose(){}}) }, { appendLine() {} });
+  let forwarded = 0, reads = 0; controller.onThreadEvent(() => forwarded++);
+  controller.refresh = async () => { reads++; };
+  for (let index = 0; index < 100; index++) controller.onDaemonEvent({ type: "agent_thread_event", data: { id: "reply", thread_id: "thread", data: {streaming: true}, text: String(index) } });
+  assert.equal(forwarded, 100); assert.equal(reads, 0); assert.equal(controller.refreshTimer, null);
+  controller.onDaemonEvent({ type: "agent_thread_event", data: { id: "reply", thread_id: "thread", data: {streaming: false} } });
+  assert.ok(controller.refreshTimer); controller.dispose();
+});
+
+test("frame batching delivers the latest text once and never rewinds a completion", async () => {
+  const { createEventBatcher } = await bundle("webview/src/streaming.ts");
+  let scheduled = 0; const deliveries: any[][] = [];
+  const batch = createEventBatcher((events: any[]) => deliveries.push(events), () => ++scheduled, () => {});
+  for (let index = 0; index < 100; index++) batch.enqueue({id: "reply", text: "x".repeat(index), data: { streaming: true }});
+  assert.equal(scheduled, 1); assert.equal(deliveries.length, 0);
+  batch.enqueue({id: "reply", text: "Finished", data: {streaming: false}});
+  batch.enqueue({id: "reply", text: "Late text", data: {streaming: true}});
+  batch.flush(); assert.equal(deliveries[0].length, 1); assert.equal(deliveries[0][0].text, "Finished");
+  batch.enqueue({id: "other", text: "Cancelled"}); batch.dispose(); batch.flush(); assert.equal(deliveries.length, 1);
+});
+
+test("automatic account transitions refresh account state without forcing model probes", async () => {
+  const { WorkbenchController } = await bundle("src/node/workbenchController.ts", true);
+  const controller = new WorkbenchController({ subscriptions: [] }, { onEvent: () => ({dispose(){}}) }, { appendLine() {} });
+  let checks = 0, release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  controller.refreshProviderAccounts = async () => { checks++; await gate; };
+  controller.lastSnapshot = { threads: [{ id: "thread", status: "running", provider_account_id: "old" }] };
+  controller.onDaemonEvent({ type: "agent_thread_updated", data: {id: "thread", status: "waiting_for_limit", provider_account_id: "old"} });
+  controller.onDaemonEvent({ type: "agent_thread_updated", data: {id: "thread", status: "running", provider_account_id: "new"} });
+  assert.equal(checks, 1); assert.equal(controller.detectInflight, null);
+  release(); await controller.accountEventRefresh; assert.equal(checks, 2); controller.dispose();
+});
+
 test("webview actions wait for matching acknowledgements and propagate save errors", async () => {
   const listeners: ((event: any) => void)[] = [];
   (globalThis as any).window = { addEventListener: (_: string, callback: any) => listeners.push(callback), setTimeout };

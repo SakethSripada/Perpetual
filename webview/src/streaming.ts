@@ -1,5 +1,26 @@
 import type { AgentThreadEvent } from './types';
 
+/** Coalesce token bursts to one paint while preserving completions and order. */
+export function createEventBatcher(deliver: (events: AgentThreadEvent[]) => void, schedule: (callback: () => void) => number, cancel: (id: number) => void) {
+  const pending = new Map<string, AgentThreadEvent>();
+  let frame: number | null = null;
+  const flush = () => {
+    if (frame !== null) cancel(frame);
+    frame = null;
+    const events = [...pending.values()]; pending.clear();
+    if (events.length) deliver(events);
+  };
+  return {
+    enqueue(event: AgentThreadEvent) {
+      const previous = pending.get(event.id);
+      pending.set(event.id, previous ? mergeThreadEvents([previous], [event])[0] : event);
+      if (frame === null) frame = schedule(flush);
+    },
+    flush,
+    dispose() { if (frame !== null) cancel(frame); frame = null; pending.clear(); },
+  };
+}
+
 /** Merge full event snapshots once per frame, preserving unaffected objects. */
 export function mergeThreadEvents(
   current: AgentThreadEvent[],

@@ -44,7 +44,7 @@ import { resourceState, ResourceState } from "./loading";
 import { ChangeLog } from "./changeLog";
 import { configureTransport, request } from "./bridge";
 import { useSheetAccessibility } from "./dialogs";
-import { mergeThreadEvents } from "./streaming";
+import { createEventBatcher, mergeThreadEvents } from "./streaming";
 import { LoadingState, ToolRun } from "./ai";
 import { useNotifications, NotificationCenter, ErrorStatus } from "./notifications";
 import { CLOUD_CONTINUITY_ENABLED, LAN_COLLABORATION_ENABLED, LOCAL_MODELS_ENABLED, DOCKER_SANDBOX_ENABLED } from "./featureFlags";
@@ -198,6 +198,17 @@ export default function App() {
   });
 
   useEffect(() => {
+    const stream = createEventBatcher((updates) => {
+      const current = snapshotRef.current;
+      if (!current?.details) return;
+      const visible = updates.filter((event) => event.thread_id === current.selectedThreadId);
+      if (!visible.length) return;
+      const events = mergeThreadEvents(current.details.events, visible);
+      for (const event of visible) if (event.role === "assistant" && event.text) animatedMessageIdsRef.current.add(event.id);
+      const next = { ...current, details: { ...current.details, events } };
+      snapshotRef.current = next; setSnapshot(next);
+      setPending((pending) => reconcilePendingMessages({ pending, selectedStatus: current.threads.find((thread) => thread.id === current.selectedThreadId)?.status, events, queued: current.details!.queued }));
+    }, (callback) => window.requestAnimationFrame(callback), (frame) => window.cancelAnimationFrame(frame));
     const onMessage = (event: MessageEvent<ExtensionMessage>) => {
       const incoming = event.data;
       if (incoming.type === "submitFailed") {
@@ -208,39 +219,11 @@ export default function App() {
         return;
       }
       if (incoming.type === "threadEvent") {
-        const current = snapshotRef.current;
-        const details = current?.details;
-        if (
-          !current ||
-          !details ||
-          current.selectedThreadId !== incoming.event.thread_id
-        ) {
-          return;
-        }
-        const events = mergeThreadEvents(details.events, [incoming.event]);
-        const next = {
-          ...current,
-          details: { ...details, events },
-        };
-        if (incoming.event.role === "assistant" && incoming.event.text) {
-          animatedMessageIdsRef.current.add(incoming.event.id);
-        }
-        snapshotRef.current = next;
-        setSnapshot(next);
-        const selected = current.threads.find(
-          (thread) => thread.id === current.selectedThreadId,
-        );
-        setPending((prev) =>
-          reconcilePendingMessages({
-            pending: prev,
-            selectedStatus: selected?.status,
-            events,
-            queued: details.queued,
-          }),
-        );
+        if (snapshotRef.current?.selectedThreadId === incoming.event.thread_id) stream.enqueue(incoming.event);
         return;
       }
       if (incoming.type === "snapshot") {
+        stream.flush();
         const previous = snapshotRef.current;
         const sameThread =
           !!previous &&
@@ -353,7 +336,7 @@ export default function App() {
     };
     window.addEventListener("message", onMessage);
     vscode.postMessage({ type: "ready" });
-    return () => window.removeEventListener("message", onMessage);
+    return () => { stream.dispose(); window.removeEventListener("message", onMessage); };
   }, []);
 
   useEffect(

@@ -140,7 +140,7 @@ const COLLABORATION_MESSAGE_TYPES = new Set<string>([
 
 // Agent/sandbox detection shells out to CLIs, so we cache it briefly to keep the
 // frequent event-driven refreshes from re-probing on every tick.
-const DETECTION_TTL_MS = 15_000;
+const DETECTION_TTL_MS = 60_000;
 
 type DetectionCache = {
   at: number;
@@ -156,6 +156,8 @@ type DetectionCache = {
   localModels: LocalModelStatus[];
   localModelPolicy: LocalModelPolicy | null;
   state: "loading" | "ready" | "error";
+  accountState?: "loading" | "ready" | "error";
+  modelState?: "loading" | "ready" | "error";
 };
 
 type DiffCacheEntry = {
@@ -169,7 +171,10 @@ export class WorkbenchController implements vscode.Disposable {
   private readonly submissionFailures = new vscode.EventEmitter<{ type: "submitFailed"; threadId: string | null; clientMessageId: string | null; text: string; message: string }>();
   private refreshTimer: NodeJS.Timeout | null = null;
   private readinessTimer: NodeJS.Timeout | null = null;
-  private refreshSequence = 0;
+  private refreshInflight: Promise<void> | null = null;
+  private refreshQueued = false;
+  private refreshError: string | null = null;
+  private windowFocused = vscode.window.state?.focused ?? true;
   private lastSnapshot: WorkbenchSnapshot | null = null;
   private messageQueue: Promise<void> = Promise.resolve();
   private lastSyncedSettings = "";
@@ -197,7 +202,7 @@ export class WorkbenchController implements vscode.Disposable {
   ) {
     context.subscriptions.push(
       daemon.onEvent((event) => this.onDaemonEvent(event)),
-      vscode.window.onDidChangeWindowState((state) => { if (state.focused && vscode.workspace.isTrusted) { this.invalidateDetection(); void this.refresh(); } }),
+      vscode.window.onDidChangeWindowState((state) => { this.windowFocused = state.focused; if (state.focused && vscode.workspace.isTrusted) void this.refresh(); }),
       vscode.workspace.onDidGrantWorkspaceTrust(() => void this.refresh()),
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
         this.workspaceReposReady = null;
@@ -212,7 +217,7 @@ export class WorkbenchController implements vscode.Disposable {
         }
       }),
     );
-    this.readinessTimer = setInterval(() => { if (!this.disposed && vscode.workspace.isTrusted) void this.refresh(); }, 30_000);
+    this.readinessTimer = setInterval(() => { if (!this.disposed && this.windowFocused && vscode.workspace.isTrusted) void this.refresh(); }, 30_000);
     this.readinessTimer.unref();
   }
 
@@ -416,8 +421,12 @@ export class WorkbenchController implements vscode.Disposable {
           await this.withLocalClient(async (client) => {
             const account = (await client.providerAccountStatuses()).find((item) => item.id === message.accountId);
             if (!account?.installed || !account.authenticated) throw new Error("Sign in to an installed provider before switching accounts.");
+            if (account.availability === "limited") throw new Error("This account is at its usage limit. Choose a ready account or wait for its reset.");
             await client.activateProviderAccount(message.accountId);
           });
+          // Plans can expose different models; retain visible options while
+          // refreshing the selected account's entitlements in the background.
+          this.invalidateDetection();
           await this.refreshProviderAccounts();
           return;
         case "addSystemProviderAccount": {
@@ -702,13 +711,21 @@ export class WorkbenchController implements vscode.Disposable {
     }
   }
 
-  async refresh(error: string | null = null): Promise<void> {
-    const sequence = ++this.refreshSequence;
-    const snapshot = await this.snapshot(error);
-    if (!this.disposed && sequence === this.refreshSequence) {
-      this.lastSnapshot = snapshot;
-      this.snapshots.fire(snapshot);
-    }
+  refresh(error: string | null = null): Promise<void> {
+    if (this.disposed) return Promise.resolve();
+    if (error) this.refreshError = error;
+    this.refreshQueued = true;
+    if (this.refreshInflight) return this.refreshInflight;
+    this.refreshInflight = (async () => {
+      do {
+        this.refreshQueued = false;
+        const nextError = this.refreshError;
+        this.refreshError = null;
+        const snapshot = await this.snapshot(nextError);
+        if (!this.disposed) { this.lastSnapshot = snapshot; this.snapshots.fire(snapshot); }
+      } while (this.refreshQueued && !this.disposed);
+    })().finally(() => { this.refreshInflight = null; });
+    return this.refreshInflight;
   }
 
   async connectLocalRepoInteractive(reply?: WebviewReply): Promise<void> {
@@ -900,6 +917,8 @@ export class WorkbenchController implements vscode.Disposable {
         localModels,
         localModelPolicy,
         detectionState,
+        accountDetectionState: detection.accountState,
+        modelDetectionState: detection.modelState,
         defaultRepoIds,
         limitPolicy,
         providerAccounts,
@@ -1376,6 +1395,7 @@ export class WorkbenchController implements vscode.Disposable {
         }
         if (status.authenticated) {
           this.stopAuthenticationWatch(accountId);
+          this.invalidateDetection();
           this.notice(reply, `${label} connected.`);
           await this.refresh();
           return;
@@ -1413,9 +1433,9 @@ export class WorkbenchController implements vscode.Disposable {
     if (this.detectionCache && revision === this.accountRevision) {
       this.detectionCache = {
         ...this.detectionCache,
-        at: Date.now(),
         limitPolicy: normalizeLimitPolicy(currentPolicy),
         providerAccounts,
+        accountState: "ready",
       };
     }
     await this.refresh();
@@ -1475,6 +1495,22 @@ export class WorkbenchController implements vscode.Disposable {
 
   private detectInflight: Promise<DetectionCache> | null = null;
   private accountRevision = 0;
+  private accountEventRefresh: Promise<void> | null = null;
+  private accountEventRefreshQueued = false;
+
+  private refreshAccountsAfterTransition(): void {
+    if (this.disposed) return;
+    this.accountEventRefreshQueued = true;
+    if (this.accountEventRefresh) return;
+    this.accountEventRefresh = (async () => {
+      do {
+        this.accountEventRefreshQueued = false;
+        try { await this.refreshProviderAccounts(); }
+        catch (err) { this.output.appendLine(`[workbench] account transition refresh failed: ${formatError(err)}`); }
+      } while (this.accountEventRefreshQueued && !this.disposed);
+    })()
+      .finally(() => { this.accountEventRefresh = null; });
+  }
 
   private invalidateDetection(): void {
     // Keep the last successful values on screen while probes run.
@@ -1503,6 +1539,14 @@ export class WorkbenchController implements vscode.Disposable {
   private runDetection(client: DaemonApi): Promise<DetectionCache> {
     if (this.detectInflight) return this.detectInflight;
     const accountRevision = this.accountRevision;
+    if (!this.detectionCache) this.detectionCache = emptyDetectionCache("loading");
+    const publish = (patch: Partial<DetectionCache>, accounts = false) => {
+      if (this.disposed || (accounts && accountRevision !== this.accountRevision)) return;
+      this.detectionCache = { ...this.detectionCache!, ...patch };
+      // Fast resources are delivered without waiting for slower model/CLI probes.
+      // Queue reconciliation when the first workspace read is already in flight.
+      if (this.lastSnapshot || this.refreshInflight) void this.refresh();
+    };
     this.detectInflight = (async () => {
       let probeFailed = false;
       const [
@@ -1521,6 +1565,7 @@ export class WorkbenchController implements vscode.Disposable {
         client
           .detectAgents()
           .then(filterAgentStatuses)
+          .then((agents) => { publish({ agents }); return agents; })
           .catch((err) => {
             probeFailed = true;
             this.output.appendLine(
@@ -1531,23 +1576,34 @@ export class WorkbenchController implements vscode.Disposable {
         client
           .agentRunDefaults()
           .then(filterRunDefaults)
+          .then((runDefaults) => { publish({ runDefaults }); return runDefaults; })
           .catch(() => this.detectionCache?.runDefaults ?? []),
         client
           .agentModelCatalog()
           .then(filterModelCatalog)
+          .then((modelCatalog) => { publish({ modelCatalog, modelState: "ready" }); return modelCatalog; })
           .catch((err) => {
             probeFailed = true;
             this.output.appendLine(`[workbench] model detection failed: ${formatError(err)}`);
+            publish({ modelState: "error" });
             return this.detectionCache?.modelCatalog ?? [];
           }),
         LOCAL_MODELS_ENABLED ? client.detectLocalModels().catch(() => []) : Promise.resolve([]),
         client
           .getLimitPolicy()
           .then(normalizeLimitPolicy)
+          .then((limitPolicy) => { publish({ limitPolicy }, true); return limitPolicy; })
           .catch(() => { probeFailed = true; return this.detectionCache?.limitPolicy ?? null; }),
-        client.providerAccountStatuses().catch((err) => {
+        client.providerAccountStatuses().then(async (providerAccounts) => {
+          publish({ providerAccounts, accountState: "ready" }, true);
+          // Discovery may have registered a shared CLI sign-in while probing.
+          const limitPolicy = normalizeLimitPolicy(await client.getLimitPolicy());
+          publish({ limitPolicy }, true);
+          return providerAccounts;
+        }).catch((err) => {
           probeFailed = true;
           this.output.appendLine(`[workbench] account detection failed: ${formatError(err)}`);
+          publish({ accountState: "error" }, true);
           return this.detectionCache?.providerAccounts ?? [];
         }),
         client.getSandboxPolicy().catch(() => null),
@@ -1556,10 +1612,10 @@ export class WorkbenchController implements vscode.Disposable {
           .getCloudPolicy()
           .then(normalizeCloudPolicy)
           .catch(() => null),
-        client
+        CLOUD_CONTINUITY_ENABLED ? client
           .cloudAvailability()
           .then(filterCloudAvailability)
-          .catch(() => []),
+          .catch(() => []) : Promise.resolve([]),
         client
           .getLocalModelPolicy()
           .then(normalizeLocalModelPolicy)
@@ -1569,7 +1625,7 @@ export class WorkbenchController implements vscode.Disposable {
         at: Date.now(),
         agents,
         runDefaults,
-        limitPolicy,
+        limitPolicy: this.detectionCache?.limitPolicy ?? limitPolicy,
         providerAccounts,
         sandboxPolicy,
         sandboxRuntime,
@@ -1579,6 +1635,8 @@ export class WorkbenchController implements vscode.Disposable {
         localModels,
         localModelPolicy,
         state: probeFailed ? "error" : "ready",
+        accountState: this.detectionCache?.accountState,
+        modelState: this.detectionCache?.modelState,
       };
       if (accountRevision !== this.accountRevision && this.detectionCache) {
         next.providerAccounts = this.detectionCache.providerAccounts;
@@ -1791,10 +1849,18 @@ export class WorkbenchController implements vscode.Disposable {
     if (event.type === "agent_thread_event") {
       const data = event.data as AgentThreadEvent;
       this.threadEvents.fire(data);
+      // Cumulative streaming updates already reach the webview directly. Only
+      // durable events/completion need a workspace snapshot; gaps recover below.
+      if ((data.data as { streaming?: boolean } | null)?.streaming === true) return;
       if (data.thread_id) this.diffCache.delete(data.thread_id);
     }
     if (event.type === "agent_thread_updated") {
       const data = event.data as Partial<AgentThread>;
+      const previous = this.lastSnapshot?.threads.find((thread) => thread.id === data.id);
+      if ((data.provider_account_id && data.provider_account_id !== previous?.provider_account_id) ||
+          (data.status === "waiting_for_limit" && previous?.status !== data.status) ||
+          (data.handoff_state === "budget_paused_provider_limit" && previous?.handoff_state !== data.handoff_state) ||
+          (previous?.status === "waiting_for_limit" && data.status === "running")) this.refreshAccountsAfterTransition();
       if (data.id && data.status === "running") {
         this.diffCache.delete(data.id);
         this.applyResults.delete(data.id);
@@ -1834,7 +1900,7 @@ export class WorkbenchController implements vscode.Disposable {
     // Transcript events already travel directly to the webview; this slower
     // snapshot cadence reconciles durable state without turning each token into
     // a bundle of database RPCs.
-    const delay = event.type === "agent_thread_event" ? 120 : 80;
+    const delay = event.type === "agent_thread_event" ? 500 : 80;
     this.refreshTimer = setTimeout(() => {
       this.refreshTimer = null;
       void this.refresh();
