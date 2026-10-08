@@ -57,7 +57,6 @@ window.acquireVsCodeApi = () => ({ getState: () => state, setState: (next) => { 
     if (message.type === "githubList") {
       githubAttempts++;
       if (params.has("github-error") && githubAttempts === 1) {
-        emit({ type: "error", message: "GitHub is unavailable. Try again." });
         emit({ type: "operationResult", requestId: message.requestId, error: "GitHub is unavailable. Try again." });
         return;
       }

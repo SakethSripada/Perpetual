@@ -665,6 +665,9 @@ export class WorkbenchController implements vscode.Disposable {
       operationError = text;
       if (message.type === "submit") this.submissionFailures.fire({ type: "submitFailed", threadId: message.threadId ?? null, clientMessageId: message.clientMessageId ?? null, text: message.message, message: text });
       this.output.appendLine(`[workbench] ${text}`);
+      // The repository picker handles its own request error and retry. A failed
+      // remote list should neither duplicate its alert nor reread the workspace.
+      if (message.type === "githubList" && message.requestId) return;
       reply?.(
         message.type === "assignRepos"
           ? {

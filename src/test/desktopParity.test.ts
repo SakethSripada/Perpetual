@@ -207,7 +207,12 @@ test("GitHub repository caching is short lived, session scoped and never caches 
     controller.githubCache.at = 0; await controller.githubRepos(); assert.equal(reads, 2);
     (globalThis as any).__perpetualTestGithubSession.id = "session-b";
     fail = true; await assert.rejects(controller.githubRepos(), /Network interrupted/);
-    fail = false; assert.equal((await controller.githubRepos()).repos[0].id, 4);
+    const replies: any[] = []; let workspaceReads = 0;
+    controller.refresh = async () => { workspaceReads++; };
+    await controller.handleMessage({type: "githubList", requestId: "repos"}, (reply: any) => replies.push(reply));
+    assert.equal(workspaceReads, 0);
+    assert.deepEqual(replies, [{type: "operationResult", requestId: "repos", error: "Network interrupted"}]);
+    fail = false; assert.equal((await controller.githubRepos()).repos[0].id, 5);
     assert.equal(controller.githubCache.sessionId, "session-b:user-a");
     assert.ok(!JSON.stringify(controller.githubCache).includes("test-token"));
   } finally { controller.dispose(); delete (globalThis as any).__perpetualTestGithubSession; }
