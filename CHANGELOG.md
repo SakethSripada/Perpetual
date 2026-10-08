@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.7.12
+
+- Simplify the model and reasoning selector with neutral colours, a smaller panel,
+  centred effort/model typography, and a quieter composer pill.
+- Move provider switching into a compact menu and use plain model rows with one
+  checkmark. Remove repeated reasoning labels and oversized provider tabs.
+- Preserve keyboard controls, actual model defaults, provider preferences and
+  failed-save recovery; keep model names readable in narrow sidebars.
+
 ## 0.7.11
 
 - Redesign model selection as a compact pill and focused popover, with a separate
