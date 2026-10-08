@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.7.2
+
+- Replace toast popups with quiet status updates, persistent dismissible errors,
+  and a recent-activity menu. Preserve unresolved errors through successful actions.
+- Replace tall account cards with compact rows and desktop-style action menus;
+  remove green outlines and usage bars, and display readable plans such as Pro Lite.
+- Standardize button sizes, field spacing, menu surfaces and close controls across
+  settings and the composer. Use the desktop's menu primitive for keyboard navigation,
+  placement, outside-click dismissal and focus restoration.
+- Keep Settings open when dismissing nested menus and recover cleanly from a failed
+  extension message transport.
+
 ## 0.7.1
 
 - Keep accounts and models visible during readiness refresh and transient probe

@@ -52,6 +52,22 @@ a provider turn. `?theme=light` checks light mode; `?fail` simulates token-save
 failure. `node scripts/smoke-daemon.mjs` requires compiled TypeScript and a copied
 native binary, and uses disposable storage.
 
+## 0.7.2 surface refinement
+
+- Reused the desktop's Radix dropdown primitive for account selection, profile
+  actions, session actions and activity history; verified menu Escape returns focus
+  without closing the surrounding Settings sheet.
+- Account rows use shared neutral surfaces, compact spacing, ghost action buttons
+  and readable plan labels. Usage summaries show remaining capacity without colored
+  progress lines. Settings fields, profile groups, buttons and composer menus share
+  a compact control style with visible keyboard focus and reduced-motion support.
+- Removed the old toast component and styling. Successful actions use a quiet
+  temporary status; unresolved failures remain dismissible and appear in bounded,
+  deduplicated recent activity. Transport failures reject requests immediately.
+- Verification: 78 extension tests, TypeScript checks, local browser checks of
+  nested menus, model/options surfaces, plan labels and failed-send draft recovery;
+  dark/light 391px panels, production packaging and the VS Code activation test.
+
 ## User acceptance checks
 
 1. Open **Perpetual: Open Panel** in VS Code and check both panel and sidebar sizes.
