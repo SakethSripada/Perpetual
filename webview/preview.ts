@@ -42,6 +42,10 @@ snapshot.modelCatalog!.push({agent: "claude_code", default_model: "claude-sonnet
   {id: "claude-sonnet-5", label: "Claude Sonnet 5", aliases: ["sonnet"], family: "sonnet", default: true, available: true, source: "claude_code", reasoning: ["low", "medium", "high"], default_reasoning: "high"},
   {id: "claude-haiku-4-5", label: "Claude Haiku 4.5", aliases: ["haiku"], family: "haiku", default: false, available: true, source: "claude_code", reasoning: [], default_reasoning: null}
 ], reasoning: ["low", "medium", "high"], binary_path: null, version: "1.0", source: "claude_code", detected_at: now, error: null});
+if (params.has("more-models")) {
+  const codex = snapshot.modelCatalog![0];
+  for (const [id, label] of [["gpt-6.1-sol", "GPT-6.1 Sol"], ["gpt-6-astra", "GPT-6 Astra"], ["gpt-6-sol", "GPT-6 Sol"], ["gpt-6-luna", "GPT-6 Luna"], ["gpt-5.6-sol", "GPT-5.6 Sol"], ["gpt-5.6-terra", "GPT-5.6 Terra"], ["gpt-5.6-luna", "GPT-5.6 Luna"]]) codex.models.push({id, label, aliases: [], family: "gpt", default: false, available: true, source: "codex_app_server", reasoning: ["low", "medium", "high", "xhigh"], default_reasoning: "medium"});
+}
 const emit = (message: ExtensionMessage) => window.dispatchEvent(new MessageEvent("message", { data: message }));
 function refresh() {
   snapshot.limitPolicy!.accounts = snapshot.providerAccounts;
