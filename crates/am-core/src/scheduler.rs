@@ -462,14 +462,8 @@ impl AppCore {
         };
 
         for thread in threads {
-            let account_agent = account_statuses
-                .iter()
-                .find(|status| {
-                    status.account.enabled
-                        && status.authenticated
-                        && status.availability != AvailabilityState::Limited
-                })
-                .map(|status| status.account.agent);
+            let account_agent =
+                thread_resume_account(&thread, &policy, &account_statuses).map(|s| s.account.agent);
             if let Some(agent) = account_agent.or_else(|| {
                 policy
                     .accounts
@@ -647,6 +641,24 @@ impl AppCore {
 /// waiting. With `resume_with_earliest` we take the first ready agent in
 /// priority order (so whichever limit lifts first wins); otherwise we only
 /// resume once the originally-active agent recovers.
+fn thread_resume_account<'a>(
+    thread: &am_proto::AgentThread,
+    policy: &am_proto::LimitPolicy,
+    statuses: &'a [am_proto::ProviderAccountStatus],
+) -> Option<&'a am_proto::ProviderAccountStatus> {
+    statuses.iter().find(|s| {
+        s.installed
+            && s.account.enabled
+            && s.authenticated
+            && s.availability != AvailabilityState::Limited
+            && ((policy.auto_switch && policy.resume_with_earliest)
+                || match thread.provider_account_id.as_deref() {
+                    Some(id) => s.account.id == id,
+                    None => Some(s.account.agent) == thread.active_agent.or(thread.preferred_agent),
+                })
+    })
+}
+
 fn thread_resume_agent(
     thread: &am_proto::AgentThread,
     policy: &am_proto::LimitPolicy,
@@ -821,6 +833,7 @@ mod tests {
             limit_reset_at: None,
             switch_back: true,
             handoff_state: "waiting_for_reset".into(),
+            provider_account_id: None,
             objective: "do work".into(),
             decisions: String::new(),
             progress: String::new(),
@@ -848,6 +861,71 @@ mod tests {
         assert_eq!(
             thread_resume_agent(&thread(AgentKind::ClaudeCode), &policy, &statuses),
             None
+        );
+    }
+
+    #[test]
+    fn account_resume_respects_both_switching_preferences() {
+        let mut waiting = thread(AgentKind::ClaudeCode);
+        waiting.provider_account_id = Some("original".into());
+        let account = |id: &str, agent, availability| am_proto::ProviderAccountStatus {
+            account: am_proto::ProviderAccount {
+                id: id.into(),
+                label: id.into(),
+                agent,
+                enabled: true,
+                use_credits: false,
+                auth_mode: am_proto::ProviderAccountAuthMode::IsolatedCli,
+            },
+            installed: true,
+            authenticated: true,
+            email: None,
+            plan: None,
+            availability,
+            reset_at: None,
+            detail: None,
+            active: false,
+        };
+        let mut statuses = vec![
+            account(
+                "other-provider",
+                AgentKind::Codex,
+                AvailabilityState::Available,
+            ),
+            account(
+                "same-provider",
+                AgentKind::ClaudeCode,
+                AvailabilityState::Available,
+            ),
+            account(
+                "original",
+                AgentKind::ClaudeCode,
+                AvailabilityState::Limited,
+            ),
+        ];
+        for (auto_switch, resume_with_earliest) in [(false, true), (true, false), (false, false)] {
+            let policy = am_proto::LimitPolicy {
+                auto_switch,
+                resume_with_earliest,
+                ..Default::default()
+            };
+            assert!(thread_resume_account(&waiting, &policy, &statuses).is_none());
+            statuses[2].availability = AvailabilityState::Available;
+            assert_eq!(
+                thread_resume_account(&waiting, &policy, &statuses)
+                    .unwrap()
+                    .account
+                    .id,
+                "original"
+            );
+            statuses[2].availability = AvailabilityState::Limited;
+        }
+        assert_eq!(
+            thread_resume_account(&waiting, &Default::default(), &statuses)
+                .unwrap()
+                .account
+                .id,
+            "other-provider"
         );
     }
 

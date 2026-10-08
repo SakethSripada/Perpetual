@@ -136,7 +136,7 @@ fn read_git_state(root: &Path) -> Option<GitState> {
 }
 
 fn git_output(root: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
+    let output = am_proto::hide_console(&mut Command::new("git"))
         .arg("-C")
         .arg(root)
         .args(args)

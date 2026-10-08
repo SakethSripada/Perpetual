@@ -259,7 +259,7 @@ fn find_in_dir(dir: &Path, bin: &str) -> Option<PathBuf> {
 #[cfg(not(windows))]
 fn via_system_lookup(bin: &str) -> Option<PathBuf> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-    let output = Command::new(shell)
+    let output = am_proto::hide_console(&mut Command::new(shell))
         .arg("-l")
         .arg("-c")
         .arg(format!("command -v {bin}"))
@@ -273,7 +273,10 @@ fn via_system_lookup(bin: &str) -> Option<PathBuf> {
 
 #[cfg(windows)]
 fn via_system_lookup(bin: &str) -> Option<PathBuf> {
-    let output = Command::new("where.exe").arg(bin).output().ok()?;
+    let output = am_proto::hide_console(&mut Command::new("where.exe"))
+        .arg(bin)
+        .output()
+        .ok()?;
     if !output.status.success() {
         return None;
     }
@@ -496,7 +499,10 @@ fn parse_version_numbers(raw: &str) -> Option<Vec<u64>> {
 
 /// Run `<binary> --version` and return the trimmed first line, if it succeeds.
 pub fn binary_version(binary: &Path) -> Option<String> {
-    let output = Command::new(binary).arg("--version").output().ok()?;
+    let output = am_proto::hide_console(&mut Command::new(binary))
+        .arg("--version")
+        .output()
+        .ok()?;
     if !output.status.success() {
         return None;
     }

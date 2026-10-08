@@ -92,6 +92,7 @@ impl CloudTaskClient for ClaudeCloudClient {
         let binary = find_binary("claude").ok_or(CloudError::NotInstalled("claude"))?;
 
         let mut cmd = tokio::process::Command::new(&binary);
+        am_proto::hide_console(cmd.as_std_mut());
         cmd.arg("--cloud")
             .arg(&req.prompt)
             .current_dir(&req.worktree)

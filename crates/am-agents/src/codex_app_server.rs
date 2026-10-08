@@ -33,7 +33,12 @@ const BIN: &str = "codex";
 const CHANNEL_CAPACITY: usize = 256;
 const TERMINATE_GRACE: Duration = Duration::from_secs(3);
 
-type PendingResponses = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>>;
+#[derive(Default)]
+struct ResponseState {
+    closed: bool,
+    waiting: HashMap<u64, oneshot::Sender<Result<Value, String>>>,
+}
+type PendingResponses = Arc<Mutex<ResponseState>>;
 
 /// Launch (or resume) a Codex Ask-mode run over the app-server transport.
 pub(crate) async fn launch(
@@ -129,7 +134,7 @@ async fn drive(
     let (out_tx, out_rx) = mpsc::channel::<String>(64);
     let writer_task = tokio::spawn(writer(stdin, out_rx));
 
-    let pending: PendingResponses = Arc::new(Mutex::new(HashMap::new()));
+    let pending: PendingResponses = Arc::new(Mutex::new(ResponseState::default()));
     let next_id = Arc::new(AtomicU64::new(1));
     let (terminal_tx, mut terminal_rx) = oneshot::channel::<SessionStatus>();
 
@@ -211,11 +216,27 @@ async fn drive(
     // Codex may update account limits only after the response completes. Make
     // this a short best-effort refresh so a simple response is not held open
     // by an optional usage lookup.
-    let _ = tokio::time::timeout(
-        Duration::from_millis(750),
-        refresh_quota(&rpc, &events_tx, false),
+    let weekly_budget = matches!(
+        spec.policy
+            .as_ref()
+            .and_then(|policy| policy.task_budget.as_ref()),
+        Some(am_proto::TaskBudget::WeeklyPercent { .. })
+    );
+    let quota_result = tokio::time::timeout(
+        if weekly_budget {
+            Duration::from_secs(5)
+        } else {
+            Duration::from_millis(750)
+        },
+        refresh_quota(&rpc, &events_tx, weekly_budget, true),
     )
     .await;
+    if weekly_budget && !matches!(quota_result, Ok(Ok(()))) {
+        let _ = events_tx.send(NormalizedEvent::Error {
+            message: "Codex did not provide a final 7-day usage reading; this budgeted task was paused.".into(),
+            retryable: true,
+        }).await;
+    }
 
     // Tear the child down and finish the stream.
     child.terminate_group();
@@ -242,6 +263,7 @@ async fn refresh_quota(
     rpc: &Rpc,
     events_tx: &mpsc::Sender<NormalizedEvent>,
     required: bool,
+    final_sample: bool,
 ) -> Result<(), String> {
     let quota = match rpc.request("account/rateLimits/read", json!({})).await {
         Ok(quota) => quota,
@@ -250,7 +272,19 @@ async fn refresh_quota(
         }
         Err(_) => return Ok(()),
     };
-    if let Some(event) = parse_quota_window(&quota) {
+    if let Some(NormalizedEvent::QuotaWindow {
+        window,
+        used_percent,
+        reset_at,
+        ..
+    }) = parse_quota_window(&quota)
+    {
+        let event = NormalizedEvent::QuotaWindow {
+            window,
+            used_percent,
+            reset_at,
+            final_sample,
+        };
         let _ = events_tx.send(event).await;
         return Ok(());
     }
@@ -323,7 +357,7 @@ async fn run_turn(
         // Weekly budgets must have a usable account window before their prompt
         // is sent. Unlimited and token-targeted turns do not need this extra
         // synchronous RPC on the critical path.
-        refresh_quota(rpc, events_tx, true).await?;
+        refresh_quota(rpc, events_tx, true, false).await?;
     }
 
     let turn = rpc
@@ -407,10 +441,16 @@ impl Rpc {
     async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().await.insert(id, tx);
+        {
+            let mut state = self.pending.lock().await;
+            if state.closed {
+                return Err("The provider connection closed. Please try again.".into());
+            }
+            state.waiting.insert(id, tx);
+        }
         let line = json!({ "id": id, "method": method, "params": params }).to_string();
         if self.out_tx.send(line).await.is_err() {
-            self.pending.lock().await.remove(&id);
+            self.pending.lock().await.waiting.remove(&id);
             return Err("codex app-server stdin closed".into());
         }
         match rx.await {
@@ -457,7 +497,7 @@ async fn writer(mut stdin: ChildStdin, mut out_rx: mpsc::Receiver<String>) {
 }
 
 async fn reader(
-    stdout: tokio::process::ChildStdout,
+    stdout: impl tokio::io::AsyncRead + Unpin,
     pending: PendingResponses,
     events_tx: mpsc::Sender<NormalizedEvent>,
     out_tx: mpsc::Sender<String>,
@@ -483,7 +523,7 @@ async fn reader(
             // Response to one of our requests.
             (true, None) => {
                 if let Some(id) = value.get("id").and_then(Value::as_u64) {
-                    if let Some(tx) = pending.lock().await.remove(&id) {
+                    if let Some(tx) = pending.lock().await.waiting.remove(&id) {
                         let result = if let Some(err) = value.get("error") {
                             Err(err
                                 .get("message")
@@ -512,9 +552,29 @@ async fn reader(
             _ => {}
         }
     }
-    // Stream closed without a terminal turn notification.
+    // A disconnected transport must release pending startup/usage requests
+    // immediately rather than waiting out their timeout. It is not success.
+    let interrupted_request = {
+        let mut state = pending.lock().await;
+        state.closed = true;
+        let interrupted = !state.waiting.is_empty();
+        for (_, response) in state.waiting.drain() {
+            let _ = response.send(Err(
+                "The provider connection closed. Please try again.".into()
+            ));
+        }
+        interrupted
+    };
     if let Some(tx) = terminal_tx.take() {
-        let _ = tx.send(SessionStatus::Completed);
+        // Failed startup requests are already surfaced by drive(). Do not
+        // display two errors for the same broken connection.
+        if !interrupted_request {
+            let _ = events_tx.send(NormalizedEvent::Error {
+                message: "The provider disconnected before finishing. Your progress is saved; please try again.".into(),
+                retryable: true,
+            }).await;
+        }
+        let _ = tx.send(SessionStatus::Failed);
     }
 }
 
@@ -572,6 +632,7 @@ async fn handle_server_request(
         // turn. This also keeps options intact for the native webview UI.
         let _ = events_tx
             .send(NormalizedEvent::ToolUse {
+                call_id: None,
                 name: "request_user_input".to_string(),
                 input: params.clone(),
             })
@@ -586,6 +647,7 @@ async fn handle_server_request(
         // MCP servers in an ambiguous state.
         let _ = events_tx
             .send(NormalizedEvent::ToolUse {
+                call_id: None,
                 name: "mcp_elicitation".to_string(),
                 input: params,
             })
@@ -861,6 +923,7 @@ fn turn_status(status: &str) -> SessionStatus {
 
 /// Map a v2 `ThreadItem` into normalized events.
 fn map_item(item: &Value, completed: bool) -> Vec<NormalizedEvent> {
+    let call_id = item.get("id").and_then(Value::as_str).map(str::to_string);
     let mut out = Vec::new();
     match item.get("type").and_then(Value::as_str) {
         Some("agentMessage") if completed => {
@@ -893,11 +956,13 @@ fn map_item(item: &Value, completed: bool) -> Vec<NormalizedEvent> {
                     status.to_string()
                 };
                 out.push(NormalizedEvent::ToolResult {
+                    call_id: call_id.clone(),
                     ok: status == "completed" && exit.unwrap_or(0) == 0,
                     summary,
                 });
             } else {
                 out.push(NormalizedEvent::ToolUse {
+                    call_id: call_id.clone(),
                     name: "Command".to_string(),
                     input: json!({ "command": command }),
                 });
@@ -920,6 +985,7 @@ fn map_item(item: &Value, completed: bool) -> Vec<NormalizedEvent> {
                     });
                 }
                 out.push(NormalizedEvent::ToolResult {
+                    call_id: call_id.clone(),
                     ok: item.get("status").and_then(Value::as_str) == Some("completed"),
                     summary: format!(
                         "{} file change{}",
@@ -941,6 +1007,7 @@ fn map_item(item: &Value, completed: bool) -> Vec<NormalizedEvent> {
                 let ok = item.get("status").and_then(Value::as_str) == Some("completed")
                     && item.get("error").is_none();
                 out.push(NormalizedEvent::ToolResult {
+                    call_id: call_id.clone(),
                     ok,
                     summary: item
                         .pointer("/error/message")
@@ -951,6 +1018,7 @@ fn map_item(item: &Value, completed: bool) -> Vec<NormalizedEvent> {
                 });
             } else {
                 out.push(NormalizedEvent::ToolUse {
+                    call_id: call_id.clone(),
                     name,
                     input: item.get("arguments").cloned().unwrap_or(Value::Null),
                 });
@@ -967,6 +1035,7 @@ fn map_item(item: &Value, completed: bool) -> Vec<NormalizedEvent> {
             if completed {
                 let status = item.get("status").and_then(Value::as_str).unwrap_or("");
                 out.push(NormalizedEvent::ToolResult {
+                    call_id: call_id.clone(),
                     ok: item
                         .get("success")
                         .and_then(Value::as_bool)
@@ -978,6 +1047,7 @@ fn map_item(item: &Value, completed: bool) -> Vec<NormalizedEvent> {
                 });
             } else {
                 out.push(NormalizedEvent::ToolUse {
+                    call_id: call_id.clone(),
                     name,
                     input: item.get("arguments").cloned().unwrap_or(Value::Null),
                 });
@@ -987,6 +1057,7 @@ fn map_item(item: &Value, completed: bool) -> Vec<NormalizedEvent> {
             let query = item.get("query").and_then(Value::as_str).unwrap_or("");
             if completed {
                 out.push(NormalizedEvent::ToolResult {
+                    call_id: call_id.clone(),
                     ok: true,
                     summary: if query.is_empty() {
                         "Web search completed".into()
@@ -996,6 +1067,7 @@ fn map_item(item: &Value, completed: bool) -> Vec<NormalizedEvent> {
                 });
             } else {
                 out.push(NormalizedEvent::ToolUse {
+                    call_id: call_id.clone(),
                     name: "Web search".into(),
                     input: json!({
                         "query": query,
@@ -1006,6 +1078,7 @@ fn map_item(item: &Value, completed: bool) -> Vec<NormalizedEvent> {
         }
         Some("imageView") if !completed => {
             out.push(NormalizedEvent::ToolUse {
+                call_id: call_id.clone(),
                 name: "View image".into(),
                 input: json!({ "path": item.get("path").cloned().unwrap_or(Value::Null) }),
             });
@@ -1024,11 +1097,12 @@ fn map_item(item: &Value, completed: bool) -> Vec<NormalizedEvent> {
                     })
                     .unwrap_or_else(|| "Image generation completed".into());
                 out.push(NormalizedEvent::ToolResult {
+                    call_id: call_id.clone(),
                     ok: matches!(status, "completed" | "succeeded" | "success"),
                     summary,
                 });
             } else {
-                out.push(NormalizedEvent::ToolUse {
+                out.push(NormalizedEvent::ToolUse { call_id: call_id.clone(),
                     name: "Image generation".into(),
                     input: json!({
                         "revisedPrompt": item.get("revisedPrompt").cloned().unwrap_or(Value::Null),
@@ -1045,11 +1119,12 @@ fn map_item(item: &Value, completed: bool) -> Vec<NormalizedEvent> {
             if completed {
                 let status = item.get("status").and_then(Value::as_str).unwrap_or("");
                 out.push(NormalizedEvent::ToolResult {
+                    call_id: call_id.clone(),
                     ok: matches!(status, "completed" | "succeeded" | "success"),
                     summary: format!("Collaboration {tool}: {status}"),
                 });
             } else {
-                out.push(NormalizedEvent::ToolUse {
+                out.push(NormalizedEvent::ToolUse { call_id: call_id.clone(),
                     name: format!("Collaboration/{tool}"),
                     input: json!({
                         "prompt": item.get("prompt").cloned().unwrap_or(Value::Null),
@@ -1080,22 +1155,14 @@ fn parse_usage(usage: Option<&Value>) -> Option<NormalizedEvent> {
         .and_then(Value::as_i64)
         .unwrap_or(0)
         .max(0) as u64;
-    let cached_input = usage
-        .get("cached_input_tokens")
-        .or_else(|| usage.get("cachedInputTokens"))
-        .and_then(Value::as_i64)
-        .unwrap_or(0)
-        .max(0) as u64;
     let output = usage
         .get("output_tokens")
         .or_else(|| usage.get("outputTokens"))
         .and_then(Value::as_i64)
         .unwrap_or(0)
         .max(0) as u64;
-    (input + cached_input + output > 0).then_some(NormalizedEvent::TokenUsage {
-        input: input.saturating_add(cached_input),
-        output,
-    })
+    // Codex inputTokens already includes cachedInputTokens.
+    (input + output > 0).then_some(NormalizedEvent::TokenUsage { input, output })
 }
 
 fn parse_quota_window(value: &Value) -> Option<NormalizedEvent> {
@@ -1145,6 +1212,7 @@ fn parse_quota_window(value: &Value) -> Option<NormalizedEvent> {
     Some(NormalizedEvent::QuotaWindow {
         window: QuotaWindowKind::Weekly,
         used_percent: used.clamp(0.0, 100.0),
+        final_sample: false,
         reset_at: map
             .get("reset_at")
             .or_else(|| map.get("resetAt"))
@@ -1180,6 +1248,24 @@ fn truncate(s: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn item_start_and_completion_share_the_item_id() {
+        let started = map_item(
+            &json!({"type": "commandExecution", "id": "item-7", "command": "ls"}),
+            false,
+        );
+        assert!(started.iter().any(
+            |e| matches!(e, NormalizedEvent::ToolUse { call_id: Some(id), .. } if id == "item-7")
+        ));
+        let done = map_item(
+            &json!({"type": "commandExecution", "id": "item-7", "command": "ls", "status": "completed", "exitCode": 0, "aggregatedOutput": "a"}),
+            true,
+        );
+        assert!(done.iter().any(
+            |e| matches!(e, NormalizedEvent::ToolResult { call_id: Some(id), .. } if id == "item-7")
+        ));
+    }
     use super::*;
 
     #[test]
@@ -1365,7 +1451,7 @@ mod tests {
 
         assert!(matches!(
             events_rx.recv().await,
-            Some(NormalizedEvent::ToolUse { name, input })
+            Some(NormalizedEvent::ToolUse { call_id: None, name, input })
                 if name == "request_user_input" && input["questions"][0]["id"] == "scope"
         ));
         let response: Value = serde_json::from_str(&out_rx.recv().await.unwrap()).unwrap();
@@ -1506,6 +1592,18 @@ mod tests {
     }
 
     #[test]
+    fn cached_input_is_not_added_to_codex_token_total() {
+        let usage = json!({ "inputTokens": 100, "cachedInputTokens": 25, "outputTokens": 40 });
+        assert!(matches!(
+            parse_usage(Some(&usage)),
+            Some(NormalizedEvent::TokenUsage {
+                input: 100,
+                output: 40,
+            })
+        ));
+    }
+
+    #[test]
     fn weekly_quota_requires_a_weekly_window() {
         assert!(parse_quota_window(&json!({
             "primary": { "usedPercent": 18.5 }
@@ -1558,7 +1656,98 @@ mod tests {
             true,
         );
         assert!(
-            matches!(&image[0], NormalizedEvent::ToolResult { ok: true, summary } if summary.contains("image.png"))
+            matches!(&image[0], NormalizedEvent::ToolResult { call_id: Some(id), ok: true, summary } if id == "i" && summary.contains("image.png"))
         );
+    }
+    #[tokio::test]
+    async fn disconnect_releases_pending_requests_and_never_reports_success() {
+        let (stdout, peer) = tokio::io::duplex(128);
+        let pending: PendingResponses = Arc::new(Mutex::new(ResponseState::default()));
+        let (response_tx, response_rx) = oneshot::channel();
+        pending.lock().await.waiting.insert(1, response_tx);
+        let (events_tx, mut events_rx) = mpsc::channel(8);
+        let (out_tx, _out_rx) = mpsc::channel(8);
+        let (terminal_tx, terminal_rx) = oneshot::channel();
+        drop(peer);
+        reader(
+            stdout,
+            pending.clone(),
+            events_tx,
+            out_tx.clone(),
+            ApprovalResponder::new(|_| Box::pin(async { ApprovalDecision::Deny })),
+            terminal_tx,
+        )
+        .await;
+        assert!(response_rx.await.unwrap().is_err());
+        assert_eq!(terminal_rx.await.unwrap(), SessionStatus::Failed);
+        assert!(
+            events_rx.recv().await.is_none(),
+            "startup caller owns the error"
+        );
+        let rpc = Rpc {
+            out_tx,
+            pending,
+            next_id: Arc::new(AtomicU64::new(2)),
+        };
+        assert!(tokio::time::timeout(
+            Duration::from_millis(100),
+            rpc.request("account/rateLimits/read", json!({}))
+        )
+        .await
+        .unwrap()
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn explicit_completion_is_not_downgraded_when_transport_closes() {
+        let (stdout, mut peer) = tokio::io::duplex(256);
+        peer.write_all(
+            b"{\"method\":\"turn/completed\",\"params\":{\"turn\":{\"status\":\"completed\"}}}\n",
+        )
+        .await
+        .unwrap();
+        drop(peer);
+        let (events_tx, mut events_rx) = mpsc::channel(8);
+        let (out_tx, _out_rx) = mpsc::channel(8);
+        let (terminal_tx, terminal_rx) = oneshot::channel();
+        reader(
+            stdout,
+            Arc::new(Mutex::new(ResponseState::default())),
+            events_tx,
+            out_tx,
+            ApprovalResponder::new(|_| Box::pin(async { ApprovalDecision::Deny })),
+            terminal_tx,
+        )
+        .await;
+        assert_eq!(terminal_rx.await.unwrap(), SessionStatus::Completed);
+        while let Some(event) = events_rx.recv().await {
+            assert!(!matches!(event, NormalizedEvent::Error { .. }));
+        }
+    }
+    #[tokio::test]
+    async fn disconnect_during_output_emits_one_recoverable_error() {
+        let (stdout, peer) = tokio::io::duplex(128);
+        drop(peer);
+        let (events_tx, mut events_rx) = mpsc::channel(8);
+        let (out_tx, _out_rx) = mpsc::channel(8);
+        let (terminal_tx, terminal_rx) = oneshot::channel();
+        reader(
+            stdout,
+            Arc::new(Mutex::new(ResponseState::default())),
+            events_tx,
+            out_tx,
+            ApprovalResponder::new(|_| Box::pin(async { ApprovalDecision::Deny })),
+            terminal_tx,
+        )
+        .await;
+        assert_eq!(terminal_rx.await.unwrap(), SessionStatus::Failed);
+        assert!(matches!(
+            events_rx.recv().await,
+            Some(NormalizedEvent::Error {
+                retryable: true,
+                ..
+            })
+        ));
+        assert!(events_rx.recv().await.is_none());
     }
 }

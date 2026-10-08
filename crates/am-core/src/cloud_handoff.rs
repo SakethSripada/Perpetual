@@ -875,7 +875,8 @@ fn continuation_prompt(thread: &am_proto::AgentThread, agent: AgentKind) -> Stri
          this cloud environment.\n\n\
          Read TASK_CONTEXT.md at the repository root first — it is the authoritative record of \
          the objective, decisions, progress so far, and next actions. Work listed there as \
-         completed is done; do not redo it.\n\n\
+         completed is done; do not redo it. Reading this Perpetual context file is routine \
+         setup; focus user-facing updates on relevant progress, findings, and blockers.\n\n\
          Objective: {}\n",
         thread.objective.trim()
     );
@@ -1173,6 +1174,7 @@ mod tests {
             limit_reset_at: None,
             switch_back: false,
             handoff_state: "none".into(),
+            provider_account_id: None,
             objective: String::new(),
             decisions: String::new(),
             progress: String::new(),

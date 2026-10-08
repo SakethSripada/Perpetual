@@ -92,3 +92,27 @@ fn clone_repo_creates_managed_checkout() {
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+#[test]
+fn initialize_repo_sets_up_git_with_a_first_commit() {
+    let dir = std::env::temp_dir().join(format!("perpetual-init-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("notes.txt"), "hello").unwrap();
+    let path = dir.to_string_lossy().to_string();
+    assert!(am_vcs::validate_repo(&path).is_err());
+    am_vcs::initialize_repo(&path).unwrap();
+    let info = am_vcs::validate_repo(&path).unwrap();
+    assert_eq!(info.default_branch, "main");
+    // Running it again on a ready repository changes nothing.
+    am_vcs::initialize_repo(&path).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn initialize_repo_refuses_the_home_folder() {
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap();
+    assert!(am_vcs::initialize_repo(&home).is_err());
+}

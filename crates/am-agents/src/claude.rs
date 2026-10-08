@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use serde_json::Value;
+use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::ChildStdin;
 use tokio::sync::{mpsc, oneshot};
@@ -26,8 +26,9 @@ use crate::runtime::{
     RuntimeLimits,
 };
 use crate::{
-    AgentAdapter, AgentError, AgentInstallStatus, AgentKind, NormalizedEvent, PermissionPolicy,
-    SessionControl, SessionHandle, SessionRef, SessionSpec, SessionStatus,
+    AgentAdapter, AgentError, AgentInstallStatus, AgentKind, ApprovalAsk, ApprovalDecision,
+    ApprovalKind, ApprovalResponder, NormalizedEvent, PermissionPolicy, SessionControl,
+    SessionHandle, SessionRef, SessionSpec, SessionStatus,
 };
 
 const BIN: &str = "claude";
@@ -51,14 +52,14 @@ impl ClaudeAdapter {
         let envs = policy_env(&spec);
         tracing::debug!(?args, worktree = ?spec.worktree, "launching claude");
 
-        let budgeted = budgeted_host_run(&spec);
-        let mut child = if budgeted {
+        let streaming = stream_input(&spec);
+        let mut child = if streaming {
             crate::runtime::spawn_host_piped_stdin(BIN, &args, &spec.worktree, &envs).await?
         } else {
             spawn_for_runtime_with_env(BIN, "claude", &args, &spec.worktree, &spec.runtime, &envs)
                 .await?
         };
-        let stdin = budgeted.then(|| child.take_stdin()).flatten();
+        let stdin = streaming.then(|| child.take_stdin()).flatten();
         let stdout = child
             .take_stdout()
             .ok_or_else(|| AgentError::Spawn("no stdout pipe".into()))?;
@@ -74,7 +75,9 @@ impl ClaudeAdapter {
             stdout,
             stderr,
             stdin,
-            budgeted.then(|| spec.prompt.clone()),
+            streaming.then(|| spec.prompt.clone()),
+            spec.approver,
+            spec.worktree,
             steer_rx,
             tx,
             cancel_rx,
@@ -135,8 +138,9 @@ impl AgentAdapter for ClaudeAdapter {
 /// Build the `claude` argument vector. Every value is a discrete argument; the
 /// prompt is never interpolated into a shell string.
 fn build_args(spec: &SessionSpec, resume: Option<&SessionRef>) -> Vec<String> {
-    let mut args = if budgeted_host_run(spec) {
+    let mut args = if stream_input(spec) {
         vec![
+            "-p".to_string(),
             "--input-format".to_string(),
             "stream-json".to_string(),
             "--output-format".to_string(),
@@ -155,17 +159,30 @@ fn build_args(spec: &SessionSpec, resume: Option<&SessionRef>) -> Vec<String> {
         ]
     };
 
+    if spec.approver.is_some() && matches!(spec.runtime, crate::SessionRuntime::Host { .. }) {
+        args.push("--permission-prompt-tool".into());
+        args.push("stdio".into());
+    }
+
     match spec.permission {
         PermissionPolicy::ReadOnly => {
             args.push("--permission-mode".into());
             args.push("plan".into());
         }
-        PermissionPolicy::WorkspaceWrite | PermissionPolicy::Ask => {
+        PermissionPolicy::WorkspaceWrite => {
             args.push("--permission-mode".into());
-            // Headless Claude runs have no interactive approval channel. Keep
-            // the non-interactive behavior explicit and safe for normal edits;
-            // Codex exposes in-app approvals through its app-server transport.
             args.push("acceptEdits".into());
+        }
+        PermissionPolicy::Ask => {
+            args.push("--permission-mode".into());
+            args.push(
+                if spec.approver.is_some() {
+                    "manual"
+                } else {
+                    "acceptEdits"
+                }
+                .into(),
+            );
         }
         PermissionPolicy::Autonomous => {
             args.push("--dangerously-skip-permissions".into());
@@ -198,18 +215,108 @@ fn budgeted_host_run(spec: &SessionSpec) -> bool {
             .is_some_and(|budget| !budget.is_unlimited())
 }
 
-async fn write_stream_input(stdin: &mut ChildStdin, text: &str) -> std::io::Result<()> {
-    let line = serde_json::json!({
+fn stream_input(spec: &SessionSpec) -> bool {
+    budgeted_host_run(spec)
+        || (spec.approver.is_some() && matches!(spec.runtime, crate::SessionRuntime::Host { .. }))
+}
+
+fn stream_user_line(text: &str) -> String {
+    json!({
         "type": "user",
         "message": {
             "role": "user",
             "content": [{ "type": "text", "text": text }]
         }
     })
-    .to_string();
-    stdin.write_all(line.as_bytes()).await?;
-    stdin.write_all(b"\n").await?;
-    stdin.flush().await
+    .to_string()
+}
+
+fn handle_control_request(
+    value: Value,
+    approver: Option<ApprovalResponder>,
+    input_tx: mpsc::Sender<String>,
+    worktree: std::path::PathBuf,
+) {
+    let Some(request_id) = value
+        .get("request_id")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+    else {
+        return;
+    };
+    let request = value.get("request").cloned().unwrap_or(Value::Null);
+    tokio::spawn(async move {
+        let response = if request.get("subtype").and_then(Value::as_str) == Some("can_use_tool") {
+            let tool_name = request
+                .get("tool_name")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let input = request.get("input").cloned().unwrap_or_else(|| json!({}));
+            let command = input.get("command").and_then(Value::as_str);
+            let decision = if let Some(approver) = approver {
+                approver
+                    .ask(ApprovalAsk {
+                        kind: if command.is_some() {
+                            ApprovalKind::Command
+                        } else {
+                            ApprovalKind::Tool
+                        },
+                        tool_name: tool_name.to_string(),
+                        command: command.map(|text| vec![text.to_string()]),
+                        cwd: Some(worktree.to_string_lossy().to_string()),
+                        input: input.clone(),
+                        reason: request
+                            .get("decision_reason")
+                            .or_else(|| request.get("description"))
+                            .and_then(Value::as_str)
+                            .map(str::to_string),
+                    })
+                    .await
+            } else {
+                ApprovalDecision::Deny
+            };
+            if decision.is_allow() {
+                let mut allow = json!({"behavior": "allow", "updatedInput": input});
+                if decision == ApprovalDecision::AllowForSession {
+                    let suggestions = request
+                        .get("permission_suggestions")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter(|suggestion| {
+                            suggestion.get("behavior").and_then(Value::as_str) == Some("allow")
+                        })
+                        .map(|mut suggestion| {
+                            suggestion["destination"] = json!("session");
+                            suggestion
+                        })
+                        .collect::<Vec<_>>();
+                    if !suggestions.is_empty() {
+                        allow["updatedPermissions"] = json!(suggestions);
+                    }
+                }
+                allow
+            } else {
+                json!({
+                    "behavior": "deny",
+                    "message": "Denied in Perpetual",
+                    "interrupt": decision == ApprovalDecision::Abort,
+                })
+            }
+        } else {
+            json!({"behavior": "deny", "message": "Unsupported Claude control request"})
+        };
+        let reply = json!({
+            "type": "control_response",
+            "response": {
+                "subtype": "success",
+                "request_id": request_id,
+                "response": response,
+            }
+        });
+        let _ = input_tx.send(reply.to_string()).await;
+    });
 }
 
 fn push_policy_args(args: &mut Vec<String>, policy: &crate::AgentPolicyRuntime) {
@@ -297,15 +404,31 @@ async fn drive(
     mut child: ManagedChild,
     stdout: tokio::process::ChildStdout,
     stderr: Option<tokio::process::ChildStderr>,
-    mut stdin: Option<ChildStdin>,
+    stdin: Option<ChildStdin>,
     initial_prompt: Option<String>,
+    approver: Option<ApprovalResponder>,
+    worktree: std::path::PathBuf,
     mut steer_rx: mpsc::UnboundedReceiver<String>,
     tx: mpsc::Sender<NormalizedEvent>,
     mut cancel_rx: oneshot::Receiver<()>,
     limits: RuntimeLimits,
 ) {
-    if let (Some(stdin), Some(prompt)) = (stdin.as_mut(), initial_prompt.as_deref()) {
-        if write_stream_input(stdin, prompt).await.is_err() {
+    let (mut input_tx, input_task) = if let Some(mut stdin) = stdin {
+        let (sender, mut receiver) = mpsc::channel::<String>(32);
+        let task = tokio::spawn(async move {
+            while let Some(line) = receiver.recv().await {
+                stdin.write_all(line.as_bytes()).await?;
+                stdin.write_all(b"\n").await?;
+                stdin.flush().await?;
+            }
+            Ok::<(), std::io::Error>(())
+        });
+        (Some(sender), Some(task))
+    } else {
+        (None, None)
+    };
+    if let (Some(sender), Some(prompt)) = (input_tx.as_ref(), initial_prompt.as_deref()) {
+        if sender.send(stream_user_line(prompt)).await.is_err() {
             let _ = tx
                 .send(NormalizedEvent::Error {
                     message: "Claude stream input closed before the session started".into(),
@@ -333,6 +456,7 @@ async fn drive(
     let mut saw_result = false;
     let mut saw_structured_output = false;
     let mut seen_usage_message_ids = HashSet::new();
+    let mut usage_totals = MessageUsageTotals::default();
     let hard_timeout = tokio::time::sleep(limits.run_timeout);
     let idle_timeout = tokio::time::sleep(limits.idle_timeout);
     let startup_timeout = tokio::time::sleep(limits.startup_timeout);
@@ -350,22 +474,39 @@ async fn drive(
                         Ok(value) => {
                             saw_structured_output = true;
                             idle_timeout.as_mut().reset(tokio::time::Instant::now() + limits.idle_timeout);
+                            if value.get("type").and_then(Value::as_str) == Some("control_request") {
+                                if let Some(sender) = input_tx.as_ref() {
+                                    handle_control_request(value.clone(), approver.clone(), sender.clone(), worktree.clone());
+                                }
+                                continue;
+                            }
                             if value.get("type").and_then(|t| t.as_str()) == Some("result") {
                                 saw_result = true;
                                 // Print-mode stream input is bidirectional. Once Claude has
                                 // emitted its terminal result, close our side of the pipe so
                                 // the process can exit instead of waiting for another turn.
-                                drop(stdin.take());
+                                drop(input_tx.take());
                             }
                             let message_id = usage_message_id(&value);
+                            let is_result = value.get("type").and_then(Value::as_str) == Some("result");
                             for event in parse_line(&value) {
-                                if matches!(&event, NormalizedEvent::TokenUsage { .. })
-                                    && message_id.as_ref().is_some_and(|id| {
-                                        !seen_usage_message_ids.insert(id.clone())
-                                    })
-                                {
-                                    continue;
-                                }
+                                let event = match event {
+                                    NormalizedEvent::TokenUsage { input, output } if is_result => {
+                                        // Claude's result usage summarizes the whole run. Emit
+                                        // only tokens missing from message-level reports.
+                                        let (input, output) = usage_totals.result_delta(input, output);
+                                        if input == 0 && output == 0 { continue; }
+                                        NormalizedEvent::TokenUsage { input, output }
+                                    }
+                                    NormalizedEvent::TokenUsage { input, output } => {
+                                        if message_id.as_ref().is_some_and(|id| {
+                                            !seen_usage_message_ids.insert(id.clone())
+                                        }) { continue; }
+                                        usage_totals.record_message(input, output);
+                                        NormalizedEvent::TokenUsage { input, output }
+                                    }
+                                    other => other,
+                                };
                                 if tx.send(event).await.is_err() {
                                     cancelled = true; // receiver gone
                                     break;
@@ -382,9 +523,9 @@ async fn drive(
                 Ok(None) => break,         // EOF: process is finishing
                 Err(e) => { tracing::warn!(error = %e, "stdout read error"); break; }
             },
-            Some(instruction) = steer_rx.recv(), if stdin.is_some() => {
-                if let Some(input) = stdin.as_mut() {
-                    if write_stream_input(input, &instruction).await.is_err() {
+            Some(instruction) = steer_rx.recv(), if input_tx.is_some() => {
+                if let Some(sender) = input_tx.as_ref() {
+                    if sender.send(stream_user_line(&instruction)).await.is_err() {
                         break;
                     }
                 }
@@ -406,6 +547,11 @@ async fn drive(
                 break;
             }
         }
+    }
+
+    drop(input_tx);
+    if let Some(task) = input_task {
+        task.abort();
     }
 
     // Terminate the whole process group if we cut the run short.
@@ -479,6 +625,26 @@ async fn drive(
     }
 }
 
+#[derive(Default)]
+struct MessageUsageTotals {
+    input: u64,
+    output: u64,
+}
+
+impl MessageUsageTotals {
+    fn record_message(&mut self, input: u64, output: u64) {
+        self.input = self.input.saturating_add(input);
+        self.output = self.output.saturating_add(output);
+    }
+
+    fn result_delta(&self, input: u64, output: u64) -> (u64, u64) {
+        (
+            input.saturating_sub(self.input),
+            output.saturating_sub(self.output),
+        )
+    }
+}
+
 /// Parse a single stream-json line into zero or more normalized events. Does
 /// **not** emit `SessionEnded` — the driver owns the terminal event.
 pub(crate) fn parse_line(v: &Value) -> Vec<NormalizedEvent> {
@@ -525,7 +691,15 @@ pub(crate) fn parse_line(v: &Value) -> Vec<NormalizedEvent> {
                                 .unwrap_or("tool")
                                 .to_string();
                             let input = block.get("input").cloned().unwrap_or(Value::Null);
-                            out.push(NormalizedEvent::ToolUse { name, input });
+                            let call_id = block
+                                .get("id")
+                                .and_then(|id| id.as_str())
+                                .map(str::to_string);
+                            out.push(NormalizedEvent::ToolUse {
+                                call_id,
+                                name,
+                                input,
+                            });
                         }
                         _ => {}
                     }
@@ -556,6 +730,10 @@ pub(crate) fn parse_line(v: &Value) -> Vec<NormalizedEvent> {
                             .unwrap_or(false);
                         let summary = stringify_tool_content(block.get("content"));
                         out.push(NormalizedEvent::ToolResult {
+                            call_id: block
+                                .get("tool_use_id")
+                                .and_then(|id| id.as_str())
+                                .map(str::to_string),
                             ok: !is_error,
                             summary,
                         });
@@ -603,12 +781,19 @@ fn token_usage_event(usage: &Value) -> Option<NormalizedEvent> {
         .or_else(|| usage.get("cached_input_tokens"))
         .and_then(|x| x.as_u64())
         .unwrap_or(0);
+    let cache_creation = usage
+        .get("cache_creation_input_tokens")
+        .or_else(|| usage.get("cached_creation_input_tokens"))
+        .and_then(|x| x.as_u64())
+        .unwrap_or(0);
     let output = usage
         .get("output_tokens")
         .and_then(|x| x.as_u64())
         .unwrap_or(0);
-    (input + cached_input + output > 0).then_some(NormalizedEvent::TokenUsage {
-        input: input.saturating_add(cached_input),
+    (input + cached_input + cache_creation + output > 0).then_some(NormalizedEvent::TokenUsage {
+        input: input
+            .saturating_add(cached_input)
+            .saturating_add(cache_creation),
         output,
     })
 }
@@ -672,6 +857,36 @@ fn truncate(s: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn result_usage_only_adds_tokens_missing_from_messages() {
+        let mut usage = MessageUsageTotals::default();
+        usage.record_message(100, 20);
+        usage.record_message(120, 30);
+        assert_eq!(usage.result_delta(250, 60), (30, 10));
+        assert_eq!(usage.result_delta(200, 40), (0, 0));
+    }
+
+    #[test]
+    fn tool_calls_and_results_share_the_provider_id() {
+        let call = parse_line(&json!({
+            "type": "assistant",
+            "message": {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "toolu_1", "name": "Bash", "input": {"command": "ls"}}
+            ]}
+        }));
+        assert!(
+            matches!(&call[0], NormalizedEvent::ToolUse { call_id: Some(id), .. } if id == "toolu_1")
+        );
+        let result = parse_line(&json!({
+            "type": "user",
+            "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "toolu_1", "content": "ok"}
+            ]}
+        }));
+        assert!(
+            matches!(&result[0], NormalizedEvent::ToolResult { call_id: Some(id), .. } if id == "toolu_1")
+        );
+    }
     use super::*;
     use serde_json::json;
 
@@ -787,6 +1002,33 @@ mod tests {
     }
 
     #[test]
+    fn host_approval_uses_bidirectional_stream_and_manual_ask_mode() {
+        let spec = SessionSpec {
+            worktree: "/tmp/worktree".into(),
+            prompt: "Run a command".into(),
+            model: None,
+            reasoning: None,
+            local_model: None,
+            permission: PermissionPolicy::Ask,
+            runtime: crate::SessionRuntime::default(),
+            policy: None,
+            approver: Some(ApprovalResponder::new(|_| {
+                Box::pin(async { ApprovalDecision::Allow })
+            })),
+        };
+        let args = build_args(&spec, None);
+        assert!(args
+            .windows(2)
+            .any(|p| p == ["--input-format", "stream-json"]));
+        assert!(args
+            .windows(2)
+            .any(|p| p == ["--permission-prompt-tool", "stdio"]));
+        assert!(args
+            .windows(2)
+            .any(|p| p == ["--permission-mode", "manual"]));
+    }
+
+    #[test]
     fn read_only_runs_use_claude_plan_mode() {
         let spec = SessionSpec {
             worktree: "/tmp/worktree".into(),
@@ -884,7 +1126,7 @@ mod tests {
         assert!(args
             .windows(2)
             .any(|pair| pair == ["--input-format", "stream-json"]));
-        assert!(!args.iter().any(|arg| arg == "-p"));
+        assert!(args.iter().any(|arg| arg == "-p"));
     }
 
     #[test]
@@ -942,6 +1184,7 @@ mod tests {
                 "usage": {
                     "input_tokens": 100,
                     "cache_read_input_tokens": 25,
+                    "cache_creation_input_tokens": 15,
                     "output_tokens": 10
                 }
             }
@@ -950,7 +1193,7 @@ mod tests {
         assert!(matches!(
             events.as_slice(),
             [NormalizedEvent::TokenUsage {
-                input: 125,
+                input: 140,
                 output: 10
             }]
         ));

@@ -20,6 +20,7 @@ use crate::local_models::{
     legacy_run_target_hash, normalize_model_target, run_target_hash, target_hash_matches,
 };
 use crate::policy::PolicyPreflightInput;
+use crate::provider_accounts::AccountSelection;
 use crate::sandbox::SandboxLease;
 use crate::{AppCore, ApprovalScope, CoreError};
 
@@ -161,12 +162,7 @@ impl AppCore {
         mut input: NewAgentThread,
     ) -> Result<AgentThread, CoreError> {
         if input.execution_backend.is_none() {
-            input.execution_backend = Some(
-                self.get_sandbox_policy()
-                    .await
-                    .unwrap_or_default()
-                    .default_backend,
-            );
+            input.execution_backend = Some(self.get_sandbox_policy().await.unwrap_or_default().default_backend);
         }
         let repo_ids = input.repo_ids.clone();
         for repo_id in &repo_ids {
@@ -194,6 +190,15 @@ impl AppCore {
 
     pub async fn get_agent_thread(&self, id: &str) -> Result<Option<AgentThread>, CoreError> {
         Ok(am_db::repos::agent_thread::get(&self.db.pool, id).await?)
+    }
+
+    /// Saves the order the user arranged their threads in.
+    pub async fn reorder_agent_threads(&self, ordered_ids: Vec<String>) -> Result<(), CoreError> {
+        if ordered_ids.len() > 10_000 {
+            return Err(CoreError::Other("too many threads to reorder".into()));
+        }
+        am_db::repos::agent_thread::set_order(&self.db.pool, &ordered_ids).await?;
+        Ok(())
     }
 
     pub async fn update_agent_thread(
@@ -253,6 +258,52 @@ impl AppCore {
             }
         }
         self.cleanup_thread_sandboxes(id).await;
+        let links = am_db::repos::agent_thread_repo::list_for_thread(&self.db.pool, id).await?;
+        for link in links {
+            let Some(worktree_path) = link.worktree_path else {
+                continue;
+            };
+            let Some(repo) = am_db::repos::repo::get(&self.db.pool, &link.repo_id).await? else {
+                continue;
+            };
+            let Some(repo_path) = repo.local_path else {
+                continue;
+            };
+            let worktree = PathBuf::from(worktree_path);
+            let visible_repo = PathBuf::from(repo_path);
+            if same_path(&worktree, &visible_repo) {
+                continue;
+            }
+            let managed_root = self.thread_workspace_path(id, link.workspace_backend);
+            let expected = managed_root.join(safe_repo_dir(&link.repo_name, &link.repo_id));
+            if worktree != expected {
+                return Err(CoreError::Other(format!(
+                    "Refusing to remove a thread workspace outside its expected path: {}",
+                    worktree.display()
+                )));
+            }
+            if worktree.exists() {
+                let resolved_root = managed_root
+                    .canonicalize()
+                    .map_err(|error| CoreError::Other(error.to_string()))?;
+                let resolved_worktree = worktree
+                    .canonicalize()
+                    .map_err(|error| CoreError::Other(error.to_string()))?;
+                if !resolved_worktree.starts_with(&resolved_root) {
+                    return Err(CoreError::Other(format!(
+                        "Refusing to remove a thread workspace outside its managed directory: {}",
+                        worktree.display()
+                    )));
+                }
+            }
+            let branch = link.branch.clone();
+            let backend = link.workspace_backend;
+            tokio::task::spawn_blocking(move || {
+                cleanup_managed_workspace(&visible_repo, &worktree, branch.as_deref(), backend)
+            })
+            .await
+            .map_err(|error| CoreError::Other(error.to_string()))??;
+        }
         am_db::repos::agent_thread::delete(&self.db.pool, id).await?;
         self.activity(
             thread.project_id,
@@ -368,6 +419,8 @@ impl AppCore {
         message: Option<PendingThreadMessage>,
         execution_backend: Option<ExecutionBackend>,
     ) -> Result<String, CoreError> {
+        let startup_started = std::time::Instant::now();
+        let _launch = self.sessions.lock_start(thread_id).await;
         if self.has_active_collaboration_assignment(thread_id).await? {
             return Err(CoreError::Other(
                 "This session is assigned to another device. Cancel or finish that assignment before starting a local run."
@@ -375,6 +428,30 @@ impl AppCore {
             ));
         }
         if self.sessions.is_active(thread_id).await {
+            // Another send may have passed its active check while this turn
+            // was still starting. Preserve that follow-up instead of spawning
+            // a second provider process or reporting a spurious send failure.
+            if let Some(message) = message.as_ref() {
+                let queued = am_db::repos::queued_turn::enqueue_with_echo(
+                    &self.db.pool,
+                    thread_id,
+                    agent,
+                    &permission_to_string(permission),
+                    &message.text,
+                    None,
+                    message.echo_user_message,
+                    message.client_message_id.as_deref(),
+                )
+                .await?;
+                self.activity(
+                    None,
+                    None,
+                    "thread.message_queued",
+                    json!({ "thread_id": thread_id, "queue_id": queued.id }),
+                )
+                .await?;
+                return Ok(queued.id);
+            }
             return Err(CoreError::Other("agent thread is already running".into()));
         }
         if am_db::repos::cloud_run::active_for_thread(&self.db.pool, thread_id)
@@ -435,7 +512,54 @@ impl AppCore {
             ));
         }
         validate_runtime_budget(&thread.task_budget, agent, backend, local_model.is_some())?;
-        if local_model.is_none() {
+        let preflight_ms = startup_started.elapsed().as_millis();
+        let account = if local_model.is_some() {
+            None
+        } else {
+            let limit_policy = self.get_limit_policy().await?;
+            let required_id = (thread.status == TaskStatus::WaitingForLimit
+                && message.is_none()
+                && (!limit_policy.auto_switch || !limit_policy.resume_with_earliest))
+                .then_some(thread.provider_account_id.as_deref())
+                .flatten();
+            match self.select_provider_account_for(agent, required_id).await? {
+                AccountSelection::Unmanaged => None,
+                AccountSelection::Ready(account) => Some(account),
+                AccountSelection::SignedOut => {
+                    return Err(CoreError::Other(format!(
+                        "No {} account is signed in. Sign in from Accounts to continue.",
+                        agent.label()
+                    )));
+                }
+                AccountSelection::Limited { reset_at } => {
+                    if crate::budget::is_percentage_budget(&thread.task_budget) {
+                        thread.status = TaskStatus::Paused;
+                        let saved =
+                            am_db::repos::agent_thread::save(&self.db.pool, &thread).await?;
+                        self.events.publish(AppEvent::AgentThreadUpdated(saved));
+                        return Err(CoreError::Other(
+                            "Percentage budgets pause when the selected provider is limited; they do not switch providers because quota percentages are not comparable.".into(),
+                        ));
+                    }
+                    // Every account of this provider is limited: keep the
+                    // message and continue on another account, or wait.
+                    let queued_id = self
+                        .queue_known_limited_message(
+                            thread_id,
+                            agent,
+                            &permission_to_string(permission),
+                            message,
+                            policy.envelope_id.as_deref(),
+                        )
+                        .await?;
+                    self.start_thread_fallback(thread_id, agent, None, reset_at)
+                        .await;
+                    return Ok(queued_id.unwrap_or_else(|| thread_id.to_string()));
+                }
+            }
+        };
+        let account_ready_ms = startup_started.elapsed().as_millis();
+        if local_model.is_none() && account.is_none() {
             if let Some(reset_at) = self.known_limited_agent_reset(agent).await? {
                 if crate::budget::is_percentage_budget(&thread.task_budget) {
                     thread.status = TaskStatus::Paused;
@@ -445,6 +569,9 @@ impl AppCore {
                         "Percentage budgets pause when the selected provider is limited; they do not switch providers because quota percentages are not comparable.".into(),
                     ));
                 }
+                // The fallback re-enters run_agent_thread_inner with a new
+                // provider; release startup ownership before that recursion.
+                drop(_launch);
                 return self
                     .start_known_limited_thread_fallback(
                         thread,
@@ -457,16 +584,32 @@ impl AppCore {
                     .await;
             }
         }
+        let mut budget_spent_tokens = 0;
+        let mut budget_spent_percent = 0.0;
         if let TaskBudget::Tokens { limit_tokens } = &thread.task_budget {
-            let consumed = am_db::repos::usage_ledger::total_for_session(&self.db.pool, thread_id)
-                .await
-                .unwrap_or(0);
-            if consumed >= *limit_tokens {
+            budget_spent_tokens =
+                am_db::repos::usage_ledger::total_for_session(&self.db.pool, thread_id).await?;
+            if budget_spent_tokens >= *limit_tokens {
                 thread.status = TaskStatus::Paused;
                 let saved = am_db::repos::agent_thread::save(&self.db.pool, &thread).await?;
                 self.events.publish(AppEvent::AgentThreadUpdated(saved));
                 return Err(CoreError::Other(
                     "This task budget is exhausted. Increase the cap or turn budgeting off before resuming.".into(),
+                ));
+            }
+        }
+        if let TaskBudget::WeeklyPercent { limit_percent } = &thread.task_budget {
+            let stored = am_db::repos::task_budget_state::get(&self.db.pool, thread_id).await?;
+            let state = crate::budget::EnforcementState::from_json(stored).map_err(|err| {
+                CoreError::Other(format!("Cannot read weekly budget state: {err}"))
+            })?;
+            budget_spent_percent = state.weekly_consumed_percent;
+            if budget_spent_percent >= f64::from(*limit_percent) {
+                thread.status = TaskStatus::Paused;
+                let saved = am_db::repos::agent_thread::save(&self.db.pool, &thread).await?;
+                self.events.publish(AppEvent::AgentThreadUpdated(saved));
+                return Err(CoreError::Other(
+                    "This weekly usage budget is exhausted. Increase the cap or turn budgeting off before resuming.".into(),
                 ));
             }
         }
@@ -487,7 +630,22 @@ impl AppCore {
             thread.local_provider,
             thread.local_base_url.as_deref(),
         );
-        if backend == ExecutionBackend::Host {
+        // Provider sessions live inside one account profile, so a session is
+        // only resumed by the profile that created it.
+        let (target_hash, legacy_target_hash) =
+            match account.as_ref().and_then(|a| a.profile.as_deref()) {
+                Some(profile) => {
+                    let hash = crate::context_index::stable_hex_hash(
+                        format!("{target_hash}|account={profile}").as_bytes(),
+                    );
+                    (hash.clone(), hash)
+                }
+                None => (target_hash, legacy_target_hash),
+            };
+        // Account selection has already checked the chosen profile's binary and
+        // sign-in. Probing the default CLI again adds startup latency and says
+        // nothing about a managed profile's credentials.
+        if backend == ExecutionBackend::Host && account.is_none() {
             let status = match self.fresh_ready_agent_status(agent).await? {
                 Some(status) => status,
                 None => self.record_agent_probe(adapter.detect().await).await?,
@@ -498,9 +656,9 @@ impl AppCore {
                     agent.label()
                 )));
             }
-            if !status.authenticated && local_model.is_none() {
+            if !status.authenticated && local_model.is_none() && account.is_none() {
                 return Err(CoreError::Other(format!(
-                    "{} is installed but not authenticated",
+                    "{} is installed but not signed in. Sign in from Accounts to continue.",
                     agent.label()
                 )));
             }
@@ -510,10 +668,12 @@ impl AppCore {
             .await?;
         self.render_thread_context_files(&thread, &workspace.path)
             .await?;
+        let workspace_ready_ms = startup_started.elapsed().as_millis();
         let prior = self
             .latest_thread_session_ref(thread_id, agent, &target_hash, &legacy_target_hash)
             .await?;
         let resumed_agent_session_id = prior.as_ref().map(|p| p.agent_session_id.clone());
+        let has_history = prior.is_some() || !thread.progress.trim().is_empty();
         // A resume/fallback turn is started with no message (`None`). If the user
         // sent input that is still pending (e.g. their question was carried over
         // from a turn that hit a usage limit, or queued while the agent ran),
@@ -604,7 +764,7 @@ impl AppCore {
             policy.envelope_id.as_deref(),
         )
         .await?;
-        let user_message = match (&message, prior.is_some()) {
+        let user_message = match (&message, has_history) {
             (Some(msg), _) if msg.echo_user_message => Some(msg.text.trim()),
             (Some(_), _) => None,
             (None, false) => Some(thread.objective.trim()),
@@ -624,6 +784,7 @@ impl AppCore {
 
         thread.status = TaskStatus::Running;
         thread.active_agent = Some(agent);
+        thread.provider_account_id = account.as_ref().map(|account| account.id.clone());
         thread.permission = permission_string.clone();
         thread.execution_backend = backend;
         if thread.preferred_agent.is_none() {
@@ -641,6 +802,12 @@ impl AppCore {
                 "turn_id": turn.id,
                 "agent": agent.as_str(),
                 "resumed_agent_session_id": resumed_agent_session_id,
+                "startup_timing_ms": {
+                    "preflight": preflight_ms,
+                    "account_ready": account_ready_ms,
+                    "workspace_ready": workspace_ready_ms,
+                    "turn_ready": startup_started.elapsed().as_millis(),
+                },
             }),
         )
         .await?;
@@ -649,24 +816,43 @@ impl AppCore {
         let workspace_path = workspace.path;
         let mut runtime_policy = policy.runtime_policy.clone();
         runtime_policy.task_budget = Some(thread.task_budget.clone());
-        let account = self.select_provider_account(agent).await?;
         let provider_account_id = account.as_ref().map(|account| account.id.clone());
         if let Some(account) = account {
             runtime_policy.launch_env = account.env;
             runtime_policy.provider_account_id = Some(account.id);
         }
+        if backend == ExecutionBackend::Host && !workspace.uses_visible_repo {
+            let managed_root = std::fs::canonicalize(&workspace_path)
+                .map_err(|error| CoreError::Other(error.to_string()))?;
+            let links =
+                am_db::repos::agent_thread_repo::list_for_thread(&self.db.pool, thread_id).await?;
+            let managed_repos = links
+                .iter()
+                .filter_map(|link| link.worktree_path.as_deref())
+                .filter_map(|path| std::fs::canonicalize(path).ok())
+                .filter(|path| path.starts_with(&managed_root) && path != &managed_root)
+                .collect::<Vec<_>>();
+            add_managed_git_safe_directories(&mut runtime_policy.launch_env, &managed_repos)?;
+        }
+        let mut prompt = match (&message, has_history) {
+            (Some(msg), _) if prior.is_some() => build_thread_followup_prompt(&thread, &msg.text),
+            (Some(msg), _) => {
+                build_thread_initial_prompt(&thread, &msg.text, context_files_available)
+            }
+            (None, true) => build_thread_resume_prompt(&thread, context_files_available),
+            (None, false) => {
+                build_thread_initial_prompt(&thread, &thread.objective, context_files_available)
+            }
+        };
+        append_budget_instruction(
+            &mut prompt,
+            &thread.task_budget,
+            budget_spent_tokens,
+            budget_spent_percent,
+        );
         let spec = SessionSpec {
             worktree: workspace_path,
-            prompt: match (&message, prior.is_some()) {
-                (Some(msg), true) => build_thread_followup_prompt(&thread, &msg.text),
-                (Some(msg), false) => {
-                    build_thread_initial_prompt(&thread, &msg.text, context_files_available)
-                }
-                (None, true) => build_thread_resume_prompt(&thread, context_files_available),
-                (None, false) => {
-                    build_thread_initial_prompt(&thread, &thread.objective, context_files_available)
-                }
-            },
+            prompt,
             model: thread.model.clone(),
             reasoning: thread.reasoning.clone(),
             local_model,
@@ -1087,46 +1273,58 @@ impl AppCore {
                 .await
                 .map_err(|e| CoreError::Other(e.to_string()))?
                 .map_err(|e| CoreError::Other(e.to_string()))?;
-            let cleanup_target = item.target.clone();
-            let cleanup_worktree = item.worktree.clone();
-            let cleanup_branch = item.branch.clone();
-            let cleanup_backend = item.workspace_backend;
-            let cleanup = tokio::task::spawn_blocking(move || {
-                cleanup_managed_workspace(
-                    &cleanup_target,
-                    &cleanup_worktree,
-                    cleanup_branch.as_deref(),
-                    cleanup_backend,
+            // The visible checkout now contains the applied files, but they are
+            // still uncommitted there. Keep the managed workspace at the same
+            // content so a follow-up turn can read those files. Advancing its
+            // diff base also prevents Changes from offering them a second time.
+            let worktree = item.worktree.clone();
+            let checkpoint = tokio::task::spawn_blocking(move || {
+                am_vcs::checkpoint_worktree_with_excludes(
+                    &worktree,
+                    "Perpetual applied changes checkpoint",
+                    GENERATED_CONTEXT_FILES,
                 )
             })
             .await
             .map_err(|e| CoreError::Other(e.to_string()))?;
             let mut result = item.result;
             result.applied = true;
-            if cleanup.is_ok() {
-                am_db::repos::agent_thread_repo::upsert(
-                    &self.db.pool,
-                    thread_id,
-                    &result.repo_id,
-                    None,
-                    None,
-                    None,
-                    item.workspace_backend,
-                )
-                .await?;
-            } else if let Err(err) = cleanup {
-                self.activity(
-                    None,
-                    None,
-                    "thread.workspace_cleanup_failed",
-                    json!({
-                        "thread_id": thread_id,
-                        "repo_id": result.repo_id,
-                        "worktree_path": item.worktree.to_string_lossy(),
-                        "reason": err.to_string(),
-                    }),
-                )
-                .await?;
+            match checkpoint {
+                Ok(Some(base_ref)) => {
+                    am_db::repos::agent_thread_repo::upsert(
+                        &self.db.pool,
+                        thread_id,
+                        &result.repo_id,
+                        Some(&item.worktree.to_string_lossy()),
+                        item.branch.as_deref(),
+                        Some(&base_ref),
+                        item.workspace_backend,
+                    )
+                    .await?;
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    result.blocker = Some(format!(
+                        "Changes were applied, but the managed workspace could not be checkpointed: {err}"
+                    ));
+                    blockers.push(format!(
+                        "{}: {}",
+                        result.repo_name,
+                        result.blocker.as_deref().unwrap_or_default()
+                    ));
+                    self.activity(
+                        None,
+                        None,
+                        "thread.workspace_checkpoint_failed",
+                        json!({
+                            "thread_id": thread_id,
+                            "repo_id": result.repo_id,
+                            "worktree_path": item.worktree.to_string_lossy(),
+                            "reason": err.to_string(),
+                        }),
+                    )
+                    .await?;
+                }
             }
             repos.push(result);
         }
@@ -1226,9 +1424,9 @@ impl AppCore {
         let mut limit_reset_at = None;
         let mut budget_exhausted = false;
         let mut saw_token_telemetry = false;
-        let mut saw_weekly_telemetry = false;
-        let mut usage_reconciler = crate::budget::UsageReconciler::default();
+        let mut saw_final_weekly_telemetry = false;
         let mut streaming_assistant: Option<AgentThreadEvent> = None;
+        let mut stream_checkpoint = std::time::Instant::now();
         let usage_turn = am_db::repos::agent_turn::get(&self.db.pool, &turn_id)
             .await
             .ok()
@@ -1244,10 +1442,10 @@ impl AppCore {
             .as_ref()
             .map(|thread| thread.task_budget.clone())
             .unwrap_or_default();
-        let mut usage_total =
-            am_db::repos::usage_ledger::total_for_session(&self.db.pool, &thread_id)
-                .await
-                .unwrap_or(0);
+        let usage_total_result =
+            am_db::repos::usage_ledger::total_for_session(&self.db.pool, &thread_id).await;
+        let mut usage_total = usage_total_result.as_ref().copied().unwrap_or(0);
+        let mut budget_accounting_failed = usage_total_result.is_err();
         let (mut enforcement_state, budget_state_invalid) =
             match am_db::repos::task_budget_state::get(&self.db.pool, &thread_id).await {
                 Ok(value) => match crate::budget::EnforcementState::from_json(value) {
@@ -1261,11 +1459,46 @@ impl AppCore {
             .as_ref()
             .and_then(|turn| turn.policy_envelope_id.clone());
 
-        while let Some(event) = events.recv().await {
+        let mut stream_dirty = false;
+        let mut stream_tick = tokio::time::interval(std::time::Duration::from_millis(16));
+        stream_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            let event = tokio::select! {
+                biased;
+                _ = stream_tick.tick(), if stream_dirty => {
+                    if let Some(streamed) = streaming_assistant.as_ref() {
+                        self.events.publish(AppEvent::AgentThreadEvent(streamed.clone()));
+                        if stream_checkpoint.elapsed() >= std::time::Duration::from_millis(100) {
+                            let _ = am_db::repos::agent_thread_message::upsert(&self.db.pool, streamed).await;
+                            stream_checkpoint = std::time::Instant::now();
+                        }
+                    }
+                    stream_dirty = false;
+                    continue;
+                }
+                event = events.recv() => event,
+            };
+            let event = match event {
+                Some(event) => event,
+                None => {
+                    let error = map_thread_event(&thread_id, &turn_id, &NormalizedEvent::Error {
+                        message: "The provider disconnected before finishing. Your progress is saved; please try again.".into(),
+                        retryable: true,
+                    });
+                    let _ = am_db::repos::agent_thread_message::insert(&self.db.pool, &error).await;
+                    self.events.publish(AppEvent::AgentThreadEvent(error));
+                    // A crashed adapter still needs the normal terminal path:
+                    // save partial output, release approvals, and finish the turn.
+                    NormalizedEvent::SessionEnded {
+                        status: SessionStatus::Failed,
+                    }
+                }
+            };
             if let NormalizedEvent::AssistantTextDelta { delta } = &event {
                 if delta.is_empty() {
                     continue;
                 }
+                let first_delta = streaming_assistant.is_none();
                 let mut streamed = if let Some(mut streamed) = streaming_assistant.take() {
                     streamed
                         .text
@@ -1276,15 +1509,24 @@ impl AppCore {
                     map_thread_event(&thread_id, &turn_id, &event)
                 };
                 streamed.data = json!({ "streaming": true });
-                let _ = am_db::repos::agent_thread_message::upsert(&self.db.pool, &streamed).await;
-                self.events
-                    .publish(AppEvent::AgentThreadEvent(streamed.clone()));
+                // First text is immediate. Subsequent tokens share one snapshot
+                // per display frame, before serialization, IPC and replay storage.
+                if first_delta {
+                    self.events
+                        .publish(AppEvent::AgentThreadEvent(streamed.clone()));
+                    let _ =
+                        am_db::repos::agent_thread_message::upsert(&self.db.pool, &streamed).await;
+                    stream_checkpoint = std::time::Instant::now();
+                } else {
+                    stream_dirty = true;
+                }
                 streaming_assistant = Some(streamed);
                 continue;
             }
 
             if let NormalizedEvent::AssistantText { text } = &event {
                 if let Some(mut streamed) = streaming_assistant.take() {
+                    stream_dirty = false;
                     streamed.text = Some(text.clone());
                     streamed.data = json!({ "streaming": false });
                     let _ =
@@ -1297,6 +1539,7 @@ impl AppCore {
             // Some provider failures can end a stream without a completed text
             // item. Preserve the accumulated text and remove its live caret.
             if matches!(event, NormalizedEvent::SessionEnded { .. }) {
+                stream_dirty = false;
                 if let Some(mut streamed) = streaming_assistant.take() {
                     streamed.data = json!({ "streaming": false });
                     let _ =
@@ -1314,11 +1557,10 @@ impl AppCore {
                 NormalizedEvent::AwaitingApproval { .. } => saw_approval_needed = true,
                 NormalizedEvent::TokenUsage { input, output } => {
                     saw_token_telemetry = true;
-                    let (input_delta, output_delta) = usage_reconciler.delta(*input, *output);
-                    if input_delta == 0 && output_delta == 0 {
+                    if *input == 0 && *output == 0 {
                         continue;
                     }
-                    if let Ok(recorded) = self
+                    match self
                         .record_token_usage(
                             usage_project_id.clone(),
                             Some(thread_id.clone()),
@@ -1326,12 +1568,13 @@ impl AppCore {
                             agent,
                             usage_model.clone(),
                             usage_policy_envelope_id.clone(),
-                            input_delta,
-                            output_delta,
+                            *input,
+                            *output,
                         )
                         .await
                     {
-                        usage_total = usage_total.saturating_add(recorded);
+                        Ok(recorded) => usage_total = usage_total.saturating_add(recorded),
+                        Err(_) => budget_accounting_failed = true,
                     }
                     if let TaskBudget::Tokens { limit_tokens } = &usage_budget {
                         let remaining = limit_tokens.saturating_sub(usage_total);
@@ -1374,9 +1617,10 @@ impl AppCore {
                     window,
                     used_percent,
                     reset_at,
+                    final_sample,
                 } => {
-                    if *window == QuotaWindowKind::Weekly {
-                        saw_weekly_telemetry = true;
+                    if *window == QuotaWindowKind::Weekly && *final_sample {
+                        saw_final_weekly_telemetry = true;
                     }
                     let provider_usage =
                         self.update_provider_usage(agent, *window, *used_percent, *reset_at);
@@ -1384,14 +1628,19 @@ impl AppCore {
                         agent,
                         usage: provider_usage,
                     });
+                    let quota_account = provider_account_id.as_deref().unwrap_or(agent.as_str());
                     let consumed =
-                        enforcement_state.observe(*window, *used_percent, agent.as_str());
-                    let _ = am_db::repos::task_budget_state::save(
+                        enforcement_state.observe(*window, *used_percent, quota_account, *reset_at);
+                    if am_db::repos::task_budget_state::save(
                         &self.db.pool,
                         &thread_id,
                         &enforcement_state.to_json(),
                     )
-                    .await;
+                    .await
+                    .is_err()
+                    {
+                        budget_accounting_failed = true;
+                    }
                     if let Some(limit) = crate::budget::quota_limit(&usage_budget, *window) {
                         let remaining = (limit - consumed).max(0.0);
                         if consumed >= limit {
@@ -1546,11 +1795,13 @@ impl AppCore {
                         let budget_telemetry_complete = match &usage_budget {
                             TaskBudget::Unlimited => true,
                             TaskBudget::Tokens { .. } => saw_token_telemetry,
-                            TaskBudget::WeeklyPercent { .. } => saw_weekly_telemetry,
+                            TaskBudget::WeeklyPercent { .. } => saw_final_weekly_telemetry,
                         };
                         thread.status = if budget_exhausted
                             || (!usage_budget.is_unlimited()
-                                && (!budget_telemetry_complete || budget_state_invalid))
+                                && (!budget_telemetry_complete
+                                    || budget_state_invalid
+                                    || budget_accounting_failed))
                         {
                             TaskStatus::Paused
                         } else if saw_network_loss {
@@ -1559,8 +1810,11 @@ impl AppCore {
                             TaskStatus::WaitingForLimit
                         } else {
                             match effective_status {
+                                // Approval requests are only actionable while
+                                // the provider session is alive. If it ended,
+                                // let the user send a follow-up or switch agents.
                                 SessionStatus::Completed if saw_approval_needed => {
-                                    TaskStatus::AwaitingApproval
+                                    TaskStatus::Paused
                                 }
                                 SessionStatus::Completed => TaskStatus::Review,
                                 SessionStatus::Interrupted => TaskStatus::Paused,
@@ -1598,7 +1852,15 @@ impl AppCore {
                 let _ = self
                     .apply_thread_handoff(&thread_id, &turn_id, agent, handoff_status)
                     .await;
+                break;
             }
+        }
+
+        // Providers may close the channel without a final message or SessionEnded.
+        if let Some(mut streamed) = streaming_assistant.take() {
+            streamed.data = json!({ "streaming": false });
+            let _ = am_db::repos::agent_thread_message::upsert(&self.db.pool, &streamed).await;
+            self.events.publish(AppEvent::AgentThreadEvent(streamed));
         }
 
         self.cancel_session_approvals(&turn_id).await;
@@ -1659,11 +1921,11 @@ impl AppCore {
         let budget_telemetry_complete = match &usage_budget {
             TaskBudget::Unlimited => true,
             TaskBudget::Tokens { .. } => saw_token_telemetry,
-            TaskBudget::WeeklyPercent { .. } => saw_weekly_telemetry,
+            TaskBudget::WeeklyPercent { .. } => saw_final_weekly_telemetry,
         };
         if budget_exhausted
             || (!usage_budget.is_unlimited()
-                && (!budget_telemetry_complete || budget_state_invalid))
+                && (!budget_telemetry_complete || budget_state_invalid || budget_accounting_failed))
         {
             return;
         }
@@ -1971,23 +2233,47 @@ impl AppCore {
         reset_at: Option<chrono::DateTime<chrono::Utc>>,
     ) {
         if self.provider_accounts_configured().await {
-            if let Ok(Some(next)) = self.next_ready_provider_account(current_account_id).await {
-                self.start_thread_account_fallback(thread_id, current, next)
-                    .await;
-                return;
-            }
-            let reset_at = self
-                .earliest_provider_account_reset()
+            let auto_switch = self
+                .get_limit_policy()
                 .await
-                .ok()
-                .flatten()
-                .or(reset_at);
+                .map(|p| p.auto_switch)
+                .unwrap_or(true);
+            if auto_switch {
+                if let Ok(Some(next)) = self.next_ready_provider_account(current_account_id).await {
+                    self.start_thread_account_fallback(thread_id, current, next)
+                        .await;
+                    return;
+                }
+            }
+            // Without automatic switching the session waits for its own
+            // account; otherwise for whichever account resets first.
+            let own_reset = match current_account_id {
+                Some(id) => am_db::repos::provider_account::get(&self.db.pool, id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|state| state.reset_at),
+                None => None,
+            };
+            let reset_at = if auto_switch {
+                self.earliest_provider_account_reset()
+                    .await
+                    .ok()
+                    .flatten()
+                    .or(reset_at)
+            } else {
+                own_reset.or(reset_at)
+            };
             if let Ok(Some(mut thread)) =
                 am_db::repos::agent_thread::get(&self.db.pool, thread_id).await
             {
                 thread.status = TaskStatus::WaitingForLimit;
                 thread.limit_reset_at = reset_at;
-                thread.handoff_state = "waiting_for_account".into();
+                thread.handoff_state = if auto_switch {
+                    "waiting_for_account".into()
+                } else {
+                    "waiting_for_reset".into()
+                };
                 if let Ok(saved) = am_db::repos::agent_thread::save(&self.db.pool, &thread).await {
                     self.events.publish(AppEvent::AgentThreadUpdated(saved));
                 }
@@ -2536,8 +2822,14 @@ impl AppCore {
             self.visible_repo_workspace(&links, backend, permission)
                 .await?
         };
+        // An older sandbox thread may contain unsaved work in its clone
+        // workspace. Continue on the host in that same directory.
+        let legacy_workspace = (backend == ExecutionBackend::Host)
+            .then(|| self.thread_workspace_path(&thread.id, ExecutionBackend::DockerSandbox))
+            .filter(|path| path.exists());
         let workspace = visible_repo_workspace
             .clone()
+            .or(legacy_workspace)
             .unwrap_or_else(|| self.thread_workspace_path(&thread.id, backend));
         if visible_repo_workspace.is_none() {
             tokio::fs::create_dir_all(&workspace)
@@ -2559,7 +2851,9 @@ impl AppCore {
                 workspace.join(repo_dir_name)
             };
             if link.worktree_path.as_ref().is_some_and(|path| {
-                link.workspace_backend == backend
+                (link.workspace_backend == backend
+                    || (backend == ExecutionBackend::Host
+                        && link.workspace_backend == ExecutionBackend::DockerSandbox))
                     && Path::new(path).exists()
                     && same_path(Path::new(path), &worktree)
             }) {
@@ -2688,10 +2982,23 @@ impl AppCore {
     ) -> Result<(), CoreError> {
         let repos =
             am_db::repos::agent_thread_repo::list_for_thread(&self.db.pool, &thread.id).await?;
-        let block = render_thread_context(thread, &repos);
+        let mut block = render_thread_context(thread, &repos);
+        if let Some(message) =
+            am_db::repos::agent_thread_message::latest_user_message(&self.db.pool, &thread.id)
+                .await?
+        {
+            if let Some(text) = message.text {
+                push_section(
+                    &mut block,
+                    "Latest user request (continue this unless the current message supersedes it)",
+                    &text,
+                );
+            }
+        }
         if !self.is_visible_repo_path(&repos, workspace).await? {
             for file in [THREAD_CONTEXT_FILE, CLAUDE_FILE, AGENTS_FILE] {
-                write_text_if_changed(&workspace.join(file), &block).await?;
+                write_thread_context(&workspace.join(file), &block, file == THREAD_CONTEXT_FILE)
+                    .await?;
             }
         }
         for repo in repos {
@@ -2703,7 +3010,8 @@ impl AppCore {
                         .await?
                 {
                     for file in [CLAUDE_FILE, AGENTS_FILE] {
-                        write_text_if_changed(&path.join(file), &block).await?;
+                        write_thread_context(&path.join(file),
+                            "# Perpetual Session Context\n\nUse the session context supplied by the parent workspace instructions. The recovery copy is ../TASK_CONTEXT.md; read it only if that context is missing.\n", false).await?;
                     }
                 }
             }
@@ -2762,6 +3070,49 @@ impl AppCore {
         )
         .await?;
         Ok(())
+    }
+}
+
+/// Codex may run tools under a different Windows sandbox identity. Git then
+/// rejects the app-owned worktree as "dubious ownership". Trust only the
+/// managed worktrees for this provider process and its child tools.
+fn add_managed_git_safe_directories(
+    env: &mut Vec<(String, String)>,
+    paths: &[PathBuf],
+) -> Result<(), CoreError> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let inherited = env
+        .iter()
+        .rev()
+        .find(|(key, _)| key == "GIT_CONFIG_COUNT")
+        .map(|(_, value)| value.clone())
+        .or_else(|| std::env::var("GIT_CONFIG_COUNT").ok());
+    let start = inherited
+        .as_deref()
+        .unwrap_or("0")
+        .parse::<usize>()
+        .map_err(|_| CoreError::Other("Invalid inherited GIT_CONFIG_COUNT".into()))?;
+    let count = start
+        .checked_add(paths.len())
+        .filter(|count| *count <= 256)
+        .ok_or_else(|| CoreError::Other("Too many Git config entries".into()))?;
+    for (offset, path) in paths.iter().enumerate() {
+        let index = start + offset;
+        env.push((format!("GIT_CONFIG_KEY_{index}"), "safe.directory".into()));
+        env.push((format!("GIT_CONFIG_VALUE_{index}"), git_safe_path(path)));
+    }
+    env.push(("GIT_CONFIG_COUNT".into(), count.to_string()));
+    Ok(())
+}
+
+fn git_safe_path(path: &Path) -> String {
+    let raw = path.to_string_lossy();
+    if let Some(rest) = raw.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}").replace('\\', "/")
+    } else {
+        raw.strip_prefix(r"\\?\").unwrap_or(&raw).replace('\\', "/")
     }
 }
 
@@ -2944,7 +3295,7 @@ fn git_diff_args(prefix: &[&str], exclude_paths: &[&str], include_pathspec: bool
 }
 
 fn git_read(repo: &Path, args: &[String]) -> Result<String, CoreError> {
-    let output = Command::new("git")
+    let output = am_proto::hide_console(&mut Command::new("git"))
         .arg("-C")
         .arg(repo)
         .args(args)
@@ -3048,7 +3399,7 @@ fn delete_managed_branch(repo: &Path, branch: Option<&str>) -> Result<(), CoreEr
     if !branch.starts_with("am/thread-") {
         return Ok(());
     }
-    let output = Command::new("git")
+    let output = am_proto::hide_console(&mut Command::new("git"))
         .arg("-C")
         .arg(repo)
         .args(["branch", "-D", branch])
@@ -3075,7 +3426,7 @@ fn validate_runtime_budget(
     }
     if backend != ExecutionBackend::Host || uses_local_model {
         return Err(CoreError::Other(
-            "Task budgets require host execution with a hosted agent; local models and Docker Sandbox are not supported.".into(),
+            "Task budgets require host execution with a hosted agent; local models are not supported.".into(),
         ));
     }
     if matches!(budget, TaskBudget::WeeklyPercent { .. }) && agent != AgentKind::Codex {
@@ -3086,8 +3437,15 @@ fn validate_runtime_budget(
     Ok(())
 }
 
-fn append_budget_instruction(prompt: &mut String, budget: &TaskBudget) {
-    if let Some(instruction) = crate::budget::launch_instruction(budget) {
+fn append_budget_instruction(
+    prompt: &mut String,
+    budget: &TaskBudget,
+    used_tokens: u64,
+    used_weekly_percent: f64,
+) {
+    if let Some(instruction) =
+        crate::budget::launch_instruction(budget, used_tokens, used_weekly_percent)
+    {
         prompt.push_str("\n\n[Internal session guidance]\n");
         prompt.push_str(&instruction);
     }
@@ -3108,52 +3466,87 @@ fn build_thread_initial_prompt(
     }
     if context_files_available {
         prompt.push_str(
-            "\n\nBefore making changes, read TASK_CONTEXT.md and AGENTS.md in this workspace. Multiple repositories, if selected, are sibling directories under the current workspace root.",
+            "\n\nUse the session context already supplied in the workspace instructions. Multiple repositories, if selected, are sibling directories under the current workspace root. Answer conversational requests directly; inspect files and use tools only when the request requires it. Do not reread the Perpetual context files just to start a turn. Keep session restoration, account handoffs, and internal context filenames out of routine user-facing updates; continue the user’s request directly.",
         );
     } else {
         prompt.push_str(
             "\n\nUse the current repository working tree directly. Apply edits in place as you work.",
         );
     }
-    append_budget_instruction(&mut prompt, &thread.task_budget);
     prompt
 }
 
 fn build_thread_resume_prompt(thread: &AgentThread, context_files_available: bool) -> String {
-    let mut prompt = if context_files_available {
+    if context_files_available {
         format!(
-            "Continue the Perpetual session \"{}\". Read TASK_CONTEXT.md and AGENTS.md first, then proceed from the recorded progress and next actions.",
+            "Continue the user’s existing task in session \"{}\" from the last successful progress supplied in the workspace instructions. Account/provider switches are internal continuity, not a new task. Do not announce a handoff, greeting, setup checks, or internal context filenames. Do not investigate prior provider errors unless the user asked for that. Continue outstanding work directly, and answer conversational requests without tool calls.",
             thread.title
         )
     } else {
         format!(
-            "Continue the Perpetual session \"{}\" in the current repository working tree, applying edits in place as you work.",
+            "Continue the user's existing task in session \"{}\" in the current repository working tree. Apply edits in place when requested. Resume silently from the last successful progress; account changes and provider failures are not new tasks to investigate.",
             thread.title
         )
-    };
-    append_budget_instruction(&mut prompt, &thread.task_budget);
-    prompt
+    }
 }
 
-fn build_thread_followup_prompt(thread: &AgentThread, message: &str) -> String {
-    let mut prompt = message.to_string();
-    append_budget_instruction(&mut prompt, &thread.task_budget);
-    prompt
+fn build_thread_followup_prompt(_thread: &AgentThread, message: &str) -> String {
+    format!("{message}\n\n[Internal continuity guidance]\nContinue this request directly. Keep account/session restoration and internal context filenames out of routine updates. Prior provider failures are not new tasks to investigate unless the user asks. Answer conversational requests without setup tools.")
 }
 
-async fn write_text_if_changed(path: &Path, content: &str) -> Result<(), CoreError> {
-    match tokio::fs::read_to_string(path).await {
-        Ok(existing) if existing == content => return Ok(()),
-        Ok(_) => {}
-        Err(err) if err.kind() == ErrorKind::NotFound => {}
+/// Update only our context block in instruction files. Repository-authored
+/// instructions must survive every account switch and context refresh.
+fn merge_instruction_context(existing: &str, context: &str) -> String {
+    const START: &str = "<!-- Perpetual session context start -->";
+    const END: &str = "<!-- Perpetual session context end -->";
+    let context = context
+        .replace(START, "[session context start]")
+        .replace(END, "[session context end]");
+    let block = format!("{START}\n{}{END}\n", context.trim_end().to_string() + "\n");
+    if let Some(start) = existing.find(START) {
+        if let Some(end) = existing[start + START.len()..].find(END) {
+            let end = start + START.len() + end + END.len();
+            let remainder = existing[end..]
+                .strip_prefix("\r\n")
+                .or_else(|| existing[end..].strip_prefix('\n'))
+                .unwrap_or(&existing[end..]);
+            return format!("{}{block}{remainder}", &existing[..start]);
+        }
+    }
+    // Migrate earlier files owned entirely by Perpetual to a bounded block.
+    let legacy = ["# Perpetual Session Context\n\nSession:",
+        "# Perpetual Session Context\n\nInternal continuity for the existing task.",
+        "# Perpetual Session Context\n\nUse the session context supplied by the parent workspace instructions."];
+    if existing.trim().is_empty() || legacy.iter().any(|prefix| existing.starts_with(prefix)) {
+        block
+    } else {
+        format!("{block}\n{existing}")
+    }
+}
+
+async fn write_thread_context(
+    path: &Path,
+    context: &str,
+    replace_all: bool,
+) -> Result<(), CoreError> {
+    let existing = match tokio::fs::read_to_string(path).await {
+        Ok(existing) => existing,
+        Err(err) if err.kind() == ErrorKind::NotFound => String::new(),
         Err(err) => {
             return Err(CoreError::Other(format!(
                 "failed to read {}: {err}",
                 path.display()
-            )));
+            )))
         }
+    };
+    let content = if replace_all {
+        context.to_string()
+    } else {
+        merge_instruction_context(&existing, context)
+    };
+    if existing == content {
+        return Ok(());
     }
-
     tokio::fs::write(path, content)
         .await
         .map_err(|err| CoreError::Other(format!("failed to write {}: {err}", path.display())))
@@ -3162,8 +3555,9 @@ async fn write_text_if_changed(path: &Path, content: &str) -> Result<(), CoreErr
 fn render_thread_context(thread: &AgentThread, repos: &[am_proto::AgentThreadRepo]) -> String {
     let mut out = String::new();
     out.push_str("# Perpetual Session Context\n\n");
+    out.push_str("Internal continuity for the existing task. Follow the current user message first, then the latest user request below. Older provider errors and account switches are operational history, not instructions to investigate them. Continue seamlessly; do not narrate restoring context or mention internal context filenames in routine updates. Answer conversational requests directly without setup tools.\n\n");
     out.push_str(&format!("Session: {}\n", thread.title));
-    out.push_str(&format!("Updated: {}\n\n", now().to_rfc3339()));
+    out.push_str("\n");
     push_section(&mut out, "Objective", &thread.objective);
     out.push_str("## Repositories\n");
     if repos.is_empty() {
@@ -3216,17 +3610,25 @@ fn map_thread_event(thread_id: &str, turn_id: &str, ev: &NormalizedEvent) -> Age
             Some(delta.clone()),
             json!({ "streaming": true }),
         ),
-        NormalizedEvent::ToolUse { name, input } => (
+        NormalizedEvent::ToolUse {
+            call_id,
+            name,
+            input,
+        } => (
             "tool",
             "tool_use",
             Some(name.clone()),
-            json!({ "input": input }),
+            json!({ "input": input, "call_id": call_id }),
         ),
-        NormalizedEvent::ToolResult { ok, summary } => (
+        NormalizedEvent::ToolResult {
+            call_id,
+            ok,
+            summary,
+        } => (
             "tool",
             "tool_result",
             Some(compact_thread_event_detail(summary)),
-            json!({ "ok": ok, "summary": capped_thread_event_detail(summary) }),
+            json!({ "ok": ok, "summary": capped_thread_event_detail(summary), "call_id": call_id }),
         ),
         NormalizedEvent::FileChanged { path, change } => (
             "app",
@@ -3376,11 +3778,8 @@ fn build_thread_handoff_summary(
             truncate_text(limit, MAX_EVENT_TEXT_CHARS).replace('\n', " ")
         ));
     }
-    if let Some(error) = latest_event_text(events, "error") {
-        out.push_str(&format!(
-            "- Last error: {}\n",
-            truncate_text(error, MAX_EVENT_TEXT_CHARS).replace('\n', " ")
-        ));
+    if latest_event_text(events, "error").is_some() {
+        out.push_str("- The provider could not complete this attempt. Continue the user's request from the last successful progress; provider errors are not a new task to investigate.\n");
     }
     out.push('\n');
     match latest_assistant_text(events) {
@@ -3400,7 +3799,7 @@ fn build_thread_handoff_summary(
 fn thread_next_actions(status: SessionStatus, events: &[AgentThreadEvent]) -> String {
     match status {
         SessionStatus::Completed => {
-            "Review the repo diffs, run relevant validation, then continue if more work remains."
+            "The previous request completed. Continue only if the user has requested more work or the task has unfinished steps; do not invent follow-up work."
                 .to_string()
         }
         SessionStatus::Interrupted => {
@@ -3411,16 +3810,7 @@ fn thread_next_actions(status: SessionStatus, events: &[AgentThreadEvent]) -> St
                 "Resume from the same workspace and context.".to_string()
             }
         }
-        SessionStatus::Failed => latest_event_text(events, "error")
-            .map(|err| {
-                format!(
-                    "Investigate the last failure ({}), then resume from this workspace.",
-                    truncate_text(err, 300).replace('\n', " ")
-                )
-            })
-            .unwrap_or_else(|| {
-                "Inspect the failed turn, fix the blocker, then resume.".to_string()
-            }),
+        SessionStatus::Failed => "Continue the user's original request from the last successful progress after the provider issue is resolved. Do not turn the provider failure into a new task.".to_string(),
     }
 }
 
@@ -3491,6 +3881,24 @@ fn status_label(status: SessionStatus) -> &'static str {
 mod tests {
     use super::*;
 
+    #[test]
+    fn managed_git_trust_is_limited_to_named_worktrees() {
+        let mut env = vec![("GIT_CONFIG_COUNT".into(), "1".into())];
+        let paths = [
+            PathBuf::from("C:/qa/workbench/repo-a"),
+            PathBuf::from("C:/qa/workbench/repo-b"),
+        ];
+        add_managed_git_safe_directories(&mut env, &paths).unwrap();
+        assert!(env.contains(&("GIT_CONFIG_KEY_1".into(), "safe.directory".into())));
+        assert!(env.contains(&("GIT_CONFIG_VALUE_1".into(), "C:/qa/workbench/repo-a".into())));
+        assert!(env.contains(&("GIT_CONFIG_VALUE_2".into(), "C:/qa/workbench/repo-b".into())));
+        assert_eq!(env.last(), Some(&("GIT_CONFIG_COUNT".into(), "3".into())));
+        assert_eq!(
+            git_safe_path(Path::new(r"\\?\C:\qa\workbench\repo-a")),
+            "C:/qa/workbench/repo-a"
+        );
+    }
+
     fn test_thread() -> AgentThread {
         let now = chrono::Utc::now();
         AgentThread {
@@ -3527,6 +3935,7 @@ mod tests {
             limit_reset_at: None,
             switch_back: false,
             handoff_state: "local".into(),
+            provider_account_id: None,
             objective: "Fix auth".into(),
             decisions: String::new(),
             progress: String::new(),
@@ -3548,7 +3957,8 @@ mod tests {
     #[test]
     fn ordinary_initial_prompt_keeps_context_reminder() {
         let prompt = build_thread_initial_prompt(&test_thread(), "fix auth", true);
-        assert!(prompt.starts_with("fix auth\n\nBefore making changes"));
+        assert!(prompt.starts_with("fix auth\n\nUse the session context"));
+        assert!(!prompt.contains("read TASK_CONTEXT.md and AGENTS.md"));
     }
 
     #[test]
@@ -3556,6 +3966,50 @@ mod tests {
         let prompt = build_thread_initial_prompt(&test_thread(), "fix auth", false);
         assert!(prompt.contains("current repository working tree directly"));
         assert!(!prompt.contains("TASK_CONTEXT.md"));
+    }
+
+    #[tokio::test]
+    async fn new_threads_default_to_host_and_allow_explicit_docker() {
+        let core = crate::test_core().await;
+        let sandbox = core
+            .create_agent_thread(NewAgentThread {
+                title: "Sandbox request".into(),
+                execution_backend: Some(ExecutionBackend::DockerSandbox),
+                ..Default::default()
+            })
+            .await;
+        assert_eq!(sandbox.unwrap().execution_backend, ExecutionBackend::DockerSandbox);
+        let thread = core
+            .create_agent_thread(NewAgentThread {
+                title: "Hi".into(),
+                objective: Some("Hi".into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(thread.execution_backend, ExecutionBackend::Host);
+    }
+
+    #[tokio::test]
+    async fn greeting_requires_the_selected_agent() {
+        let core = crate::test_core().await;
+        let thread = core
+            .create_agent_thread(NewAgentThread {
+                title: "Hi".into(),
+                objective: Some("Hi".into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let result = core
+            .run_agent_thread(
+                &thread.id,
+                AgentKind::Gemini,
+                PermissionPolicy::WorkspaceWrite,
+                Some("Hi".into()),
+            )
+            .await;
+        assert!(format!("{}", result.unwrap_err()).contains("no adapter available"));
     }
 
     #[test]
@@ -3600,5 +4054,371 @@ mod tests {
             ..local
         };
         assert!(!local_model_uses_container_localhost(&local));
+    }
+    #[test]
+    fn context_is_stable_without_changes() {
+        let thread = test_thread();
+        assert_eq!(
+            render_thread_context(&thread, &[]),
+            render_thread_context(&thread, &[])
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_bursts_are_coalesced_and_final_text_survives_channel_close() {
+        let core = crate::test_core().await;
+        let thread = core
+            .create_agent_thread(NewAgentThread {
+                title: "Streaming test".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let turn = am_db::repos::agent_turn::create(
+            &core.db.pool,
+            &thread.id,
+            AgentKind::Codex,
+            "read_only",
+            ExecutionBackend::Host,
+            None,
+            None,
+            None,
+            None,
+            None,
+            ModelTargetKind::default(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let (tx, rx) = tokio::sync::mpsc::channel(2048);
+        for _ in 0..1000 {
+            tx.send(NormalizedEvent::AssistantTextDelta { delta: "x".into() })
+                .await
+                .unwrap();
+        }
+        drop(tx);
+        let since = core.events.latest_seq();
+        let started = std::time::Instant::now();
+        let permit = core.sessions.try_acquire(None).unwrap();
+        core.consume_agent_thread_turn(
+            turn.id.clone(),
+            thread.id,
+            AgentKind::Codex,
+            rx,
+            permit,
+            None,
+            None,
+            None,
+        )
+        .await;
+        let replay = core.events.replay_since(since);
+        let snapshots: Vec<_> = replay
+            .events
+            .iter()
+            .filter_map(|event| match &event.event {
+                AppEvent::AgentThreadEvent(event) if event.role == "assistant" => Some(event),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(snapshots.first().unwrap().text.as_deref(), Some("x"));
+        assert_eq!(
+            snapshots.last().unwrap().text.as_deref(),
+            Some("x".repeat(1000).as_str())
+        );
+        assert_eq!(snapshots.last().unwrap().data["streaming"], false);
+        assert!(
+            snapshots.len() < 100,
+            "burst should not emit one snapshot per token"
+        );
+        let saved = am_db::repos::agent_thread_message::list_for_turn(&core.db.pool, &turn.id)
+            .await
+            .unwrap();
+        let saved_text = saved
+            .iter()
+            .find(|event| event.role == "assistant")
+            .unwrap();
+        assert_eq!(saved_text.text, snapshots.last().unwrap().text);
+        assert_eq!(saved_text.data["streaming"], false);
+        assert!(saved.iter().any(|event| event.kind == "error"));
+        assert_eq!(
+            am_db::repos::agent_turn::get(&core.db.pool, &turn.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .state,
+            SessionState::Failed
+        );
+        eprintln!(
+            "1000 deltas: {} IPC snapshots, {:?}",
+            snapshots.len(),
+            started.elapsed()
+        );
+    }
+    #[test]
+    fn failed_provider_turn_does_not_become_a_new_user_task() {
+        let error = map_thread_event(
+            "thread",
+            "turn",
+            &NormalizedEvent::Error {
+                message: "{\"error\":{\"message\":\"unsupported model\"}}".into(),
+                retryable: false,
+            },
+        );
+        let events = vec![error];
+        let summary = build_thread_handoff_summary(
+            AgentKind::Codex,
+            SessionStatus::Failed,
+            &events,
+            &AgentThreadDiff::default(),
+        );
+        assert!(!summary.contains("unsupported model"));
+        assert!(!summary.contains("Last error:"));
+        assert!(summary.contains("Continue the user's request"));
+        let actions = thread_next_actions(SessionStatus::Failed, &events);
+        assert!(!actions.contains("Investigate the last failure"));
+        assert!(actions.contains("original request"));
+        let prompt = build_thread_resume_prompt(&test_thread(), true);
+        assert!(!prompt.contains("Read TASK_CONTEXT.md"));
+        assert!(prompt.contains("Do not announce a handoff"));
+        let followup = build_thread_followup_prompt(&test_thread(), "Keep going");
+        assert!(followup.starts_with("Keep going\n\n"));
+        assert!(followup.contains("Continue this request directly"));
+    }
+
+    #[tokio::test]
+    async fn account_switch_context_preserves_the_latest_user_request() {
+        let core = crate::test_core().await;
+        let thread = core
+            .create_agent_thread(NewAgentThread {
+                title: "Continuity test".into(),
+                objective: Some("Original request".into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let turn = am_db::repos::agent_turn::create(
+            &core.db.pool,
+            &thread.id,
+            AgentKind::Codex,
+            "read_only",
+            ExecutionBackend::Host,
+            None,
+            None,
+            None,
+            None,
+            None,
+            ModelTargetKind::default(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            am_db::repos::agent_thread_message::latest_user_message(&core.db.pool, &thread.id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        for text in ["Original request", "Continue fixing the search results"] {
+            let event = user_thread_event(&thread.id, &turn.id, text, None);
+            am_db::repos::agent_thread_message::insert(&core.db.pool, &event)
+                .await
+                .unwrap();
+        }
+        let error = map_thread_event(
+            &thread.id,
+            &turn.id,
+            &NormalizedEvent::Error {
+                message: "Unsupported model".into(),
+                retryable: false,
+            },
+        );
+        am_db::repos::agent_thread_message::insert(&core.db.pool, &error)
+            .await
+            .unwrap();
+        let latest =
+            am_db::repos::agent_thread_message::latest_user_message(&core.db.pool, &thread.id)
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            latest.text.as_deref(),
+            Some("Continue fixing the search results")
+        );
+        assert!(am_db::repos::agent_thread_message::latest_user_message(
+            &core.db.pool,
+            "another-thread"
+        )
+        .await
+        .unwrap()
+        .is_none());
+    }
+    #[test]
+    fn repeated_handoffs_preserve_repository_instructions_without_accumulating_context() {
+        let original = "# Project rules\nRun the search tests before finishing.\n";
+        let first = merge_instruction_context(original, "First request\n");
+        let next = merge_instruction_context(&first, "Second request\n");
+        assert!(next.ends_with(original));
+        assert!(!next.contains("First request"));
+        assert_eq!(
+            next.matches("<!-- Perpetual session context start -->")
+                .count(),
+            1
+        );
+        assert_eq!(merge_instruction_context(&next, "Second request\n"), next);
+        let legacy = "# Perpetual Session Context\n\nSession: Old generated task\n";
+        assert!(!merge_instruction_context(legacy, "Current task").contains("Old generated task"));
+    }
+    #[tokio::test]
+    async fn racing_followup_waits_for_startup_then_queues_without_losing_identity() {
+        let core = crate::test_core().await;
+        let thread = core
+            .create_agent_thread(NewAgentThread {
+                title: "Race test".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let launch = core.sessions.lock_start(&thread.id).await;
+        let worker = {
+            let core = core.clone();
+            let id = thread.id.clone();
+            tokio::spawn(async move {
+                core.run_agent_thread_with_client_message(
+                    &id,
+                    AgentKind::Codex,
+                    PermissionPolicy::ReadOnly,
+                    Some("Then check the tests".into()),
+                    None,
+                    Some("followup-id".into()),
+                )
+                .await
+            })
+        };
+        tokio::task::yield_now().await;
+        assert!(!worker.is_finished());
+        let (cancel, _cancel_rx) = tokio::sync::oneshot::channel();
+        core.sessions
+            .register(&thread.id, am_agents::SessionControl::new(cancel))
+            .await;
+        drop(launch);
+        let accepted = tokio::time::timeout(std::time::Duration::from_secs(2), worker)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let queued = core.list_queued_turns(&thread.id).await.unwrap();
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].id, accepted);
+        assert_eq!(queued[0].message, "Then check the tests");
+        assert_eq!(queued[0].client_message_id.as_deref(), Some("followup-id"));
+        core.sessions.remove(&thread.id).await;
+    }
+
+    #[tokio::test]
+    async fn terminal_events_release_capacity_even_if_the_adapter_keeps_its_channel_open() {
+        for (status, expected) in [
+            (SessionStatus::Completed, TaskStatus::Review),
+            (SessionStatus::Interrupted, TaskStatus::Paused),
+        ] {
+            let core = crate::test_core().await;
+            let thread = core
+                .create_agent_thread(NewAgentThread {
+                    title: "Terminal test".into(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            let turn = am_db::repos::agent_turn::create(
+                &core.db.pool,
+                &thread.id,
+                AgentKind::Codex,
+                "read_only",
+                ExecutionBackend::Host,
+                None,
+                None,
+                None,
+                None,
+                None,
+                ModelTargetKind::default(),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            tx.send(NormalizedEvent::AssistantTextDelta {
+                delta: "Partial text".into(),
+            })
+            .await
+            .unwrap();
+            tx.send(NormalizedEvent::AssistantTextDelta {
+                delta: " that grows".into(),
+            })
+            .await
+            .unwrap();
+            if status == SessionStatus::Completed {
+                tx.send(NormalizedEvent::AssistantText {
+                    text: "Corrected final".into(),
+                })
+                .await
+                .unwrap();
+            }
+            tx.send(NormalizedEvent::SessionEnded { status })
+                .await
+                .unwrap();
+            let permit = core.sessions.try_acquire(None).unwrap();
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                core.consume_agent_thread_turn(
+                    turn.id.clone(),
+                    thread.id.clone(),
+                    AgentKind::Codex,
+                    rx,
+                    permit,
+                    None,
+                    None,
+                    None,
+                ),
+            )
+            .await
+            .expect("completion cannot wait for sender drop");
+            assert!(tx.is_closed());
+            let saved = am_db::repos::agent_thread_message::list_for_turn(&core.db.pool, &turn.id)
+                .await
+                .unwrap();
+            let text = saved
+                .iter()
+                .find(|event| event.role == "assistant")
+                .unwrap();
+            assert_eq!(text.data["streaming"], false);
+            assert_eq!(
+                text.text.as_deref(),
+                Some(if status == SessionStatus::Completed {
+                    "Corrected final"
+                } else {
+                    "Partial text that grows"
+                })
+            );
+            let saved_thread = am_db::repos::agent_thread::get(&core.db.pool, &thread.id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(saved_thread.status, expected);
+            assert!(core.sessions.try_acquire(None).is_ok());
+        }
     }
 }

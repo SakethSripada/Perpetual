@@ -144,7 +144,7 @@ impl AgentAdapter for CodexAdapter {
 }
 
 fn codex_authenticated(binary: &Path) -> bool {
-    let output = Command::new(binary)
+    let output = am_proto::hide_console(&mut Command::new(binary))
         .args(["login", "status"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -684,6 +684,7 @@ fn parse_command_execution(item: &Value, phase: ItemPhase, out: &mut Vec<Normali
 
     match phase {
         ItemPhase::Started => out.push(NormalizedEvent::ToolUse {
+            call_id: None,
             name: "Command".to_string(),
             input: json!({ "command": command }),
         }),
@@ -702,6 +703,7 @@ fn parse_command_execution(item: &Value, phase: ItemPhase, out: &mut Vec<Normali
                 status.to_string()
             };
             out.push(NormalizedEvent::ToolResult {
+                call_id: None,
                 ok: status == "completed" && exit_code.unwrap_or(0) == 0,
                 summary,
             });
@@ -731,6 +733,7 @@ fn parse_file_change(item: &Value, out: &mut Vec<NormalizedEvent>) {
         }
 
         out.push(NormalizedEvent::ToolResult {
+            call_id: None,
             ok,
             summary: format!(
                 "{} file change{}",
@@ -752,6 +755,7 @@ fn parse_mcp_tool_call(item: &Value, phase: ItemPhase, out: &mut Vec<NormalizedE
 
     match phase {
         ItemPhase::Started => out.push(NormalizedEvent::ToolUse {
+            call_id: None,
             name,
             input: json!({
                 "server": server,
@@ -768,7 +772,11 @@ fn parse_mcp_tool_call(item: &Value, phase: ItemPhase, out: &mut Vec<NormalizedE
                 .map(|s| s.to_string())
                 .or_else(|| item.get("result").map(|r| truncate(&r.to_string(), 800)))
                 .unwrap_or_else(|| status.to_string());
-            out.push(NormalizedEvent::ToolResult { ok, summary });
+            out.push(NormalizedEvent::ToolResult {
+                call_id: None,
+                ok,
+                summary,
+            });
         }
         ItemPhase::Updated => {}
     }
@@ -778,6 +786,7 @@ fn parse_web_search(item: &Value, phase: ItemPhase, out: &mut Vec<NormalizedEven
     let query = item.get("query").and_then(|q| q.as_str()).unwrap_or("");
     match phase {
         ItemPhase::Started => out.push(NormalizedEvent::ToolUse {
+            call_id: None,
             name: "WebSearch".to_string(),
             input: json!({
                 "query": query,
@@ -785,6 +794,7 @@ fn parse_web_search(item: &Value, phase: ItemPhase, out: &mut Vec<NormalizedEven
             }),
         }),
         ItemPhase::Completed => out.push(NormalizedEvent::ToolResult {
+            call_id: None,
             ok: true,
             summary: truncate(query, 800),
         }),
@@ -799,22 +809,14 @@ fn parse_usage(usage: Option<&Value>) -> Option<NormalizedEvent> {
         .and_then(|x| x.as_i64())
         .unwrap_or(0)
         .max(0) as u64;
-    let cached_input = usage
-        .get("cached_input_tokens")
-        .or_else(|| usage.get("cachedInputTokens"))
-        .and_then(|x| x.as_i64())
-        .unwrap_or(0)
-        .max(0) as u64;
     let output = usage
         .get("output_tokens")
         .and_then(|x| x.as_i64())
         .unwrap_or(0)
         .max(0) as u64;
-    if input + cached_input + output > 0 {
-        Some(NormalizedEvent::TokenUsage {
-            input: input.saturating_add(cached_input),
-            output,
-        })
+    // Codex input_tokens already includes cached input tokens.
+    if input + output > 0 {
+        Some(NormalizedEvent::TokenUsage { input, output })
     } else {
         None
     }
@@ -1214,7 +1216,7 @@ mod tests {
         }));
         assert!(matches!(
             &started.events[0],
-            NormalizedEvent::ToolUse { name, input }
+            NormalizedEvent::ToolUse { call_id: None, name, input }
                 if name == "Command" && input["command"] == "cargo test"
         ));
 
@@ -1231,7 +1233,7 @@ mod tests {
         }));
         assert!(matches!(
             &completed.events[0],
-            NormalizedEvent::ToolResult { ok: true, summary } if summary == "ok\n"
+            NormalizedEvent::ToolResult { call_id: None, ok: true, summary } if summary == "ok\n"
         ));
     }
 
@@ -1283,7 +1285,7 @@ mod tests {
         assert!(matches!(
             &parsed.events[0],
             NormalizedEvent::TokenUsage {
-                input: 125,
+                input: 100,
                 output: 40
             }
         ));

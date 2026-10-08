@@ -470,7 +470,9 @@ async fn run_local_cli(binary_name: &str, args: &[&str]) -> Result<(), CoreError
         .flatten()
         .ok_or_else(|| CoreError::Other(format!("{binary_name} CLI not found")))?;
 
-    let child = Command::new(&binary)
+    let mut command = Command::new(&binary);
+    am_proto::hide_console(command.as_std_mut());
+    let child = command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

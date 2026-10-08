@@ -127,9 +127,8 @@ pub struct SessionSpec {
     /// Effective policy controls derived by `am-core` for this single launch.
     /// Adapters translate these into the native CLI/config surfaces they own.
     pub policy: Option<AgentPolicyRuntime>,
-    /// Live-approval callback for [`PermissionPolicy::Ask`]. Set by `am-core`;
-    /// only adapters with a bidirectional protocol (Codex app-server) use it.
-    /// `None` for adapters that do not support live approval callbacks.
+    /// Live-approval callback for Ask and WorkspaceWrite. Set by `am-core`;
+    /// used by the Codex app-server and Claude stream-json adapters.
     pub approver: Option<ApprovalResponder>,
 }
 
@@ -249,10 +248,14 @@ pub enum NormalizedEvent {
         delta: String,
     },
     ToolUse {
+        /// The provider's id for this call, used to pair it with its result.
+        call_id: Option<String>,
         name: String,
         input: serde_json::Value,
     },
     ToolResult {
+        /// The id of the call this result belongs to, when the provider says.
+        call_id: Option<String>,
         ok: bool,
         summary: String,
     },
@@ -270,6 +273,8 @@ pub enum NormalizedEvent {
         window: QuotaWindowKind,
         used_percent: f64,
         reset_at: Option<DateTime<Utc>>,
+        /// True only for the required account read after a budgeted turn.
+        final_sample: bool,
     },
     AwaitingApproval {
         detail: String,

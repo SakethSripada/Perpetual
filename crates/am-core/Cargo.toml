@@ -9,6 +9,7 @@ am-proto = { workspace = true }
 am-db = { workspace = true }
 am-agents = { workspace = true }
 am-vcs = { workspace = true }
+memchr = "2"
 tokio = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }

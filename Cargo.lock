@@ -44,6 +44,7 @@ dependencies = [
  "base64",
  "chrono",
  "keyring",
+ "memchr",
  "reqwest",
  "serde",
  "serde_json",
