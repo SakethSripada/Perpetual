@@ -404,7 +404,7 @@ body.vscode-high-contrast .action-menu, body.vscode-high-contrast .account-list 
 .model-studio-search { display: flex; align-items: center; gap: 6px; margin: 2px 4px 7px; padding: 0 8px; border-radius: 6px; background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent); }
 .model-studio-search svg { width: 12px; height: 12px; color: var(--am-muted); }
 .model-studio-search input { width: 100%; height: 30px; min-width: 0; border: 0; padding: 0; outline: none; background: transparent; color: inherit; font-size: 12px; }
-.model-studio-list { max-height: 240px; overflow-y: auto; scrollbar-width: thin; }
+.model-studio-list { max-height: 240px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--vscode-foreground) 25%, transparent) transparent; }
 .model-studio-list > button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 33px; padding: 7px 10px; border: 0; border-radius: 7px; background: transparent; color: var(--am-muted); font-size: 13px; text-align: left; cursor: pointer; }
 .model-studio-list > button[aria-checked=true] { color: var(--vscode-foreground); background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent); }
 .model-studio-list > button > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
