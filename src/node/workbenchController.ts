@@ -76,6 +76,8 @@ type WebviewMessage = (
   | { type: "renameThread"; threadId: string; title: string }
   | { type: "assignRepos"; threadId: string; repoIds: string[] }
   | { type: "loadDiff"; threadId: string }
+  | { type: "reviewVisibility"; threadId: string; visible: boolean }
+  | { type: "setModelSelection"; agent: AgentKind; model: string; reasoning: string }
   | { type: "applyThreadChanges"; threadId: string }
   | { type: "githubList" }
   | { type: "connectGithubRepo"; repo: GithubRepository }
@@ -188,6 +190,11 @@ export class WorkbenchController implements vscode.Disposable {
   private detectionCache: DetectionCache | null = null;
   private readonly authPendingAccounts = new Set<string>();
   private readonly authWatchTimers = new Map<string, NodeJS.Timeout>();
+  private activeReviewThreadId: string | null = null;
+  private gitSubscriptions: vscode.Disposable[] = [];
+  private gitDiffTimer: NodeJS.Timeout | null = null;
+  private diffRequests = new Map<string, Promise<void>>();
+  private diffRefreshPending = new Set<string>();
   private diffCache = new Map<string, DiffCacheEntry>();
   private applyResults = new Map<string, AgentThreadApplyResult>();
   private autoApplyInFlight = new Set<string>();
@@ -225,12 +232,15 @@ export class WorkbenchController implements vscode.Disposable {
         }
       }),
     );
+    this.watchGitChanges();
     this.readinessTimer = setInterval(() => { if (!this.disposed && this.windowFocused && vscode.workspace.isTrusted) void this.refresh(); }, 30_000);
     this.readinessTimer.unref();
   }
 
   dispose(): void {
     this.disposed = true;
+    if (this.gitDiffTimer) clearTimeout(this.gitDiffTimer);
+    for (const subscription of this.gitSubscriptions) subscription.dispose();
     if (this.readinessTimer) clearInterval(this.readinessTimer);
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
     for (const timer of this.authWatchTimers.values()) clearTimeout(timer);
@@ -267,6 +277,18 @@ export class WorkbenchController implements vscode.Disposable {
       if (!LOCAL_MODELS_ENABLED && message.type === "setLocalModelPolicy") throw new Error("Local models are temporarily unavailable.");
       if (!DOCKER_SANDBOX_ENABLED && ["setSandboxPolicy", "sandboxLogin"].includes(message.type)) throw new Error("Docker Sandbox is temporarily unavailable.");
       switch (message.type) {
+        case "reviewVisibility":
+          this.activeReviewThreadId = message.visible ? message.threadId : (this.activeReviewThreadId === message.threadId ? null : this.activeReviewThreadId);
+          return;
+        case "setModelSelection": {
+          if (!["codex", "claude_code"].includes(message.agent) || typeof message.model !== "string" || typeof message.reasoning !== "string") throw new Error("Invalid model selection.");
+          const current = this.context.workspaceState.get<WorkbenchSnapshot["modelSelections"]>("perpetual.modelSelections") ?? {};
+          const selected = { ...current, [message.agent]: { model: message.model.trim(), reasoning: message.reasoning.trim() } };
+          await this.context.workspaceState.update("perpetual.modelSelections", selected);
+          if (this.lastSnapshot) this.lastSnapshot = { ...this.lastSnapshot, modelSelections: selected };
+          this.detectionUpdates.fire({ modelSelections: selected });
+          return;
+        }
         case "refresh":
           // Manual refresh should re-probe agents/sandbox, not serve the cache.
           this.invalidateDetection();
@@ -926,6 +948,7 @@ export class WorkbenchController implements vscode.Disposable {
         repos,
         agents,
         runDefaults,
+        modelSelections: this.context.workspaceState?.get<WorkbenchSnapshot["modelSelections"]>("perpetual.modelSelections"),
         modelCatalog,
         localModels,
         localModelPolicy,
@@ -1484,7 +1507,43 @@ export class WorkbenchController implements vscode.Disposable {
     this.notice(reply, `Opened ${launch.label} CLI.`);
   }
 
+  private watchGitChanges(): void {
+    type Repository = { rootUri: vscode.Uri; state: { onDidChange: vscode.Event<void> } };
+    const extension = vscode.extensions?.getExtension<{ getAPI(version: number): { repositories: Repository[]; onDidOpenRepository: vscode.Event<Repository> } }>("vscode.git");
+    if (!extension) return;
+    void Promise.resolve(extension.activate()).then((git) => {
+      if (this.disposed) return;
+      const attach = (repo: Repository) => this.gitSubscriptions.push(repo.state.onDidChange(() => {
+        if (!this.activeReviewThreadId || !vscode.workspace.isTrusted || this.disposed) return;
+        const root = path.resolve(repo.rootUri.fsPath).toLowerCase();
+        const direct = this.lastSnapshot?.details?.repos.some((link) => link.worktree_path && path.resolve(link.worktree_path).toLowerCase() === root && this.lastSnapshot?.repos.some((item) => item.id === link.repo_id && item.local_path && path.resolve(item.local_path).toLowerCase() === root));
+        if (!direct) return;
+        if (this.gitDiffTimer) clearTimeout(this.gitDiffTimer);
+        this.gitDiffTimer = setTimeout(() => {
+          this.gitDiffTimer = null;
+          if (this.activeReviewThreadId && !this.disposed) void this.loadDiff(this.activeReviewThreadId);
+        }, 250);
+      }));
+      const api = git.getAPI(1);
+      api.repositories.forEach(attach);
+      this.gitSubscriptions.push(api.onDidOpenRepository(attach));
+    }).catch((error) => this.output.appendLine(`[workbench] Git change tracking unavailable: ${formatError(error)}`));
+  }
+
   private async loadDiff(threadId: string): Promise<void> {
+    const existing = this.diffRequests.get(threadId);
+    if (existing) { this.diffRefreshPending.add(threadId); return existing; }
+    const task = (async () => {
+      do {
+        this.diffRefreshPending.delete(threadId);
+        await this.readDiff(threadId);
+      } while (!this.disposed && this.diffRefreshPending.has(threadId));
+    })().finally(() => this.diffRequests.delete(threadId));
+    this.diffRequests.set(threadId, task);
+    return task;
+  }
+
+  private async readDiff(threadId: string): Promise<void> {
     this.diffCache.set(threadId, { state: "loading", diff: null });
     await this.refresh();
     try {

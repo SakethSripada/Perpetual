@@ -344,3 +344,30 @@ body.vscode-high-contrast .action-menu, body.vscode-high-contrast .account-list 
   .composer .agent-chip { width: 30px; flex: 0 0 30px; padding: 0; gap: 0; justify-content: center; }
   .composer .agent-chip .chip-label, .composer .agent-chip .chip-caret { display: none; }
 }
+.repository-short { display: none; }
+.model-choice-trigger { max-width: 280px; min-width: 0; gap: 6px; }
+.model-choice-label { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.model-choice-trigger > small { color: var(--am-muted); font-size: 10px; white-space: nowrap; }
+.model-choice-trigger > svg { width: 16px; height: 16px; flex-shrink: 0; }
+.model-choice-trigger > svg:last-child { width: 10px; }
+.action-menu.model-choice-menu { width: 300px; max-width: calc(100vw - 24px); }
+.model-provider-tabs { display: flex; gap: 4px; padding: 4px; margin-bottom: 8px; }
+.model-provider-tabs > button { flex: 1; display: flex; align-items: center; justify-content: center; gap: 7px; padding: 7px 5px; font-size: 12px; background: transparent; border: 0; border-radius: 5px; color: var(--am-muted); cursor: pointer; }
+.model-provider-tabs > button[aria-pressed=true] { background: var(--am-hover); color: var(--vscode-foreground); }
+.model-provider-tabs svg { width: 15px; height: 15px; }
+.model-choice-list { max-height: 230px; overflow-y: auto; min-height: 40px; }
+.model-choice-list .action-menu-item > span { flex: 1; }
+.model-reasoning-heading { display: flex; justify-content: space-between; align-items: center; padding: 7px 8px; gap: 8px; font-size: 11px; }
+.model-reasoning-heading small { color: var(--am-muted); font-size: 10px; }
+.model-effort-options { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 8px 9px; }
+.model-effort-options button { border: 1px solid var(--am-border-soft); border-radius: 5px; background: transparent; font-size: 11px; padding: 5px 8px; cursor: pointer; color: var(--am-muted); }
+.model-effort-options button[aria-pressed=true] { background: var(--am-hover); color: var(--vscode-foreground); border-color: var(--am-border); }
+.changes-scope { color: var(--am-muted); font-size: 11px; }
+@container (max-width: 500px) {
+  .model-choice-trigger { max-width: 180px; }
+  .model-choice-trigger > small { display: none; }
+  .composer .repository-trigger { width: 78px; }
+  .repository-trigger > .repository-name { display: none; }
+  .repository-trigger > .repository-short { display: inline; }
+}
+@container (max-width: 340px) { .model-choice-trigger { max-width: 120px; } }

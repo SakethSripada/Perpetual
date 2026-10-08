@@ -38,6 +38,10 @@ let snapshot: WorkbenchSnapshot = {
   limitPolicy: { auto_switch: true, switch_back: true, agent_priority: ["codex", "claude_code"], accounts, agent_profiles: [], keep_awake: false, resume_with_earliest: true, unknown_reset_retry_secs: 600 }, sandboxPolicy: null, sandboxRuntime: null, cloudPolicy: null, cloudAvailability: [], localModelPolicy: null, localModels: [], details: null, github: null,
   collaboration: { role: "standalone", connected: false, host_name: null, device_id: "preview", device_name: "Preview", devices: [], assignments: [], change_sets: [], server_time: now }, error: null,
 };
+snapshot.modelCatalog!.push({agent: "claude_code", default_model: "claude-sonnet-5", default_reasoning: "high", models: [
+  {id: "claude-sonnet-5", label: "Claude Sonnet 5", aliases: ["sonnet"], family: "sonnet", default: true, available: true, source: "claude_code", reasoning: ["low", "medium", "high"], default_reasoning: "high"},
+  {id: "claude-haiku-4-5", label: "Claude Haiku 4.5", aliases: ["haiku"], family: "haiku", default: false, available: true, source: "claude_code", reasoning: [], default_reasoning: null}
+], reasoning: ["low", "medium", "high"], binary_path: null, version: "1.0", source: "claude_code", detected_at: now, error: null});
 const emit = (message: ExtensionMessage) => window.dispatchEvent(new MessageEvent("message", { data: message }));
 function refresh() {
   snapshot.limitPolicy!.accounts = snapshot.providerAccounts;
@@ -56,6 +60,14 @@ let githubAttempts = 0;
 window.acquireVsCodeApi = () => ({ getState: () => state, setState: (next) => { state = next; }, postMessage: (raw) => {
   const message = raw as any; messages.push(message);
   window.setTimeout(() => {
+    if (message.type === "setModelSelection" && params.has("model-save-error")) {
+      emit({type: "operationResult", requestId: message.requestId, error: "Could not save model selection. Try again."});
+      return;
+    }
+    if (message.type === "setModelSelection") {
+      snapshot.modelSelections = {...snapshot.modelSelections, [message.agent]: {model: message.model, reasoning: message.reasoning}};
+      emit({type: "detectionUpdate", patch: {modelSelections: snapshot.modelSelections}});
+    }
     if (message.type === "githubList") {
       githubAttempts++;
       if (params.has("github-error") && githubAttempts === 1) {
@@ -70,6 +82,7 @@ window.acquireVsCodeApi = () => ({ getState: () => state, setState: (next) => { 
     }
     if (message.type === 'selectThread' && snapshot.details) {
       snapshot.details.repos = [{ repo_id: "repo-one", repo_name: "Perpetual", worktree_path: "C:/Development/Perpetual", branch: "am/thread-preview", workspace_backend: "host" }] as any;
+      if (params.has("managed-review")) snapshot.details.repos[0].worktree_path = "C:/Development/.am/worktrees/preview";
       const toolEvents = [
         { id: 'call-read', thread_id: message.threadId, turn_id: 'turn-one', role: 'assistant', kind: 'tool_call', text: 'Read', data: { call_id: 'read', input: { file_path: 'src/accounts.tsx' } }, ts: now },
         { id: 'result-read', thread_id: message.threadId, turn_id: 'turn-one', role: 'tool', kind: 'tool_result', text: 'Read 180 lines', data: { call_id: 'read', ok: true }, ts: now },
@@ -86,6 +99,8 @@ window.acquireVsCodeApi = () => ({ getState: () => state, setState: (next) => { 
       snapshot.details.diffState = "ready";
       snapshot.details.diff = { repos: [{ repo_id: "repo-one", repo_name: "Perpetual", remote_url: null, branch: "am/thread-preview", base_ref: "dev", head_ref: "HEAD", worktree_path: "C:/Development/Perpetual", files: [{ path: "src/accounts.tsx", additions: 2, deletions: 1 }], patch: "diff --git a/src/accounts.tsx b/src/accounts.tsx\n--- a/src/accounts.tsx\n+++ b/src/accounts.tsx\n@@ -1,2 +1,3 @@\n export function accounts() {\n-  return profiles;\n+  const identities = uniqueAccountChoices(profiles);\n+  return identities;\n" }] };
     }
+    if (message.type === "loadDiff" && snapshot.details?.diff && params.has("managed-review")) snapshot.details.diff.repos[0].worktree_path = "C:/Development/.am/worktrees/preview";
+    if (message.type === "loadDiff" && snapshot.details?.diff && params.has("empty-review")) { snapshot.details.diff.repos[0].files = []; snapshot.details.diff.repos[0].patch = ""; }
     if (message.type === "activateProviderAccount") { const selected = snapshot.providerAccounts.find((a) => a.id === message.accountId)!; snapshot.providerAccounts.forEach((a) => { if (a.agent === selected.agent) a.active = a.id === selected.id && a.availability !== "limited"; }); }
     if (message.type === "updateProviderAccount") snapshot.providerAccounts = snapshot.providerAccounts.map((a) => a.id === message.accountId ? { ...a, ...message.patch } : a);
     if (message.type === "renameThread") snapshot.threads = snapshot.threads.map((thread) => thread.id === message.threadId ? { ...thread, title: message.title } : thread);

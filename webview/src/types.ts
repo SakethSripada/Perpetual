@@ -507,6 +507,7 @@ export interface ThreadDetails {
 }
 
 export interface WorkbenchSnapshot {
+  modelSelections?: Partial<Record<AgentKind, { model: string; reasoning: string }>>;
   loadState?: "loading" | "ready" | "error";
   trusted: boolean;
   defaults: WorkbenchDefaults;

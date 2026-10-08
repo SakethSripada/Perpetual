@@ -15,7 +15,7 @@ async function bundle(entry: string, stubVscode = false): Promise<any> {
       fire(value) { for (const fn of this.listeners) fn(value); } dispose() {}
     }
     const listener = () => ({dispose(){}});
-    module.exports = { EventEmitter, workspace: { isTrusted: true, getConfiguration: () => ({get: (_, fallback) => fallback, inspect: () => undefined}), onDidGrantWorkspaceTrust: listener, onDidChangeWorkspaceFolders: listener, onDidChangeConfiguration: listener }, window: { onDidChangeWindowState: listener }, authentication: {getSession: async () => globalThis.__perpetualTestGithubSession}, env: {} };
+    module.exports = { EventEmitter, extensions: {getExtension: () => globalThis.__perpetualTestGitExtension}, workspace: { isTrusted: true, getConfiguration: () => ({get: (_, fallback) => fallback, inspect: () => undefined}), onDidGrantWorkspaceTrust: listener, onDidChangeWorkspaceFolders: listener, onDidChangeConfiguration: listener }, window: { onDidChangeWindowState: listener }, authentication: {getSession: async () => globalThis.__perpetualTestGithubSession}, env: {} };
   `);
   await build({ entryPoints: [path.resolve(entry)], outfile, bundle: true, platform: "node", format: "cjs", alias: stubVscode ? { vscode: stub } : undefined, logLevel: "silent" });
   const loaded = require(outfile);
@@ -484,4 +484,63 @@ test("usage windows preserve partial reports and reject invalid values without i
   assert.equal(usageWindows({weekly: {used_percent: 5, reset_at: "invalid"}})[0].reset, null);
   assert.deepEqual(usageWindows({weekly: {used_percent: NaN, reset_at: null}}), []);
   assert.deepEqual(usageWindows({weekly: {used_percent: Infinity, reset_at: null}}), []);
+});
+
+test("model selection resolves real provider defaults and only supported reasoning levels", async () => {
+  const {resolveModelSelection, readModelSelections} = await bundle("webview/src/modelSelection.ts");
+  const snapshot = { runDefaults: [{kind: "codex", model: "config-model", reasoning: "low"}], limitPolicy: {agent_profiles: [{agent: "codex", model: null, reasoning: null}]}, modelCatalog: [{agent: "codex", default_model: "catalog-model", default_reasoning: "medium", reasoning: ["low", "medium"], models: [{id: "config-model", label: "Configured model", aliases: ["configured"], available: true, reasoning: ["low", "high"], default_reasoning: "high"}, {id: "quiet", label: "Quiet model", available: true, aliases: [], reasoning: [], default_reasoning: null}]}] };
+  const resolved = resolveModelSelection(snapshot, "codex");
+  assert.equal(resolved.model, "config-model");
+  assert.equal(resolved.modelLabel, "Configured model");
+  assert.equal(resolved.reasoning, "high");
+  assert.equal(resolveModelSelection(snapshot, "codex", "configured", "HIGH").reasoning, "high");
+  assert.equal(resolveModelSelection(snapshot, "codex", "quiet", "high").reasoning, "");
+  assert.equal(resolveModelSelection(snapshot, "claude_code").model, "");
+  assert.equal(resolveModelSelection(snapshot, "codex", "future-custom", "low").model, "future-custom");
+  assert.deepEqual(readModelSelections({lastAgent: "codex", lastModel: "config-model", lastReasoning: "high"}), {codex: {model: "config-model", reasoning: "high"}});
+  assert.deepEqual(readModelSelections({modelSelections: {}, lastAgent: "codex", lastModel: "config-model"}), {});
+  assert.deepEqual(readModelSelections({modelSelections: {codex: {model: 1, reasoning: "high"}, claude_code: {model: "claude-sonnet-5", reasoning: "high"}}}), {claude_code: {model: "claude-sonnet-5", reasoning: "high"}});
+});
+
+test("model preferences persist per provider and publish without workspace reads", async () => {
+  const {WorkbenchController} = await bundle("src/node/workbenchController.ts", true);
+  const saved = new Map();
+  const controller = new WorkbenchController({subscriptions: [], workspaceState: {get: (key: string) => saved.get(key), update: async (key: string, value: any) => {await new Promise(resolve => setTimeout(resolve, 5)); saved.set(key, value);}}}, {onEvent: () => ({dispose(){}})}, {appendLine(){}});
+  controller.refresh = async () => {throw new Error("model selection must not fetch workspace");};
+  const patches: any[] = []; controller.onDetectionUpdate((patch: any) => patches.push(patch));
+  await Promise.all([controller.handleMessage({type: "setModelSelection", agent: "codex", model: "gpt-current", reasoning: "high"}), controller.handleMessage({type: "setModelSelection", agent: "claude_code", model: "claude-current", reasoning: "low"})]);
+  assert.deepEqual(saved.get("perpetual.modelSelections"), {codex: {model: "gpt-current", reasoning: "high"}, claude_code: {model: "claude-current", reasoning: "low"}});
+  assert.equal(patches.length, 2); controller.dispose();
+});
+
+test("review refresh coalesces Git bursts and reconciles changes arriving in flight", async () => {
+  const {WorkbenchController} = await bundle("src/node/workbenchController.ts", true);
+  const controller = new WorkbenchController({subscriptions: []}, {onEvent: () => ({dispose(){}})}, {appendLine(){}});
+  let finish!: () => void; let reads = 0;
+  controller.readDiff = async () => {reads++; if (reads === 1) await new Promise<void>(resolve => {finish = resolve;});};
+  const first = controller.loadDiff("thread");
+  const second = controller.loadDiff("thread");
+  const third = controller.loadDiff("thread");
+  assert.equal(reads, 1); finish(); await Promise.all([first, second, third]);
+  assert.equal(reads, 2); controller.dispose();
+});
+
+test("Git review watching refreshes only an open visible-repository review", async () => {
+  let change!: () => void;
+  const repo = {rootUri: {fsPath: "C:/project"}, state: {onDidChange: (callback: () => void) => {change = callback; return {dispose(){}};}}};
+  (globalThis as any).__perpetualTestGitExtension = {activate: async () => ({getAPI: () => ({repositories: [repo], onDidOpenRepository: () => ({dispose(){}})})})};
+  const {WorkbenchController} = await bundle("src/node/workbenchController.ts", true);
+  const controller = new WorkbenchController({subscriptions: []}, {onEvent: () => ({dispose(){}})}, {appendLine(){}});
+  try {
+    await Promise.resolve(); await Promise.resolve();
+    let reads = 0; controller.loadDiff = async () => {reads++;};
+    controller.lastSnapshot = {repos: [{id: "repo", local_path: "C:/project"}], details: {repos: [{repo_id: "repo", worktree_path: "C:/project"}]}};
+    change(); await new Promise(resolve => setTimeout(resolve, 300)); assert.equal(reads, 0);
+    await controller.handleMessage({type: "reviewVisibility", threadId: "thread", visible: true});
+    change(); change(); await new Promise(resolve => setTimeout(resolve, 300)); assert.equal(reads, 1);
+    controller.lastSnapshot.details.repos[0].worktree_path = "C:/isolated-task";
+    change(); await new Promise(resolve => setTimeout(resolve, 300)); assert.equal(reads, 1);
+    await controller.handleMessage({type: "reviewVisibility", threadId: "thread", visible: false});
+    change(); await new Promise(resolve => setTimeout(resolve, 300)); assert.equal(reads, 1);
+  } finally {controller.dispose(); delete (globalThis as any).__perpetualTestGitExtension;}
 });
