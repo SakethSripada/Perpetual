@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.7.11
+
+- Redesign model selection as a compact pill and focused popover, with a separate
+  model list and a stepped reasoning slider for both Codex and Claude Code.
+- Show each model's actual reasoning levels, reset to its reported default, and
+  preserve saved choices across providers. Commit slider changes on release.
+- Support keyboard navigation, search for long lists, nested Escape navigation,
+  missing defaults, single-level models, and models without adjustable reasoning.
+- Keep model names readable in the smallest sidebars and respect light/dark themes
+  and reduced motion.
+
 ## 0.7.10
 
 - Remove GitHub browsing, sign-in and cloning from the extension, including

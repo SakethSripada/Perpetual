@@ -17,6 +17,7 @@ export function ModelControls(props: Props) {
   const [view, setView] = useState<"effort" | "models">("effort");
   const [query, setQuery] = useState("");
   const modelButton = useRef<HTMLButtonElement>(null);
+  const content = useRef<HTMLDivElement>(null);
   const search = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const selection = resolveModelSelection(props.snapshot, props.agent, props.model, props.reasoning);
@@ -33,7 +34,7 @@ export function ModelControls(props: Props) {
       if (view === "models") {
         if (searchable) search.current?.focus();
         else (list.current?.querySelector('[aria-checked="true"]') as HTMLElement | null ?? list.current?.querySelector<HTMLButtonElement>('button:not(:disabled)'))?.focus();
-      } else modelButton.current?.focus();
+      } else (modelButton.current ?? content.current?.querySelector<HTMLButtonElement>('button[aria-pressed="true"]'))?.focus();
     });
     return () => cancelAnimationFrame(frame);
   }, [open, view, props.agent, searchable]);
@@ -57,13 +58,13 @@ export function ModelControls(props: Props) {
       </button>
     </Popover.Trigger>
     <Popover.Portal>
-      <Popover.Content className={`model-studio model-studio-${view}`} aria-label="Model and reasoning" side="top" align="start" sideOffset={8} collisionPadding={12}
+      <Popover.Content ref={content} className={`model-studio model-studio-${view}`} aria-label="Model and reasoning" side="top" align="start" sideOffset={8} collisionPadding={12}
         onOpenAutoFocus={(event) => event.preventDefault()} onEscapeKeyDown={(event) => { if (view === "models") { event.preventDefault(); back(); } }}>
         <div className="model-studio-providers" aria-label="Provider">{(["codex", "claude_code"] as const).map((agent) => <button key={agent} type="button" aria-pressed={agent === props.agent} onClick={() => switchProvider(agent)}><ProviderLogo agent={agent} />{agent === "codex" ? "Codex" : "Claude Code"}</button>)}</div>
         {view === "effort" ? <>
-          <button ref={modelButton} type="button" className="model-studio-current" aria-label="Choose model" onClick={() => setView("models")}>
+          {(state === "ready" || selection.model) && <button ref={modelButton} type="button" className="model-studio-current" aria-label="Choose model" onClick={() => setView("models")}>
             <span><small>Model</small><strong>{state === "loading" && !selection.model ? "Loading models" : selection.modelLabel}</strong></span><Icon name="caret" />
-          </button>
+          </button>}
           {state !== "ready" ? <ResourceState state={state} label="models" /> : selection.efforts.length ? <EffortControl key={`${props.agent}:${selection.model}`} efforts={selection.efforts} value={selection.reasoning} defaultValue={defaultEffort} onChange={props.onReasoning} /> : <div className="model-studio-no-effort"><Icon name="bolt" /><span>{selection.knownModel ? "Reasoning not adjustable" : "Reasoning unavailable"}</span></div>}
           {selection.unavailable && <p className="inline-error">Choose an available model.</p>}
         </> : <>
