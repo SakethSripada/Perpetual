@@ -1048,7 +1048,6 @@ impl AppCore {
                 if uses_visible_repo {
                     direct_repo_diff_with_excludes(
                         Path::new(&worktree_for_diff),
-                        &base_ref,
                         am_vcs::MAX_DIFF_BYTES,
                         GENERATED_CONTEXT_FILES,
                     )
@@ -1083,7 +1082,7 @@ impl AppCore {
                 repo_name: link.repo_name,
                 remote_url,
                 branch: diff.branch.take(),
-                base_ref: Some(base_for_diff),
+                base_ref: diff.base_ref.take().or(Some(base_for_diff)),
                 head_ref: diff.head_ref.take(),
                 worktree_path: diff.worktree_path.take(),
                 files: diff.files,
@@ -1171,7 +1170,6 @@ impl AppCore {
                 if uses_visible_repo {
                     direct_repo_diff_with_excludes(
                         &worktree_for_diff,
-                        &base_for_diff,
                         am_vcs::MAX_DIFF_BYTES,
                         GENERATED_CONTEXT_FILES,
                     )
@@ -3206,9 +3204,10 @@ fn same_path(a: &Path, b: &Path) -> bool {
     a == b
 }
 
+// Visible repositories show outstanding edits, not the history since a chat began.
+// Managed task worktrees continue to compare against their task base until applied.
 fn direct_repo_diff_with_excludes(
     repo: &Path,
-    base_sha: &str,
     max_bytes: usize,
     exclude_paths: &[&str],
 ) -> Result<TaskDiff, CoreError> {
@@ -3216,6 +3215,8 @@ fn direct_repo_diff_with_excludes(
         return Ok(TaskDiff::default());
     }
 
+    let base_sha = am_vcs::head_sha(repo).map_err(|error| CoreError::Other(error.to_string()))?;
+    let base_sha = base_sha.as_str();
     let name_status = git_read(
         repo,
         &git_diff_args(&["diff", "--name-status", base_sha], exclude_paths, false),
@@ -3232,38 +3233,39 @@ fn direct_repo_diff_with_excludes(
             false,
         ),
     )?;
-    if patch.len() > max_bytes {
-        patch.truncate(max_bytes);
-        while !patch.is_char_boundary(patch.len()) {
-            patch.pop();
-        }
-        patch.push_str("\n[diff truncated]\n");
-    }
-
     let mut files = merge_file_changes(&name_status, &numstat);
     let untracked = git_read(
         repo,
         &git_diff_args(
-            &["ls-files", "--others", "--exclude-standard"],
+            &["ls-files", "--others", "--exclude-standard", "-z"],
             exclude_paths,
             true,
         ),
     )
     .unwrap_or_default();
-    for path in untracked
-        .lines()
-        .map(str::trim)
-        .filter(|path| !path.is_empty())
-    {
+    for path in untracked.split('\0').filter(|path| !path.is_empty()) {
         if files.iter().any(|file| file.path == path) {
             continue;
         }
+        let stat = git_untracked_diff(repo, path, true)?;
+        let (additions, deletions, _) = parse_numstat(&stat).into_iter().next().unwrap_or_default();
         files.push(FileChange {
             path: path.to_string(),
             status: "untracked".to_string(),
-            additions: 0,
-            deletions: 0,
+            additions,
+            deletions,
         });
+        if patch.len() < max_bytes {
+            patch.push_str(&git_untracked_diff(repo, path, false)?);
+        }
+    }
+    if patch.len() > max_bytes {
+        let mut end = max_bytes;
+        while !patch.is_char_boundary(end) {
+            end -= 1;
+        }
+        patch.truncate(end);
+        patch.push_str("\n[diff truncated]\n");
     }
 
     Ok(TaskDiff {
@@ -3279,6 +3281,31 @@ fn direct_repo_diff_with_excludes(
         head_ref: am_vcs::head_sha(repo).ok(),
         worktree_path: Some(repo.to_string_lossy().to_string()),
     })
+}
+
+// git diff --no-index returns 1 for a successful comparison with differences.
+// This is read-only: unlike intent-to-add, it never alters the user's index.
+fn git_untracked_diff(repo: &Path, path: &str, stats: bool) -> Result<String, CoreError> {
+    let mut command = Command::new("git");
+    command
+        .arg("-C")
+        .arg(repo)
+        .args(["-c", "core.quotepath=false", "diff", "--no-index"]);
+    if stats {
+        command.arg("--numstat");
+    } else {
+        command.args(["--binary", "--full-index"]);
+    }
+    let output = am_proto::hide_console(&mut command)
+        .args(["--", "/dev/null", path])
+        .output()
+        .map_err(|error| CoreError::Other(error.to_string()))?;
+    if !matches!(output.status.code(), Some(0 | 1)) {
+        return Err(CoreError::Other(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 fn git_diff_args(prefix: &[&str], exclude_paths: &[&str], include_pathspec: bool) -> Vec<String> {
@@ -3880,6 +3907,50 @@ fn status_label(status: SessionStatus) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn visible_review_clears_commits_and_keeps_real_uncommitted_edits() {
+        let dir = std::env::temp_dir().join(format!("perpetual-review-{}", new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        git_read_static(&dir, &["init"]).unwrap();
+        git_read_static(&dir, &["config", "user.name", "Review Test"]).unwrap();
+        git_read_static(&dir, &["config", "user.email", "review@example.test"]).unwrap();
+        std::fs::write(dir.join("tracked.txt"), "initial\n").unwrap();
+        git_read_static(&dir, &["add", "tracked.txt"]).unwrap();
+        git_read_static(&dir, &["commit", "-m", "initial"]).unwrap();
+        let task_base = am_vcs::head_sha(&dir).unwrap();
+        std::fs::write(dir.join("tracked.txt"), "committed later\n").unwrap();
+        git_read_static(&dir, &["commit", "-am", "later"]).unwrap();
+        assert!(direct_repo_diff_with_excludes(&dir, 1024, &[])
+            .unwrap()
+            .files
+            .is_empty());
+        assert!(!am_vcs::worktree_diff(&dir, &task_base, 1024)
+            .unwrap()
+            .files
+            .is_empty());
+        std::fs::write(dir.join("tracked.txt"), "staged\n").unwrap();
+        git_read_static(&dir, &["add", "tracked.txt"]).unwrap();
+        std::fs::write(dir.join("new file.txt"), "one\ntwo\n").unwrap();
+        std::fs::write(dir.join("excluded.txt"), "generated\n").unwrap();
+        let index_before = std::fs::read(dir.join(".git/index")).unwrap();
+        let diff = direct_repo_diff_with_excludes(&dir, 4096, &["excluded.txt"]).unwrap();
+        assert_eq!(diff.files.len(), 2);
+        let new_file = diff
+            .files
+            .iter()
+            .find(|file| file.path == "new file.txt")
+            .unwrap();
+        assert_eq!(new_file.additions, 2);
+        assert!(diff.patch.contains("+two"));
+        assert!(diff.patch.contains("+staged"));
+        assert_eq!(diff.base_ref, diff.head_ref);
+        assert_eq!(std::fs::read(dir.join(".git/index")).unwrap(), index_before);
+        std::fs::write(dir.join("new file.txt"), "\u{e9}".repeat(100)).unwrap();
+        let limited = direct_repo_diff_with_excludes(&dir, 321, &["excluded.txt"]).unwrap();
+        assert!(limited.patch.contains("[diff truncated]"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn managed_git_trust_is_limited_to_named_worktrees() {
