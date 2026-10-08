@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.7.4
+
+- Keep chats, repositories and accounts visible through connection failures;
+  show tile loaders and skeleton rows until checks finish, with retry on errors.
+- Delay settings until saved values arrive instead of flashing defaults.
+- Use compact single-line chat rows without status dots or repeated completion
+  dates; tighten search dialogs, menus and settings, and shorten their labels.
+- Adapt Beautiful UI file chips and unified diffs into expandable change previews,
+  with actual line numbers and additions/deletions. Require a loaded diff to apply.
+- Preserve keyboard navigation, focus restoration and Escape dismissal during loading.
+
 ## 0.7.3
 
 - Show one account row per authenticated provider/email in both account management
