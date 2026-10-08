@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { AgentKind, ProviderAccount, ProviderAccountStatus, WorkbenchSnapshot } from "./types";
 import { Icon } from "./icons";
 import { post, request } from "./bridge";
@@ -20,6 +21,18 @@ export function accountStateLabel(account: ProviderAccountStatus) {
 export function activeAccount(snapshot: WorkbenchSnapshot | null, agent: AgentKind) {
   return snapshot?.providerAccounts.find((account) => account.agent === agent && account.active);
 }
+/** Profiles remain individually manageable; the run picker lists identities. */
+export function uniqueAccountChoices(accounts: ProviderAccountStatus[]) {
+  const choices = new Map<string, ProviderAccountStatus>();
+  for (const account of accounts) {
+    const key = account.authenticated && account.email?.trim()
+      ? `${account.agent}:${account.email.trim().toLowerCase()}` : `${account.agent}:profile:${account.id}`;
+    const previous = choices.get(key);
+    const rank = (item: ProviderAccountStatus) => item.active ? 4 : !item.enabled ? 0 : !item.installed || !item.authenticated ? 1 : item.availability === "limited" ? 2 : 3;
+    if (!previous || rank(account) > rank(previous)) choices.set(key, account);
+  }
+  return [...choices.values()];
+}
 export function ProviderBadge({ agent }: { agent: AgentKind }) {
   return <span className={`provider-avatar ${agent}`} aria-hidden="true">{agent === "codex" ? "◎" : "✳"}</span>;
 }
@@ -29,23 +42,44 @@ export function AccountSwitcher({ snapshot, agent, onManage, onPickAgent }: { sn
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const root = useRef<HTMLDivElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState<{ left: number; top: number; width: number; maxHeight: number } | null>(null);
+  const choices = uniqueAccountChoices(snapshot?.providerAccounts ?? []);
   const active = activeAccount(snapshot, agent);
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const anchor = root.current?.getBoundingClientRect();
+      if (!anchor) return;
+      const width = Math.min(320, window.innerWidth - 24);
+      const maxHeight = Math.max(100, Math.min(500, anchor.top - 20));
+      const height = Math.min(menu.current?.scrollHeight ?? maxHeight, maxHeight);
+      setPosition({ left: Math.max(12, Math.min(anchor.left, window.innerWidth - width - 12)), top: Math.max(12, anchor.top - height - 8), width, maxHeight });
+    };
+    place();
+    const observer = new ResizeObserver(place);
+    if (menu.current) observer.observe(menu.current);
+    if (root.current) observer.observe(root.current);
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => { observer.disconnect(); window.removeEventListener("resize", place); window.removeEventListener("scroll", place, true); };
+  }, [open, choices.length]);
   useEffect(() => {
     if (!open) return;
-    const dismiss = (event: MouseEvent) => { if (!root.current?.contains(event.target as Node)) setOpen(false); };
+    const dismiss = (event: MouseEvent) => { if (!root.current?.contains(event.target as Node) && !menu.current?.contains(event.target as Node)) setOpen(false); };
     const key = (event: KeyboardEvent) => {
       if (event.key === "Escape") { setOpen(false); root.current?.querySelector<HTMLButtonElement>(".account-switch-trigger")?.focus(); }
       if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
-      const items = [...(root.current?.querySelectorAll<HTMLButtonElement>(".account-switch-menu button:not(:disabled)") ?? [])];
+      const items = [...(menu.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [])];
       if (!items.length) return;
       event.preventDefault();
       const current = items.indexOf(document.activeElement as HTMLButtonElement);
       const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (current + (event.key === "ArrowUp" ? -1 : 1) + items.length) % items.length;
       items[next].focus();
     };
-    document.addEventListener("mousedown", dismiss); root.current?.addEventListener("keydown", key);
-    const el = root.current;
-    return () => { document.removeEventListener("mousedown", dismiss); el?.removeEventListener("keydown", key); };
+    document.addEventListener("mousedown", dismiss); document.addEventListener("keydown", key);
+    menu.current?.querySelector<HTMLButtonElement>("button[aria-checked=true]:not(:disabled), button:not(:disabled)")?.focus();
+    return () => { document.removeEventListener("mousedown", dismiss); document.removeEventListener("keydown", key); };
   }, [open]);
   const choose = async (account: ProviderAccountStatus) => {
     if (busy) return;
@@ -58,17 +92,17 @@ export function AccountSwitcher({ snapshot, agent, onManage, onPickAgent }: { sn
     <button className="account-switch-trigger" aria-expanded={open} aria-haspopup="menu" onClick={() => setOpen(!open)} disabled={!snapshot?.trusted} title="Choose the account for your next run">
       <ProviderBadge agent={agent} /><span>{active ? accountName(active) : "Choose account"}</span><Icon name="caret" />
     </button>
-    {open && <div className="account-switch-menu" role="menu" aria-label="Switch account">
+    {open && createPortal(<div ref={menu} className="account-switch-menu" role="menu" aria-label="Switch account" style={{ ...position, position: "fixed", visibility: position ? "visible" : "hidden" }}>
       {providers.map((provider) => <div key={provider}>
         <div className="account-menu-label">{providerName(provider)}</div>
-        {snapshot?.providerAccounts.filter((account) => account.agent === provider).map((account) => <button key={account.id} role="menuitemradio" aria-checked={account.active} disabled={busy || !account.installed || !account.enabled} className={`account-option ${accountState(account)}`} onClick={() => void choose(account)}>
+        {choices.filter((account) => account.agent === provider).map((account) => <button key={account.id} role="menuitemradio" aria-checked={account.active} disabled={busy || !account.installed || !account.enabled} className={`account-option ${accountState(account)}`} onClick={() => void choose(account)}>
           <ProviderBadge agent={provider} /><span><strong>{accountName(account)}</strong><small>{accountStateLabel(account)}{account.plan ? ` · ${account.plan}` : ""}</small></span>{account.active && <span aria-hidden="true">✓</span>}
         </button>)}
         {!snapshot?.providerAccounts.some((account) => account.agent === provider) && <button role="menuitem" disabled={busy} onClick={() => { setOpen(false); onManage(); }}>Connect {providerName(provider)}</button>}
       </div>)}
       {error && <p className="inline-error" role="alert">{error}</p>}
       <button role="menuitem" className="manage-accounts" onClick={() => { setOpen(false); onManage(); }}><Icon name="settings" /> Manage accounts</button>
-    </div>}
+    </div>, document.body)}
   </div>;
 }
 

@@ -196,7 +196,7 @@ export class WorkbenchController implements vscode.Disposable {
   ) {
     context.subscriptions.push(
       daemon.onEvent((event) => this.onDaemonEvent(event)),
-      vscode.window.onDidChangeWindowState((state) => { if (state.focused && vscode.workspace.isTrusted) { this.detectionCache = null; void this.refresh(); } }),
+      vscode.window.onDidChangeWindowState((state) => { if (state.focused && vscode.workspace.isTrusted) { this.invalidateDetection(); void this.refresh(); } }),
       vscode.workspace.onDidGrantWorkspaceTrust(() => void this.refresh()),
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
         this.workspaceReposReady = null;
@@ -206,7 +206,7 @@ export class WorkbenchController implements vscode.Disposable {
       vscode.workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration("perpetual")) {
           this.lastSyncedSettings = "";
-          this.detectionCache = null;
+          this.invalidateDetection();
           void this.refresh();
         }
       }),
@@ -252,7 +252,7 @@ export class WorkbenchController implements vscode.Disposable {
       switch (message.type) {
         case "refresh":
           // Manual refresh should re-probe agents/sandbox, not serve the cache.
-          this.detectionCache = null;
+          this.invalidateDetection();
           this.workspaceReposReady = null;
           await this.refresh();
           return;
@@ -367,7 +367,7 @@ export class WorkbenchController implements vscode.Disposable {
             await this.mirrorSandboxPolicyToConfig(applied);
           }
           this.lastSyncedSettings = "";
-          this.detectionCache = null;
+          this.invalidateDetection();
           await this.refresh();
           return;
         case "setCloudPolicy":
@@ -383,7 +383,7 @@ export class WorkbenchController implements vscode.Disposable {
             await this.mirrorCloudPolicyToConfig(applied);
           }
           this.lastSyncedSettings = "";
-          this.detectionCache = null;
+          this.invalidateDetection();
           await this.refresh();
           return;
         case "setLocalModelPolicy":
@@ -400,7 +400,7 @@ export class WorkbenchController implements vscode.Disposable {
             await this.mirrorLocalModelPolicyToConfig(applied);
           }
           this.lastSyncedSettings = "";
-          this.detectionCache = null;
+          this.invalidateDetection();
           await this.refresh();
           return;
         case "sandboxLogin":
@@ -473,11 +473,11 @@ export class WorkbenchController implements vscode.Disposable {
         case "githubSignIn":
           await this.githubToken();
           this.notice(reply, "GitHub sign-in is ready.");
-          this.detectionCache = null;
+          this.invalidateDetection();
           await this.refresh();
           return;
         case "refreshReadiness":
-          this.detectionCache = null;
+          this.invalidateDetection();
           await this.refresh();
           return;
         case "launchCloudHandoff": {
@@ -556,7 +556,7 @@ export class WorkbenchController implements vscode.Disposable {
           this.assertTrusted();
           await this.daemon.joinCollaboration(message.invite.trim());
           this.workspaceReposReady = null;
-          this.detectionCache = null;
+          this.invalidateDetection();
           this.notice(reply, "Connected to the shared workspace.");
           await this.refresh();
           return;
@@ -1399,11 +1399,11 @@ export class WorkbenchController implements vscode.Disposable {
     limitPolicy?: LimitPolicy,
   ): Promise<ProviderAccountStatus[]> {
     const client = await this.daemon.getLocalClient();
-    const [providerAccounts, currentPolicy] = await Promise.all([
-      client.providerAccountStatuses(),
-      limitPolicy ? Promise.resolve(limitPolicy) : client.getLimitPolicy(),
-    ]);
-    if (this.detectionCache) {
+    const revision = ++this.accountRevision;
+    const providerAccounts = await client.providerAccountStatuses();
+    // Status discovery may register a shared sign-in. Read its resulting policy.
+    const currentPolicy = await client.getLimitPolicy();
+    if (this.detectionCache && revision === this.accountRevision) {
       this.detectionCache = {
         ...this.detectionCache,
         at: Date.now(),
@@ -1467,6 +1467,12 @@ export class WorkbenchController implements vscode.Disposable {
   }
 
   private detectInflight: Promise<DetectionCache> | null = null;
+  private accountRevision = 0;
+
+  private invalidateDetection(): void {
+    // Keep the last successful values on screen while probes run.
+    if (this.detectionCache) this.detectionCache = { ...this.detectionCache, at: 0 };
+  }
 
   /**
    * Agent/sandbox detection shells out to CLIs and can take seconds, so it must
@@ -1489,6 +1495,7 @@ export class WorkbenchController implements vscode.Disposable {
 
   private runDetection(client: DaemonApi): Promise<DetectionCache> {
     if (this.detectInflight) return this.detectInflight;
+    const accountRevision = this.accountRevision;
     this.detectInflight = (async () => {
       const [
         agents,
@@ -1510,22 +1517,25 @@ export class WorkbenchController implements vscode.Disposable {
             this.output.appendLine(
               `[workbench] agent detection failed: ${formatError(err)}`,
             );
-            return [];
+            return this.detectionCache?.agents ?? [];
           }),
         client
           .agentRunDefaults()
           .then(filterRunDefaults)
-          .catch(() => []),
+          .catch(() => this.detectionCache?.runDefaults ?? []),
         client
           .agentModelCatalog()
           .then(filterModelCatalog)
-          .catch(() => []),
+          .catch(() => this.detectionCache?.modelCatalog ?? []),
         client.detectLocalModels().catch(() => []),
         client
           .getLimitPolicy()
           .then(normalizeLimitPolicy)
-          .catch(() => null),
-        client.providerAccountStatuses().catch(() => []),
+          .catch(() => this.detectionCache?.limitPolicy ?? null),
+        client.providerAccountStatuses().catch((err) => {
+          this.output.appendLine(`[workbench] account detection failed: ${formatError(err)}`);
+          return this.detectionCache?.providerAccounts ?? [];
+        }),
         client.getSandboxPolicy().catch(() => null),
         client.detectSandboxRuntime().catch(() => null),
         client
@@ -1556,6 +1566,10 @@ export class WorkbenchController implements vscode.Disposable {
         localModelPolicy,
         state: "ready",
       };
+      if (accountRevision !== this.accountRevision && this.detectionCache) {
+        next.providerAccounts = this.detectionCache.providerAccounts;
+        next.limitPolicy = this.detectionCache.limitPolicy;
+      }
       this.detectionCache = next;
       return next;
     })()
@@ -1563,7 +1577,7 @@ export class WorkbenchController implements vscode.Disposable {
         this.output.appendLine(
           `[workbench] detection failed: ${formatError(err)}`,
         );
-        const failed = emptyDetectionCache("error");
+        const failed = { ...(this.detectionCache ?? emptyDetectionCache("error")), at: Date.now(), state: "error" as const };
         this.detectionCache = failed;
         return failed;
       })
@@ -1756,7 +1770,7 @@ export class WorkbenchController implements vscode.Disposable {
 
   private onDaemonEvent(event: AppEvent): void {
     if (event.type === "event_gap") {
-      this.detectionCache = null;
+      this.invalidateDetection();
       void this.refresh();
       return;
     }

@@ -115,3 +115,62 @@ test("delayed history cannot rewind streamed text or revive completed messages",
   const untouched = { id: "other", text: "Earlier message", data: {} };
   assert.equal(mergeThreadEvents([untouched, streaming], [completed])[0], untouched);
 });
+
+test("run picker collapses authenticated identities without deleting separate profiles", async () => {
+  const { uniqueAccountChoices } = await bundle("webview/src/accounts.tsx");
+  const input = [
+    { ...account, email: "person@example.test" },
+    { ...account, id: "isolated", auth_mode: "isolated_cli", active: false, email: " Person@example.test " },
+    { ...account, id: "other-provider", agent: "claude_code", email: "person@example.test" },
+    { ...account, id: "signed-out", active: false, authenticated: false, email: "person@example.test" },
+  ];
+  assert.deepEqual(uniqueAccountChoices(input).map((item: any) => item.id), [account.id, "other-provider", "signed-out"]);
+  assert.equal(input.length, 4);
+  const ready = { ...input[1], availability: "available" };
+  assert.equal(uniqueAccountChoices([{ ...input[0], active: false, availability: "limited" }, ready])[0].id, "isolated");
+});
+
+test("refresh keeps accounts and models visible through invalidation and failed probes", async () => {
+  const { WorkbenchController } = await bundle("src/node/workbenchController.ts", true);
+  const controller = new WorkbenchController({ subscriptions: [] }, { onEvent: () => ({dispose(){}}) }, { appendLine() {} });
+  const previous = { at: Date.now(), providerAccounts: [account], modelCatalog: [{agent: "codex", models: []}], agents: [], runDefaults: [], limitPolicy: { accounts: [account] }, state: "ready" };
+  controller.detectionCache = previous;
+  controller.invalidateDetection();
+  assert.deepEqual(controller.detectionCache.providerAccounts, [account]);
+  assert.equal(controller.detectionCache.at, 0);
+  const api = new Proxy({}, { get: (_, method) => async () => {
+    if (["providerAccountStatuses", "agentModelCatalog", "getLimitPolicy"].includes(String(method))) throw new Error("transient probe failure");
+    return [];
+  } });
+  const result = await controller.runDetection(api);
+  assert.deepEqual(result.providerAccounts, [account]);
+  assert.deepEqual(result.modelCatalog, previous.modelCatalog);
+  assert.deepEqual(result.limitPolicy, previous.limitPolicy);
+  controller.dispose();
+});
+
+test("desktop tool trace pairs call ids, records failures, and collects file edits", async () => {
+  const { toolRun } = await bundle("webview/src/ai.tsx");
+  const event = (id: string, kind: string, text: string, data: any = {}) => ({ id, kind, text, data });
+  const result = toolRun([
+    event("read", "tool_call", "Read", { call_id: "read-id", input: { file_path: "app.ts" } }),
+    event("run", "tool_call", "exec", { call_id: "run-id", input: { command: "pwsh -Command 'npm test'" } }),
+    event("result", "tool_result", "Failed test", { call_id: "run-id", ok: false }),
+    event("file", "file_changed", "Modified app.ts"),
+    event("message", "message", "Done"),
+  ]);
+  assert.equal(result.steps.length, 2);
+  assert.equal(result.steps[0].done, false);
+  assert.equal(result.steps[1].done, true);
+  assert.equal(result.steps[1].failed, true);
+  assert.equal(result.steps[1].chip, "npm test");
+  assert.deepEqual(result.files, [{path: "app.ts", change: "modified"}]);
+});
+
+test("tool groups stop at messages and separate turns without losing event order", async () => {
+  const { groupToolRuns } = await bundle("webview/src/transcript.ts");
+  const event = (id: string, kind: string, turn_id = "turn") => ({ type: "event", event: {id, kind, turn_id} });
+  const blocks = groupToolRuns([event("a", "tool_call"), event("b", "tool_result"), event("c", "message"), event("d", "file_changed"), event("e", "tool_call", "next-turn")]);
+  assert.deepEqual(blocks.map((block: any) => block.type), ["tools", "event", "tools", "tools"]);
+  assert.deepEqual(blocks[0].events.map((item: any) => item.id), ["a", "b"]);
+});
