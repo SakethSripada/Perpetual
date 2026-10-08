@@ -3,6 +3,9 @@ webview/src/**
 webview/index.html
 webview/tsconfig.json
 webview/vite.config.ts
+webview/preview.html
+webview/preview.ts
+*.log
 scripts/**
 crates/**
 landing/**
