@@ -104,6 +104,7 @@ function readPersistedState(): PersistedState {
 }
 
 function writePersistedState(state: PersistedState): void {
+  if (JSON.stringify(state) === JSON.stringify(vscode.getState())) return;
   vscode.setState(state);
 }
 
@@ -146,13 +147,24 @@ export default function App() {
     return () => window.removeEventListener("keydown", search);
   }, []);
   const [githubOpen, setGithubOpen] = useState(false);
-  useSheetAccessibility(settingsOpen || monitorOpen || githubOpen || collaborationOpen);
+  useSheetAccessibility(settingsOpen || monitorOpen || githubOpen || collaborationOpen, settingsOpen ? (snapshot?.limitPolicy ? "settings" : "settings-pending") : monitorOpen ? "status" : githubOpen ? "github" : "collaboration");
   const [reviewOpen, setReviewOpen] = useState<{
     threadId: string;
     nonce: number;
   } | null>(null);
   const [githubRepos, setGithubRepos] = useState<GithubRepository[]>([]);
   const [githubLoading, setGithubLoading] = useState(false);
+  const [githubError, setGithubError] = useState<string | null>(null);
+  const githubRequestRef = useRef<Promise<void> | null>(null);
+  const loadGithubRepos = () => {
+    setGithubOpen(true);
+    if (githubRequestRef.current) return;
+    setGithubLoading(true);
+    setGithubError(null);
+    githubRequestRef.current = request({ type: "githubList" })
+      .catch((error: unknown) => setGithubError(error instanceof Error ? error.message : String(error)))
+      .finally(() => { setGithubLoading(false); githubRequestRef.current = null; });
+  };
   const [welcomeLeaving, setWelcomeLeaving] = useState(false);
   // Optimistically-rendered user messages: shown the instant the user sends, then
   // dropped once the real event for them arrives in a snapshot.
@@ -210,7 +222,11 @@ export default function App() {
       setPending((pending) => reconcilePendingMessages({ pending, selectedStatus: current.threads.find((thread) => thread.id === current.selectedThreadId)?.status, events, queued: current.details!.queued }));
     }, (callback) => window.requestAnimationFrame(callback), (frame) => window.cancelAnimationFrame(frame));
     const onMessage = (event: MessageEvent<ExtensionMessage>) => {
-      const incoming = event.data;
+      let incoming = event.data;
+      if (incoming.type === "detectionUpdate") {
+        if (!snapshotRef.current) return;
+        incoming = { type: "snapshot", snapshot: { ...snapshotRef.current, ...incoming.patch } };
+      }
       if (incoming.type === "submitFailed") {
         setNotice(incoming.message, true);
         setPending((current) => current.filter((item) => item.id !== incoming.clientMessageId));
@@ -275,8 +291,6 @@ export default function App() {
       }
       if (incoming.type === "githubRepos") {
         setGithubRepos(incoming.repos);
-        setGithubLoading(false);
-        setGithubOpen(true);
         return;
       }
       if (incoming.type === "repoConnected") {
@@ -1113,10 +1127,7 @@ export default function App() {
             threadId: selectedThread.id,
           })
         }
-        onGithub={() => {
-          setGithubLoading(true);
-          vscode.postMessage({ type: "githubList" });
-        }}
+        onGithub={loadGithubRepos}
         onLocalRepo={() => vscode.postMessage({ type: "connectLocalRepo" })}
         onRemoveRepo={(repoId) =>
           vscode.postMessage({ type: "deleteRepo", repoId })
@@ -1224,6 +1235,8 @@ export default function App() {
       {monitorOpen && snapshot && (
         <MonitorSheet
           snapshot={snapshot}
+          draftAgent={agent}
+          draftModel={model}
           selectedThread={selectedThread}
           details={details ?? null}
           onClose={() => setMonitorOpen(false)}
@@ -1293,6 +1306,8 @@ export default function App() {
       {githubOpen && (
         <GithubSheet
           loading={githubLoading}
+          error={githubError}
+          onRetry={loadGithubRepos}
           repos={githubRepos}
           onClose={() => setGithubOpen(false)}
           onConnect={(repo) => {
@@ -4234,6 +4249,8 @@ function relativeDeviceSeen(value: string): string {
 
 function MonitorSheet(props: {
   snapshot: WorkbenchSnapshot;
+  draftAgent: AgentKind;
+  draftModel?: string;
   selectedThread: AgentThread | null;
   details: ThreadDetails | null;
   onClose(): void;
@@ -4245,7 +4262,8 @@ function MonitorSheet(props: {
   const activeCloud = CLOUD_CONTINUITY_ENABLED
     ? props.details?.cloudRuns.find((run) => isActiveCloudRun(run.status))
     : undefined;
-  const agent = thread?.active_agent ?? thread?.preferred_agent ?? null;
+  const agent = thread?.active_agent ?? thread?.preferred_agent ?? props.draftAgent;
+  const account = props.snapshot.providerAccounts.find((account) => account.id === thread?.provider_account_id) ?? (agent ? activeAccount(props.snapshot, agent) : undefined);
   const activeTurn = props.details?.turns.find((turn) => !turn.ended_at);
   const cloudReady =
     !!agent &&
@@ -4263,19 +4281,22 @@ function MonitorSheet(props: {
     <div className="sheet-backdrop" onMouseDown={props.onClose}>
       <section
         className="sheet monitor-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Session status"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header>
-          <strong>Status Monitor</strong>
+          <strong>Session status</strong>
           <IconButton title="Close" onClick={props.onClose}>
             <Icon name="close" />
           </IconButton>
         </header>
-        <div className="sheet-body">
+        <div className="sheet-body monitor-body">
+          <div className="monitor-session"><strong>{thread?.title ?? "New session"}</strong><span>{thread ? statusLabel(thread.status) : "Draft"}</span></div>
           <div className="monitor-grid">
-            <MonitorMetric label="Session" value={thread?.title ?? "New session"} />
-            <MonitorMetric label="State" value={thread ? humanize(thread.status) : "Draft"} />
-            <MonitorMetric label="Route" value={routeLabel(thread, activeCloud)} />
+            <MonitorMetric label="Provider" value={thread ? routeLabel(thread, activeCloud) : labelAgent(agent)} />
+            <MonitorMetric label="Account" value={account ? accountName(account) : "Not selected"} />
             <MonitorMetric
               label="Model"
               value={
@@ -4283,19 +4304,19 @@ function MonitorSheet(props: {
                   ? `${prettyModel(thread.model ?? "Local")} via ${labelLocalProvider(thread.local_provider)}`
                   : thread?.model
                     ? prettyModel(thread.model)
-                    : "Provider default"
+                    : !thread && props.draftModel ? prettyModel(props.draftModel) : "Provider default"
               }
             />
-            <MonitorMetric
+            {DOCKER_SANDBOX_ENABLED && <MonitorMetric
               label="Backend"
               value={
                 thread?.execution_backend === "docker_sandbox"
                   ? `Docker Sandbox${activeTurn?.sandbox_name ? ` · ${activeTurn.sandbox_name}` : ""}`
                   : "Host"
               }
-            />
+            />}
             <MonitorMetric
-              label="Limit Reset"
+              label="Usage limits"
               value={
                 thread?.limit_reset_at
                   ? formatResetTime(thread.limit_reset_at)
@@ -4304,7 +4325,7 @@ function MonitorSheet(props: {
             />
             <MonitorMetric
               label="Queued"
-              value={`${props.details?.queued.length ?? 0} follow-up${props.details?.queued.length === 1 ? "" : "s"}`}
+              value={thread && !props.details ? "Checking…" : `${props.details?.queued.length ?? 0} follow-up${props.details?.queued.length === 1 ? "" : "s"}`}
             />
             {CLOUD_CONTINUITY_ENABLED && (
               <MonitorMetric
@@ -4352,19 +4373,19 @@ function MonitorMetric(props: { label: string; value: string }) {
   return (
     <div className="monitor-metric">
       <small>{props.label}</small>
-      <span>{props.value}</span>
+      <span title={props.value}>{props.value}</span>
     </div>
   );
 }
 
 function routeLabel(thread: AgentThread | null, cloud: CloudRun | undefined): string {
   if (cloud) return `${labelAgent(cloud.agent_kind)} Cloud`;
-  if (!thread) return "Local";
+  if (!thread) return "Not selected";
   if (thread.local_provider) return `Local ${labelLocalProvider(thread.local_provider)}`;
   if (thread.fallback_agent && thread.active_agent === thread.fallback_agent) {
     return `${labelAgent(thread.fallback_agent)} fallback`;
   }
-  return `${labelAgent(thread.active_agent ?? thread.preferred_agent)} local`;
+  return labelAgent(thread.active_agent ?? thread.preferred_agent);
 }
 
 function resetSummary(agents: AgentStatus[]): string {
@@ -5224,6 +5245,8 @@ function CloudSetupCard(props: {
 
 function GithubSheet(props: {
   loading: boolean;
+  error: string | null;
+  onRetry(): void;
   repos: GithubRepository[];
   onClose(): void;
   onConnect(repo: GithubRepository): void;
@@ -5236,6 +5259,9 @@ function GithubSheet(props: {
     <div className="sheet-backdrop" onMouseDown={props.onClose}>
       <section
         className="sheet repo-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Add from GitHub"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header>
@@ -5248,20 +5274,19 @@ function GithubSheet(props: {
           <Icon name="search" />
           <input
             autoFocus
+            aria-label="Filter repositories"
             placeholder="Filter repositories"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
         </div>
         <div className="github-list">
-          {props.loading && (
-            <div className="menu-empty">Loading repositories…</div>
+          {props.loading && props.repos.length === 0 && <ResourceState state="loading" label="repositories" />}
+          {props.error && <div className="resource-state" role="alert"><span>{props.error}</span><button className="text-btn" onClick={props.onRetry}>Retry</button></div>}
+          {!props.loading && !props.error && filtered.length === 0 && (
+            <div className="menu-empty">{query.trim() ? "No matching repositories" : "No repositories available"}</div>
           )}
-          {!props.loading && filtered.length === 0 && (
-            <div className="menu-empty">No matching repositories</div>
-          )}
-          {!props.loading &&
-            filtered.map((repo) => (
+          {filtered.map((repo) => (
               <button
                 key={repo.id}
                 type="button"

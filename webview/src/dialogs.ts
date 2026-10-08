@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 
 /** Keep keyboard navigation inside open sheets and restore the invoking control. */
-export function useSheetAccessibility(open: boolean) {
+export function useSheetAccessibility(open: boolean, surface?: string) {
   useEffect(() => {
     if (!open) return;
     const sheets = [...document.querySelectorAll<HTMLElement>(".sheet")];
@@ -27,6 +27,6 @@ export function useSheetAccessibility(open: boolean) {
     };
     document.addEventListener("keydown", key, true);
     return () => { document.removeEventListener("keydown", key, true); if (previous?.isConnected) previous.focus(); };
-  }, [open]);
+  }, [open, surface]);
 }
 

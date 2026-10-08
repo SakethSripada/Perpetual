@@ -1,5 +1,51 @@
 /* One compact control language for the workbench, menus and settings. */
 :root { --am-control-radius: 6px; }
+.sheet { border-radius: 10px; background: var(--vscode-editor-background); box-shadow: 0 12px 40px #0004; animation: menu-appear 120ms ease-out; }
+.sheet > header { min-height: 52px; padding: 12px 16px; }
+.sheet > header strong { font-size: 14px; font-weight: 600; }
+.sheet > footer { min-height: 48px; padding: 10px 16px; background: var(--am-sidebar); }
+.sheet-body { padding: 16px; gap: 12px; }
+.popover.composer-popover, .slash-menu { border-radius: 8px; background: var(--vscode-menu-background, var(--am-elevated)); box-shadow: 0 6px 20px #0003; animation: menu-appear 100ms ease-out; }
+.menu-head, .group-title { text-transform: none; letter-spacing: 0; font-size: 11px; font-weight: 500; }
+.menu-item.selected { font-weight: 500; }
+.menu-item.selected > svg:last-child { color: var(--vscode-foreground); }
+.budget-custom-window button.selected { box-shadow: none; }
+.budget-preset.selected, .budget-preset:hover, .budget-apply:hover { border-color: var(--am-border); }
+.slash-item { padding: 6px 9px; min-height: 30px; border-radius: 5px; }
+.slash-item span { font-size: 12px; }
+.sheet.monitor-sheet { width: min(560px, 100%); }
+.monitor-body { gap: 16px; }
+.monitor-session { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+.monitor-session strong { flex: 1; min-width: 0; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; font-weight: 500; }
+.monitor-session > span { flex-shrink: 0; color: var(--am-muted); font-size: 11px; }
+.monitor-grid { grid-template-columns: 1fr; gap: 0; border-radius: 8px; overflow: hidden; background: var(--am-surface); }
+.monitor-metric { grid-template-columns: 96px minmax(0, 1fr); align-items: baseline; gap: 12px; padding: 10px 12px; border: 0; border-bottom: 1px solid var(--am-border-soft); border-radius: 0; background: transparent; }
+.monitor-metric:last-child { border-bottom: 0; }
+.monitor-metric small { text-transform: none; letter-spacing: 0; font-size: 12px; font-weight: 400; }
+.monitor-metric span { white-space: normal; overflow-wrap: anywhere; line-height: 1.5; }
+.sheet-search { margin: 0 12px 12px; padding: 0 8px; min-height: 32px; border: 1px solid var(--am-border-soft); border-radius: 6px; background: var(--am-surface); }
+.sheet-search input { height: 30px; font-size: 12px; }
+.sheet-search:focus-within { border-color: color-mix(in srgb, var(--vscode-foreground) 35%, transparent); }
+.github-row { min-height: 36px; padding: 6px 8px; border-radius: 6px; font-size: 12px; }
+.github-row .history-text { min-width: 0; overflow-wrap: anywhere; }
+.github-row .history-text small { font-size: 10px; }
+.github-list { padding: 0 12px 12px; }
+.collaboration-heading small { font-size: 11px; line-height: 1.5; }
+.collaboration-hero { padding: 4px 0; justify-items: start; text-align: left; }
+.collaboration-hero strong { font-size: 14px; font-weight: 500; }
+.collaboration-choice, .invite-panel, .device-card, .assignment-card, .remote-change-card { border: 0; background: var(--am-surface); border-radius: 8px; padding: 10px 12px; }
+.collaboration-choice:hover { border: 0; }
+.choice-icon { width: 26px; height: 26px; color: var(--am-muted); background: transparent; }
+.collaboration-choice strong, .device-main strong, .assignment-card > strong { font-size: 12px; font-weight: 500; }
+.collaboration-secure-bar { border: 0; padding: 6px 0; background: transparent; }
+.collaboration-join input { font-size: 12px; border-radius: 6px; }
+.collaboration-footnote { font-size: 10px; line-height: 1.5; }
+.approval-card, .user-question-card { border: 1px solid var(--am-border-soft); border-radius: 8px; background: var(--am-surface); box-shadow: none; padding: 12px; }
+.approval-kicker { text-transform: none; letter-spacing: 0; font-weight: 500; }
+.approval-actions { gap: 6px; }
+.approval-btn { min-height: 28px; height: 28px; padding: 4px 8px; border-radius: 6px; font-size: 12px; }
+.user-question-option { padding: 7px 9px; border-radius: 6px; }
+@media (prefers-reduced-motion: reduce) { .sheet, .popover, .slash-menu { animation: none; } }
 :focus-visible { outline: 2px solid color-mix(in srgb, var(--vscode-foreground) 55%, transparent); outline-offset: 2px; }
 .icon-btn, .quiet-icon { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--am-control-radius); background: transparent; color: var(--am-muted); box-shadow: none; cursor: pointer; }
 .icon-btn:hover:not(:disabled), .quiet-icon:hover:not(:disabled) { color: var(--vscode-foreground); background: var(--am-hover); }
@@ -186,7 +232,7 @@ body.vscode-high-contrast .action-menu, body.vscode-high-contrast .account-list 
 .sheet.settings-sheet { width: min(760px, 100%); height: min(640px, calc(100dvh - 32px)); max-height: min(640px, calc(100dvh - 32px)); border-radius: 10px; box-shadow: 0 12px 40px #0004; }
 .sheet.session-history-sheet, .sheet.repo-sheet { height: min(460px, calc(100dvh - 32px)); max-height: min(460px, calc(100dvh - 32px)); }
 .sheet.changes-sheet, .sheet.collaboration-sheet { height: min(640px, calc(100dvh - 32px)); max-height: min(640px, calc(100dvh - 32px)); }
-.sheet.monitor-sheet { height: min(400px, calc(100dvh - 32px)); max-height: min(400px, calc(100dvh - 32px)); }
+.sheet.monitor-sheet { height: min(340px, calc(100dvh - 32px)); max-height: min(340px, calc(100dvh - 32px)); }
 .sheet.repo-sheet { grid-template-rows: auto auto minmax(0, 1fr); }
 .settings-content, .sheet-body, .github-list, .session-history-sheet > .session-collection { min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
 .sheet-body { align-content: start; }

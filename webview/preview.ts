@@ -50,9 +50,19 @@ function refresh() {
 const messages: any[] = [];
 (window as any).previewMessages = messages;
 let state: unknown = {};
+let githubAttempts = 0;
 window.acquireVsCodeApi = () => ({ getState: () => state, setState: (next) => { state = next; }, postMessage: (raw) => {
   const message = raw as any; messages.push(message);
   window.setTimeout(() => {
+    if (message.type === "githubList") {
+      githubAttempts++;
+      if (params.has("github-error") && githubAttempts === 1) {
+        emit({ type: "error", message: "GitHub is unavailable. Try again." });
+        emit({ type: "operationResult", requestId: message.requestId, error: "GitHub is unavailable. Try again." });
+        return;
+      }
+      emit({ type: "githubRepos", status: null, repos: [{ id: 101, name: "Perpetual", full_name: "preview/Perpetual", private: true, html_url: "https://github.com/preview/Perpetual", clone_url: "https://github.com/preview/Perpetual.git", ssh_url: "git@github.com:preview/Perpetual.git", default_branch: "dev", updated_at: now }] });
+    }
     if (message.type === "selectThread") {
       snapshot.selectedThreadId = message.threadId;
       snapshot.details = message.threadId ? { events: [ { id: "user-one", thread_id: message.threadId, turn_id: "turn-one", role: "user", kind: "message", text: "Can you improve the dashboard and make the account state clearer?", data: {}, ts: now }, { id: "assistant-one", thread_id: message.threadId, turn_id: "turn-one", role: "assistant", kind: "message", text: "I updated the dashboard with a quieter layout and clear account states.\n\n### What changed\n\n- Added an account switcher near the composer.\n- Kept account identity visible throughout the session.\n- Improved spacing, keyboard focus, and narrow panel layouts.\n\nYou can review the changes and choose which account to use for your next run.", data: {}, ts: now } ], activities: [], repos: [], turns: [], queued: [], cloudRuns: [], diff: null, approvals: [] } : null;
@@ -86,7 +96,7 @@ window.acquireVsCodeApi = () => ({ getState: () => state, setState: (next) => { 
     if (message.type === "submit") emit({ type: "submitFailed", threadId: message.threadId, clientMessageId: message.clientMessageId, text: message.message, message: "Preview mode: no provider calls are made. Your draft has been restored." });
     refresh();
     if (message.requestId) emit({ type: "operationResult", requestId: message.requestId, error: params.has("fail") && message.type === "setProviderAccountToken" ? "Could not save token. Please try again." : null });
-  }, 180);
+  }, message.type === "githubList" ? Number(params.get("github-delay") ?? 180) : 180);
 } });
 await import("./src/main");
 if (params.has("refresh")) window.setInterval(refresh, 1_000);
