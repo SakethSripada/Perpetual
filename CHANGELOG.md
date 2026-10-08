@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.7.6
+
+- Keep settings at the same size across sections, loading and error states.
+  Scroll content inside the dialog and keep its footer visible in short windows.
+- Give conversation search, change review and other dialogs stable dimensions
+  so filtering and expanding content do not move the surrounding surface.
+
 ## 0.7.5
 
 - Replace general loading tiles and elapsed timers with a compact Radix spinner;
