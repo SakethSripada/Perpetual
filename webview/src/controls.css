@@ -355,71 +355,59 @@ body.vscode-high-contrast .action-menu, body.vscode-high-contrast .account-list 
 }
 @container (max-width: 340px) { .model-choice-trigger { max-width: 136px; } }
 
-/* A focused model panel with a separate, quiet model list. */
-.model-choice-trigger { height: 27px; padding: 0 8px; border-radius: 20px; background: var(--am-hover); gap: 5px; }
-.model-choice-trigger:hover, .model-choice-trigger[data-state=open] { background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent); }
+/* Model controls: restrained typography, one surface, native slider behavior. */
+.model-choice-trigger { height: 26px; padding: 0 9px; border-radius: 20px; background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent); gap: 5px; }
+.model-choice-trigger:hover, .model-choice-trigger[data-state=open] { background: color-mix(in srgb, var(--vscode-foreground) 11%, transparent); }
 .model-choice-trigger > small { font-size: 11px; flex-shrink: 0; color: var(--am-muted); }
-.model-choice-trigger > svg { width: 13px; height: 13px; }
-.model-studio { --model-accent: var(--vscode-testing-iconPassed, #7bb497); z-index: 1000; width: 290px; max-width: calc(100vw - 24px); max-height: var(--radix-popover-content-available-height); overflow-y: auto; padding: 8px; border: 1px solid var(--am-border-soft); border-radius: 14px; background: var(--vscode-editorWidget-background, var(--am-elevated)); box-shadow: 0 12px 32px #0004, 0 2px 8px #0002; color: var(--vscode-foreground); outline: none; font-family: var(--vscode-font-family); animation: menu-appear 120ms ease-out; transform-origin: var(--radix-popover-content-transform-origin); }
+.model-choice-trigger > svg { width: 9px; height: 9px; }
+.model-studio { z-index: 1000; width: 272px; max-width: calc(100vw - 24px); max-height: var(--radix-popover-content-available-height); overflow-y: auto; padding: 6px; border: 1px solid var(--am-border-soft); border-radius: 12px; background: var(--vscode-menu-background, var(--vscode-editor-background)); box-shadow: 0 8px 24px #0003; color: var(--vscode-foreground); outline: none; font-family: var(--vscode-font-family); animation: menu-appear 100ms ease-out; transform-origin: var(--radix-popover-content-transform-origin); }
 .model-studio button { font-family: inherit; }
-.model-studio-providers { display: flex; gap: 3px; padding: 3px; background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent); border-radius: 9px; }
-.model-studio-providers > button { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; gap: 6px; height: 28px; padding: 0 6px; border: 0; border-radius: 7px; background: transparent; color: var(--am-muted); font-size: 11px; cursor: pointer; transition: background 120ms ease, color 120ms ease; }
-.model-studio-providers > button[aria-pressed=true] { color: var(--vscode-foreground); background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent); box-shadow: 0 1px 2px #0001; }
-.model-studio-providers svg { width: 13px; height: 13px; }
-.model-studio-current { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 12px; margin: 5px 0 3px; padding: 9px 10px; border: 0; border-radius: 8px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
-.model-studio-current:hover { background: var(--am-hover); }
-.model-studio-current > span { display: grid; gap: 3px; min-width: 0; }
-.model-studio-current small { color: var(--am-muted); font-size: 11px; line-height: 1.3; }
-.model-studio-current strong { font-size: 14px; line-height: 1.35; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.model-studio-current > svg { width: 13px; height: 13px; flex-shrink: 0; color: var(--am-muted); transform: rotate(-90deg); }
-.effort-control { padding: 3px 10px 4px; }
-.effort-control-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
-.effort-control-heading > span { display: flex; align-items: center; gap: 5px; margin-right: auto; font-size: 12px; color: var(--am-muted); }
-.effort-control-heading > span svg { width: 12px; height: 12px; }
-.effort-control-heading strong { color: var(--model-accent); font-size: 13px; font-weight: 600; }
-.effort-control-heading .quiet-icon { width: 22px; height: 22px; }
-.effort-control-heading .quiet-icon svg { width: 12px; height: 12px; }
-.effort-control-heading .quiet-icon:disabled { opacity: .28; cursor: default; }
-.effort-rail { position: relative; height: 28px; }
-.effort-rail-track { position: absolute; top: 11px; left: 10px; right: 10px; height: 6px; background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent); border-radius: 4px; pointer-events: none; }
-.effort-rail-track > span { display: block; height: 100%; width: var(--effort-fill); background: var(--model-accent); border-radius: inherit; }
-.effort-rail-track > i { position: absolute; top: 1px; width: 4px; height: 4px; border-radius: 50%; transform: translateX(-50%); background: color-mix(in srgb, var(--vscode-foreground) 28%, transparent); }
-.effort-rail input { appearance: none; -webkit-appearance: none; position: relative; display: block; width: 100%; height: 28px; min-height: 0; padding: 0; margin: 0; border: 0; border-radius: 0; outline: none; background: transparent; cursor: pointer; accent-color: var(--model-accent); }
+.model-summary { display: grid; grid-template-columns: 30px minmax(0, 1fr) 30px; gap: 4px; align-items: start; padding: 6px 4px 4px; }
+.model-provider-button { display: inline-flex; align-items: center; justify-content: center; gap: 2px; width: 30px; height: 26px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--am-muted); cursor: pointer; }
+.model-provider-button > svg:first-child { width: 15px; height: 15px; }
+.model-provider-button > svg:last-child { width: 7px; height: 7px; opacity: .6; }
+.model-provider-button:hover, .model-reset:hover:not(:disabled) { background: var(--am-hover); color: var(--vscode-foreground); }
+.model-summary-choice { display: grid; justify-items: center; gap: 3px; min-width: 0; padding: 3px 0 5px; border: 0; background: transparent; color: inherit; cursor: pointer; }
+.model-summary-choice > strong { max-width: 100%; font-size: 16px; font-weight: 500; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-summary-choice > span { display: flex; align-items: center; justify-content: center; gap: 4px; max-width: 100%; min-width: 0; color: var(--am-muted); font-size: 11px; line-height: 1.4; }
+.model-summary-choice > span > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-summary-choice > span > svg { width: 8px; height: 8px; flex-shrink: 0; transform: rotate(-90deg); }
+.model-summary-choice:hover > span { color: var(--vscode-foreground); }
+.model-reset.quiet-icon { justify-self: end; width: 26px; height: 26px; border-radius: 5px; }
+.model-reset svg { width: 13px; height: 13px; }
+.model-reset:disabled { opacity: .3; cursor: default; }
+.model-summary-spacer { width: 26px; }
+.effort-control { padding: 2px 6px 7px; }
+.effort-rail { position: relative; height: 32px; }
+.effort-rail-track { position: absolute; top: 6px; left: 11px; right: 11px; height: 20px; background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent); border-radius: 20px; pointer-events: none; }
+.effort-rail-track > span { display: block; height: 100%; width: var(--effort-fill); background: color-mix(in srgb, var(--vscode-foreground) 13%, transparent); border-radius: inherit; }
+.effort-rail-track > i { position: absolute; top: 8px; width: 4px; height: 4px; border-radius: 50%; transform: translateX(-50%); background: color-mix(in srgb, var(--vscode-foreground) 25%, transparent); }
+.effort-rail input { appearance: none; -webkit-appearance: none; position: relative; display: block; width: 100%; height: 32px; min-height: 0; padding: 0; margin: 0; border: 0; border-radius: 0; outline: none; background: transparent; cursor: pointer; }
 .effort-rail input::-webkit-slider-runnable-track { height: 4px; background: transparent; }
-.effort-rail input::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: 20px; height: 20px; margin-top: -8px; border-radius: 50%; background: var(--vscode-foreground); border: 3px solid var(--vscode-editorWidget-background, var(--am-elevated)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--vscode-foreground) 15%, transparent), 0 2px 5px #0002; }
-.effort-rail input:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px color-mix(in srgb, var(--model-accent) 40%, transparent); }
+.effort-rail input::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: 22px; height: 22px; margin-top: -9px; border-radius: 50%; background: var(--vscode-foreground); border: 0; box-shadow: 0 1px 3px #0003; }
+.effort-rail input:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px color-mix(in srgb, var(--vscode-foreground) 20%, transparent); }
 .effort-rail input::-moz-range-track { height: 4px; background: transparent; }
-.effort-rail input::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--vscode-foreground); border: 3px solid var(--vscode-editorWidget-background, var(--am-elevated)); }
-.effort-rail-labels { display: flex; justify-content: space-between; gap: 4px; margin-top: 1px; }
-.effort-rail-labels > button { padding: 4px 0; border: 0; background: transparent; color: var(--am-muted); font-size: 11px; cursor: pointer; white-space: nowrap; }
-.effort-rail-labels > button[aria-pressed=true] { color: var(--vscode-foreground); }
-.effort-rail-labels > button:hover { color: var(--model-accent); }
-.model-studio-no-effort { display: flex; align-items: center; gap: 7px; padding: 12px 10px; font-size: 11px; color: var(--am-muted); line-height: 1.5; }
-.model-studio-no-effort svg { width: 13px; height: 13px; flex-shrink: 0; }
-.model-studio-heading { display: flex; align-items: center; gap: 7px; padding: 8px 3px 6px; }
-.model-studio-heading strong { font-size: 12px; font-weight: 500; }
-.model-studio-heading > span { margin-left: auto; padding-right: 8px; color: var(--am-muted); font-size: 10px; }
-.model-studio-back { width: 24px; height: 24px; }
-.model-studio-back svg { width: 12px; height: 12px; transform: rotate(90deg); }
-.model-studio-search { display: flex; align-items: center; gap: 6px; margin: 2px 4px 7px; padding: 0 8px; border-radius: 6px; background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent); }
+.effort-rail input::-moz-range-thumb { width: 22px; height: 22px; border-radius: 50%; background: var(--vscode-foreground); border: 0; }
+.effort-rail[data-unselected=true] input::-webkit-slider-thumb, .effort-rail[data-unselected=true] input::-moz-range-thumb { opacity: 0; }
+.effort-single { display: block; margin: 3px auto; padding: 5px 10px; border: 0; border-radius: 5px; background: var(--am-hover); color: inherit; font-size: 12px; cursor: pointer; }
+.model-studio-pending-header { padding: 3px; }
+.model-studio-heading { display: flex; align-items: center; gap: 5px; padding: 3px 2px 7px; }
+.model-studio-heading > span { flex: 1; font-size: 11px; color: var(--am-muted); }
+.model-studio-back.quiet-icon { width: 26px; height: 26px; border-radius: 5px; }
+.model-studio-back svg { width: 11px; height: 11px; transform: rotate(90deg); }
+.model-studio-search { display: flex; align-items: center; gap: 7px; margin: 0 5px 7px; padding: 0 8px; border-radius: 5px; background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent); }
 .model-studio-search svg { width: 12px; height: 12px; color: var(--am-muted); }
 .model-studio-search input { width: 100%; height: 30px; min-width: 0; border: 0; padding: 0; outline: none; background: transparent; color: inherit; font-size: 12px; }
 .model-studio-list { max-height: 240px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--vscode-foreground) 25%, transparent) transparent; }
-.model-studio-list > button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 33px; padding: 7px 10px; border: 0; border-radius: 7px; background: transparent; color: var(--am-muted); font-size: 13px; text-align: left; cursor: pointer; }
-.model-studio-list > button[aria-checked=true] { color: var(--vscode-foreground); background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent); }
+.model-studio-list > button { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 30px; padding: 6px 10px; border: 0; border-radius: 5px; background: transparent; color: var(--am-muted); font-size: 12px; text-align: left; cursor: pointer; }
+.model-studio-list > button[aria-checked=true] { color: var(--vscode-foreground); }
 .model-studio-list > button > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.model-studio-list > button svg { width: 13px; height: 13px; color: var(--model-accent); flex-shrink: 0; }
+.model-studio-list > button svg { width: 13px; height: 13px; flex-shrink: 0; }
 .model-studio-list > button:hover:not(:disabled) { background: var(--am-hover); color: var(--vscode-foreground); }
 .model-studio-list > button:disabled { opacity: .4; cursor: default; }
 .model-studio button:focus-visible, .model-studio-search:focus-within { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
-@media (prefers-reduced-motion: reduce) { .model-studio { animation: none; } .model-studio-providers > button { transition: none; } }
-
 .model-studio-list::-webkit-scrollbar { width: 5px; background: transparent; }
 .model-studio-list::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--vscode-foreground) 20%, transparent); border-radius: 4px; }
 .model-studio-list::-webkit-scrollbar-track { background: transparent; }
-
-@container (max-width: 340px) { .model-choice-trigger > small, .model-choice-trigger > svg:first-child { display: none; } }
-
-.effort-rail[data-unselected=true] input::-webkit-slider-thumb { opacity: 0; }
-.effort-rail[data-unselected=true] input::-moz-range-thumb { opacity: 0; }
-.effort-single { margin: 5px 0 8px; padding: 6px 10px; border: 0; border-radius: 6px; background: var(--am-hover); color: inherit; font-size: 12px; cursor: pointer; }
+@container (max-width: 340px) { .model-choice-trigger > small { display: none; } }
+@media (prefers-reduced-motion: reduce) { .model-studio { animation: none; } }
