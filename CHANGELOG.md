@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.7.3
+
+- Show one account row per authenticated provider/email in both account management
+  and the run picker; preserve stored profiles and credentials when reordering.
+- Temporarily pause local models and Docker execution, hide their controls and
+  settings, stop readiness probes, and disable automatic local fallback.
+- Replace the old history popup with a searchable conversation dialog and shared
+  sidebar rows. Search titles and original requests, clear filters, navigate with
+  arrows/Enter, and open search with Ctrl/Cmd+K.
+- Use desktop-style right-click and overflow menus for conversation actions;
+  retain edit forms on failures and await deletion acknowledgements.
+- Refine conversation spacing, file chips, search fields, empty states and icons.
+
 ## 0.7.2
 
 - Replace toast popups with quiet status updates, persistent dismissible errors,

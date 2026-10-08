@@ -33,7 +33,7 @@ on `dev`; packaging and installation do not publish a release.
 | Feel and accessibility | VS Code theme tokens, quieter spacing and typography, responsive accounts/composer/settings, dialog focus trapping, keyboard account navigation and reduced motion. |
 | Data integrity | Serialized account mutations use current policy; general settings preserve accounts; acknowledged saves retain forms on errors; failed sends restore drafts; delayed history cannot rewind streamed replies. |
 
-The extension retains its Docker execution support. Existing disabled Cloud
+The extension retains its Docker implementation, temporarily paused in 0.7.3. Existing disabled Cloud
 Continuity/LAN behavior remains disabled. Desktop-only Tauri/window controls and
 its unused workflow-settings migration are outside the extension adaptation.
 
@@ -67,6 +67,26 @@ native binary, and uses disposable storage.
 - Verification: 78 extension tests, TypeScript checks, local browser checks of
   nested menus, model/options surfaces, plan labels and failed-send draft recovery;
   dark/light 391px panels, production packaging and the VS Code activation test.
+
+## 0.7.3 follow-up
+
+Account management now collapses the same authenticated provider/email just like
+the run picker. Hidden profiles remain stored, and reordering includes their IDs.
+Local models and Docker are temporarily gated in the host and webview; startup and
+settings sync disable local fallback and default to host execution without removing
+saved settings. Their readiness probes and visible controls are paused.
+
+Conversation search and history now share sidebar rows and the desktop's Radix
+right-click/overflow primitives. Search includes titles and original requests;
+keyboard navigation, clear search, rename, reorder, stop, review and confirmed delete
+are available at both panel sizes. Deleting and renaming wait for acknowledgements,
+retain failures, and restore focus. Ctrl/Cmd+K opens search.
+
+Validation: 80 extension tests, including paused host operations and request search,
+plus browser checks of duplicate collapse, hidden controls, right-click and overflow
+rename, search focus, filtering and keyboard opening; dark/light and wide/narrow
+layouts, production packaging, and VS Code activation. Production dependency audit
+reports no vulnerabilities.
 
 ## User acceptance checks
 
