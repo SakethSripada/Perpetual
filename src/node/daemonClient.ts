@@ -170,6 +170,18 @@ export class DaemonClient extends EventEmitter implements DaemonApi {
     return responsePayload(await this.requestRaw(variant("provider_account_statuses")), "provider_account_statuses");
   }
 
+  async activateProviderAccount(accountId: string) {
+    expectUnit(await this.requestRaw(variant("activate_provider_account", { account_id: accountId })));
+  }
+
+  async addSystemProviderAccount(agent: Parameters<DaemonApi["addSystemProviderAccount"]>[0]): Promise<string> {
+    return responsePayload(await this.requestRaw(variant("add_system_provider_account", { agent })), "provider_account_id");
+  }
+
+  async reorderAgentThreads(orderedIds: string[]) {
+    expectUnit(await this.requestRaw(variant("reorder_agent_threads", { ordered_ids: orderedIds })));
+  }
+
   async providerAccountAuthLaunch(accountId: string) {
     return responsePayload(await this.requestRaw(variant("provider_account_auth_launch", { account_id: accountId })), "provider_account_auth_launch");
   }

@@ -60,7 +60,7 @@ type SubmitMessage = {
   deviceId?: string | null;
 };
 
-type WebviewMessage =
+type WebviewMessage = (
   | {
       type:
         | "ready"
@@ -80,7 +80,13 @@ type WebviewMessage =
   | { type: "connectGithubRepo"; repo: GithubRepository }
   | { type: "deleteRepo"; repoId: string }
   | { type: "clearRepos" }
-  | { type: "setLimitPolicy"; policy: LimitPolicy }
+  | { type: "setLimitPolicy"; policy: LimitPolicy; preserveAccounts?: boolean }
+  | { type: "activateProviderAccount"; accountId: string }
+  | { type: "addSystemProviderAccount"; agent: AgentKind }
+  | { type: "addProviderAccount"; account: import("./types").ProviderAccount }
+  | { type: "updateProviderAccount"; accountId: string; patch: Partial<import("./types").ProviderAccount> }
+  | { type: "reorderProviderAccounts"; orderedIds: string[] }
+  | { type: "reorderThreads"; orderedIds: string[] }
   | { type: "setSandboxPolicy"; policy: SandboxPolicy }
   | { type: "setCloudPolicy"; policy: CloudPolicy }
   | { type: "setLocalModelPolicy"; policy: LocalModelPolicy }
@@ -109,7 +115,7 @@ type WebviewMessage =
   | { type: "retryCollaborationAssignment"; assignmentId: string }
   | { type: "addCollaborationRepoAndRetry"; assignmentId: string }
   | { type: "applyCollaborationChangeSet"; changeSetId: string; overwrite?: boolean }
-  | { type: "rejectCollaborationChangeSet"; changeSetId: string };
+  | { type: "rejectCollaborationChangeSet"; changeSetId: string }) & { requestId?: string };
 
 const CLOUD_MESSAGE_TYPES = new Set<string>([
   "setCloudPolicy",
@@ -159,7 +165,9 @@ type DiffCacheEntry = {
 export class WorkbenchController implements vscode.Disposable {
   private readonly snapshots = new vscode.EventEmitter<WorkbenchSnapshot>();
   private readonly threadEvents = new vscode.EventEmitter<AgentThreadEvent>();
+  private readonly submissionFailures = new vscode.EventEmitter<{ type: "submitFailed"; threadId: string | null; clientMessageId: string | null; text: string; message: string }>();
   private refreshTimer: NodeJS.Timeout | null = null;
+  private readinessTimer: NodeJS.Timeout | null = null;
   private refreshSequence = 0;
   private messageQueue: Promise<void> = Promise.resolve();
   private lastSyncedSettings = "";
@@ -178,6 +186,7 @@ export class WorkbenchController implements vscode.Disposable {
 
   readonly onSnapshot = this.snapshots.event;
   readonly onThreadEvent = this.threadEvents.event;
+  readonly onSubmissionFailure = this.submissionFailures.event;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -186,6 +195,7 @@ export class WorkbenchController implements vscode.Disposable {
   ) {
     context.subscriptions.push(
       daemon.onEvent((event) => this.onDaemonEvent(event)),
+      vscode.window.onDidChangeWindowState((state) => { if (state.focused && vscode.workspace.isTrusted) { this.detectionCache = null; void this.refresh(); } }),
       vscode.workspace.onDidGrantWorkspaceTrust(() => void this.refresh()),
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
         this.workspaceReposReady = null;
@@ -200,15 +210,19 @@ export class WorkbenchController implements vscode.Disposable {
         }
       }),
     );
+    this.readinessTimer = setInterval(() => { if (!this.disposed && vscode.workspace.isTrusted) void this.refresh(); }, 30_000);
+    this.readinessTimer.unref();
   }
 
   dispose(): void {
     this.disposed = true;
+    if (this.readinessTimer) clearInterval(this.readinessTimer);
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
     for (const timer of this.authWatchTimers.values()) clearTimeout(timer);
     this.authWatchTimers.clear();
     this.snapshots.dispose();
     this.threadEvents.dispose();
+    this.submissionFailures.dispose();
   }
 
   async handleMessage(
@@ -226,6 +240,7 @@ export class WorkbenchController implements vscode.Disposable {
     message: WebviewMessage,
     reply?: WebviewReply,
   ): Promise<void> {
+    let operationError: string | null = null;
     try {
       if (!LAN_COLLABORATION_ENABLED && COLLABORATION_MESSAGE_TYPES.has(message.type)) {
         throw new Error("Shared workspaces are temporarily unavailable.");
@@ -327,7 +342,8 @@ export class WorkbenchController implements vscode.Disposable {
           return;
         case "setLimitPolicy":
           {
-            const policy = normalizeLimitPolicy(message.policy);
+            const current = await this.withLocalClient((client) => client.getLimitPolicy());
+            const policy = normalizeLimitPolicy(message.preserveAccounts ? { ...message.policy, accounts: current.accounts, dismissed_system_accounts: current.dismissed_system_accounts } : message.policy);
             const applied = await this.withLocalClient((client) =>
               client.setLimitPolicy(policy),
             );
@@ -384,6 +400,46 @@ export class WorkbenchController implements vscode.Disposable {
           return;
         case "signInAgent":
           await this.startAgentSignIn(message.agent, reply);
+          return;
+        case "activateProviderAccount":
+          await this.withLocalClient(async (client) => {
+            const account = (await client.providerAccountStatuses()).find((item) => item.id === message.accountId);
+            if (!account?.installed || !account.authenticated) throw new Error("Sign in to an installed provider before switching accounts.");
+            await client.activateProviderAccount(message.accountId);
+          });
+          await this.refreshProviderAccounts();
+          return;
+        case "addSystemProviderAccount": {
+          const id = await this.withLocalClient((client) => client.addSystemProviderAccount(message.agent));
+          await this.refreshProviderAccounts();
+          await this.startProviderAccountSignIn(id, reply);
+          return;
+        }
+        case "addProviderAccount":
+        case "updateProviderAccount":
+        case "reorderProviderAccounts": {
+          await this.withLocalClient(async (client) => {
+            const policy = await client.getLimitPolicy();
+            let accounts = [...(policy.accounts ?? [])];
+            if (message.type === "addProviderAccount") {
+              if (accounts.some((account) => account.id === message.account.id)) throw new Error("Account already exists.");
+              accounts.push(message.account);
+            } else if (message.type === "updateProviderAccount") {
+              if (!accounts.some((account) => account.id === message.accountId)) throw new Error("Account was removed. Refresh and try again.");
+              accounts = accounts.map((account) => account.id === message.accountId ? { ...account, label: message.patch.label ?? account.label, enabled: message.patch.enabled ?? account.enabled, use_credits: message.patch.use_credits ?? account.use_credits } : account);
+            } else {
+              const ids = new Set(message.orderedIds);
+              if (ids.size !== accounts.length || accounts.some((account) => !ids.has(account.id))) throw new Error("Accounts changed. Refresh before reordering.");
+              accounts.sort((a, b) => message.orderedIds.indexOf(a.id) - message.orderedIds.indexOf(b.id));
+            }
+            await client.setLimitPolicy(normalizeLimitPolicy({ ...policy, accounts }));
+          });
+          await this.refreshProviderAccounts();
+          return;
+        }
+        case "reorderThreads":
+          await this.withClient((client) => client.reorderAgentThreads(message.orderedIds));
+          await this.refresh();
           return;
         case "signInProviderAccount":
           await this.startProviderAccountSignIn(message.accountId, reply);
@@ -576,6 +632,8 @@ export class WorkbenchController implements vscode.Disposable {
       }
     } catch (err) {
       const text = friendlyError(err);
+      operationError = text;
+      if (message.type === "submit") this.submissionFailures.fire({ type: "submitFailed", threadId: message.threadId ?? null, clientMessageId: message.clientMessageId ?? null, text: message.message, message: text });
       this.output.appendLine(`[workbench] ${text}`);
       reply?.(
         message.type === "assignRepos"
@@ -589,6 +647,8 @@ export class WorkbenchController implements vscode.Disposable {
       // Action failures are transient UI feedback, not a fatal snapshot state.
       // Keeping them out of the snapshot avoids duplicate/sticky error banners.
       await this.refresh();
+    } finally {
+      if (message.requestId) reply?.({ type: "operationResult", requestId: message.requestId, error: operationError });
     }
   }
 
@@ -1012,6 +1072,7 @@ export class WorkbenchController implements vscode.Disposable {
     } catch (err) {
       const message = formatError(err);
       this.output.appendLine(`[workbench] ${message}`);
+      this.submissionFailures.fire({ type: "submitFailed", threadId, clientMessageId, text, message: friendlyError(err) });
       await this.refresh(message);
     }
   }
@@ -1038,6 +1099,7 @@ export class WorkbenchController implements vscode.Disposable {
     } catch (err) {
       const message = formatError(err);
       this.output.appendLine(`[workbench] ${message}`);
+      this.submissionFailures.fire({ type: "submitFailed", threadId, clientMessageId, text, message: friendlyError(err) });
       await this.refresh(message);
     }
   }
@@ -1066,6 +1128,7 @@ export class WorkbenchController implements vscode.Disposable {
     } catch (err) {
       const message = formatError(err);
       this.output.appendLine(`[workbench] remote assignment failed: ${message}`);
+      this.submissionFailures.fire({ type: "submitFailed", threadId, clientMessageId, text, message: friendlyError(err) });
       await this.refresh(message);
     }
   }
@@ -2200,7 +2263,7 @@ function filterAgentThreads(items: AgentThread[]): AgentThread[] {
   });
 }
 
-function normalizeLimitPolicy(policy: LimitPolicy): LimitPolicy {
+export function normalizeLimitPolicy(policy: LimitPolicy): LimitPolicy {
   const profiles = (["claude_code", "codex"] as const).map((agent) => {
     const profile = policy.agent_profiles?.find((item) => item.agent === agent);
     return {
@@ -2221,7 +2284,7 @@ function normalizeLimitPolicy(policy: LimitPolicy): LimitPolicy {
       id,
       label: label || (account.agent === "codex" ? "Codex account" : "Claude account"),
       use_credits: account.agent === "codex" && account.use_credits === true,
-      auth_mode: account.agent === "codex" ? "isolated_cli" as const : account.auth_mode,
+      auth_mode: account.auth_mode === "system" ? "system" as const : account.agent === "codex" ? "isolated_cli" as const : account.auth_mode,
     }];
   });
   return {

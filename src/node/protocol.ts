@@ -104,6 +104,9 @@ export interface DaemonApi {
   providerAccountToolingLaunch(accountId: string): Promise<ProviderAccountAuthLaunch>;
   setProviderAccountToken(accountId: string, token: string): Promise<void>;
   deleteProviderAccount(accountId: string): Promise<void>;
+  activateProviderAccount(accountId: string): Promise<void>;
+  addSystemProviderAccount(agent: AgentKind): Promise<string>;
+  reorderAgentThreads(orderedIds: string[]): Promise<void>;
   detectSandboxRuntime(): Promise<SandboxRuntimeStatus>;
   sandboxLogin(): Promise<SandboxLoginPrompt>;
   codexSandboxLogin(): Promise<SandboxLoginPrompt>;
