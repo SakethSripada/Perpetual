@@ -22,6 +22,9 @@ dist/**/*.map
 .gitignore
 .claude/**
 .vscode/**
+.vscode-test/**
+.codex/**
+.agents/**
 .github/**
 azure-pipelines.yml
 CONTRIBUTING.md

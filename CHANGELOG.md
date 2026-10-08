@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 0.7.0
+
+- Bring desktop provider account behavior into the extension: shared CLI sign-ins,
+  isolated profiles, active account selection, email/plan identity, session affinity,
+  and more reliable authentication and usage-limit recovery.
+- Discover the current Claude lineup from the installed CLI and refresh account
+  and model readiness while the workbench is open and when VS Code regains focus.
+- Redesign the workbench with a responsive session sidebar, search, rename and
+  ordering actions, a composer account switcher, clearer states, and theme-native
+  account management with provider usage windows.
+- Make account changes and settings saves await host acknowledgements; preserve
+  concurrent account edits and restore messages after failed submissions.
+- Preserve completed replies and streaming text when delayed history arrives,
+  and add a jump-to-latest control, accessible dialogs, and reduced-motion styles.
+- Port desktop runtime fixes for queues, fallback, budgets, sessions, and worktree
+  application while retaining the extension's Docker support.
+
 ## 0.6.2
 
 - Make isolated Codex and Claude account sign-in update in place as soon as

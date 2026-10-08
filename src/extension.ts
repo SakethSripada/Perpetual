@@ -19,6 +19,14 @@ export function activate(context: vscode.ExtensionContext): void {
     daemon,
     controller,
     provider,
+    vscode.window.registerUriHandler({
+      handleUri(uri) {
+        if (uri.path === "/open") {
+          provider.openPanel();
+          void controller.refresh();
+        }
+      },
+    }),
     vscode.window.registerWebviewViewProvider(VIEW_ID, provider, {
       webviewOptions: { retainContextWhenHidden: true },
     }),
