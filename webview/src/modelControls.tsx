@@ -45,7 +45,7 @@ export function ModelControls(props: Props) {
     const buttons = Array.from(list.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? []);
     if (!buttons.length) return;
     const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
-    const next = key === "Home" ? 0 : key === "End" ? buttons.length - 1 : (index + (key === "ArrowUp" ? -1 : 1) + buttons.length) % buttons.length;
+    const next = key === "Home" ? 0 : key === "End" ? buttons.length - 1 : index < 0 ? (key === "ArrowUp" ? buttons.length - 1 : 0) : (index + (key === "ArrowUp" ? -1 : 1) + buttons.length) % buttons.length;
     buttons[next].focus();
   };
 
@@ -70,7 +70,7 @@ export function ModelControls(props: Props) {
           <div className="model-studio-heading"><button type="button" className="quiet-icon model-studio-back" aria-label="Back to reasoning" onClick={back}><Icon name="caret" /></button><strong>Models</strong></div>
           {searchable && <div className="model-studio-search"><Icon name="search" /><input ref={search} aria-label="Search models" placeholder="Search models" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); moveFocus(event.key); } }} /></div>}
           <div ref={list} className="model-studio-list" role="menu" aria-label="Models" onKeyDown={(event) => { if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) { event.preventDefault(); moveFocus(event.key); } }}>
-            {state !== "ready" ? <ResourceState state={state} label="models" /> : matches.map((option) => <button type="button" key={option.value} role="menuitemradio" aria-checked={option.value === selection.model} disabled={catalog?.models.find((model) => model.id === option.value)?.available === false} onClick={() => choose(option.value)}><span>{option.label}</span>{option.value === selection.model && <Icon name="check" />}</button>)}
+            {state !== "ready" ? <ResourceState state={state} label="models" /> : matches.map((option, index) => <button type="button" key={option.value} tabIndex={option.value === selection.model || (index === 0 && !matches.some((item) => item.value === selection.model)) ? 0 : -1} role="menuitemradio" aria-checked={option.value === selection.model} disabled={catalog?.models.find((model) => model.id === option.value)?.available === false} onClick={() => choose(option.value)}><span>{option.label}</span>{option.value === selection.model && <Icon name="check" />}</button>)}
             {state === "ready" && !matches.length && <p className="menu-empty">No matching models</p>}
           </div>
         </>}
@@ -88,15 +88,16 @@ function EffortControl({ efforts, value, defaultValue, onChange }: { efforts: st
   const last = efforts.length - 1;
   const commit = (next: string) => { if (next !== committed.current) { committed.current = next; onChange(next); } };
   const setLevel = (next: string) => { setDraft(next); commit(next); };
-  const finish = () => { dragging.current = false; commit(draft); };
+  const finish = () => { dragging.current = false; if (efforts.includes(draft)) commit(draft); };
+  const finishRange = (index: number) => { dragging.current = false; setLevel(efforts[index]); };
   return <div className="effort-control">
-    <div className="effort-control-heading"><span><Icon name="bolt" />Reasoning</span><strong>{effortLabel(draft)}</strong><button type="button" className="quiet-icon" aria-label="Reset reasoning" title={`Reset to ${effortLabel(defaultValue)}`} disabled={!defaultValue || draft === defaultValue} onClick={() => setLevel(defaultValue)}><Icon name="refresh" /></button></div>
+    <div className="effort-control-heading"><span><Icon name="bolt" />Reasoning</span><strong>{draft ? effortLabel(draft) : "Choose level"}</strong><button type="button" className="quiet-icon" aria-label="Reset reasoning" title={`Reset to ${effortLabel(defaultValue)}`} disabled={!defaultValue || draft === defaultValue} onClick={() => setLevel(defaultValue)}><Icon name="refresh" /></button></div>
     {last > 0 ? <>
-      <div className="effort-rail" style={{ "--effort-fill": `${index / last * 100}%` } as CSSProperties}>
+      <div className="effort-rail" data-unselected={!efforts.includes(draft)} style={{ "--effort-fill": `${index / last * 100}%` } as CSSProperties}>
         <div className="effort-rail-track" aria-hidden="true"><span />{efforts.map((effort, position) => <i key={effort} style={{ left: `${position / last * 100}%` }} />)}</div>
-        <input type="range" aria-label="Reasoning level" aria-valuetext={effortLabel(draft)} min={0} max={last} step={1} value={index} onChange={(event) => setDraft(efforts[Number(event.target.value)])} onPointerDown={() => { dragging.current = true; }} onPointerUp={finish} onPointerCancel={() => { dragging.current = false; setDraft(value); }} onKeyUp={finish} onBlur={finish} />
+        <input type="range" aria-label="Reasoning level" aria-valuetext={draft ? effortLabel(draft) : "Not selected"} min={0} max={last} step={1} value={index} onChange={(event) => setDraft(efforts[Number(event.target.value)])} onPointerDown={() => { dragging.current = true; }} onPointerUp={(event) => finishRange(Number(event.currentTarget.value))} onPointerCancel={() => { dragging.current = false; setDraft(value); }} onKeyUp={(event) => { if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) finishRange(Number(event.currentTarget.value)); }} onBlur={finish} />
       </div>
       <div className="effort-rail-labels">{efforts.map((effort) => <button type="button" key={effort} aria-pressed={effort === draft} onClick={() => setLevel(effort)}>{effortLabel(effort)}</button>)}</div>
-    </> : <p className="model-studio-no-effort">{effortLabel(draft)} is the only supported level</p>}
+    </> : <button type="button" className="effort-single" aria-pressed={draft === efforts[0]} onClick={() => setLevel(efforts[0])}>{effortLabel(efforts[0])}</button>}
   </div>;
 }

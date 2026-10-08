@@ -46,6 +46,8 @@ if (params.has("more-models")) {
   const codex = snapshot.modelCatalog![0];
   for (const [id, label] of [["gpt-6.1-sol", "GPT-6.1 Sol"], ["gpt-6-astra", "GPT-6 Astra"], ["gpt-6-sol", "GPT-6 Sol"], ["gpt-6-luna", "GPT-6 Luna"], ["gpt-5.6-sol", "GPT-5.6 Sol"], ["gpt-5.6-terra", "GPT-5.6 Terra"], ["gpt-5.6-luna", "GPT-5.6 Luna"]]) codex.models.push({id, label, aliases: [], family: "gpt", default: false, available: true, source: "codex_app_server", reasoning: ["low", "medium", "high", "xhigh"], default_reasoning: "medium"});
 }
+if (params.has("unknown-effort")) { const claude = snapshot.modelCatalog![1]; claude.default_reasoning = null; claude.models[0].default_reasoning = null; }
+if (params.has("single-effort")) { snapshot.modelCatalog![1].models[0].reasoning = ["high"]; }
 const emit = (message: ExtensionMessage) => window.dispatchEvent(new MessageEvent("message", { data: message }));
 function refresh() {
   snapshot.limitPolicy!.accounts = snapshot.providerAccounts;
