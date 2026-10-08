@@ -34,6 +34,11 @@ export function request(message: Action): Promise<void> {
       resolve: () => { clearTimeout(timer); resolve(); },
       reject: (error) => { clearTimeout(timer); reject(error); },
     });
-    send({ ...message, requestId });
+    try { send({ ...message, requestId }); }
+    catch (error) {
+      const operation = pending.get(requestId);
+      pending.delete(requestId);
+      operation?.reject(error instanceof Error ? error : new Error(String(error)));
+    }
   });
 }

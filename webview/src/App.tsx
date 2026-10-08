@@ -43,6 +43,7 @@ import { configureTransport, request } from "./bridge";
 import { useSheetAccessibility } from "./dialogs";
 import { mergeThreadEvents } from "./streaming";
 import { LoadingState, ToolRun } from "./ai";
+import { useNotifications, NotificationCenter, ErrorStatus } from "./notifications";
 import { CLOUD_CONTINUITY_ENABLED, LAN_COLLABORATION_ENABLED } from "./featureFlags";
 import { Markdown } from "./markdown";
 import {
@@ -126,12 +127,8 @@ export default function App() {
   const [repoIds, setRepoIds] = useState<string[]>(persisted.repoIds ?? []);
   const repoIdsRef = useRef(repoIds);
   repoIdsRef.current = repoIds;
-  const [notice, setNoticeText] = useState<string | null>(null);
-  const [noticeIsError, setNoticeIsError] = useState(false);
-  const setNotice = (message: string | null, isError = false) => {
-    setNoticeIsError(isError);
-    setNoticeText(message);
-  };
+  const notifications = useNotifications();
+  const setNotice = notifications.notify;
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [monitorOpen, setMonitorOpen] = useState(false);
   const [collaborationOpen, setCollaborationOpen] = useState(false);
@@ -357,12 +354,6 @@ export default function App() {
     },
     [],
   );
-
-  useEffect(() => {
-    if (!notice || noticeIsError) return;
-    const timer = window.setTimeout(() => setNotice(null), 6500);
-    return () => window.clearTimeout(timer);
-  }, [notice, noticeIsError]);
 
   useEffect(() => {
     writePersistedState({
@@ -939,6 +930,7 @@ export default function App() {
           </div>
         </div>
         <div className="top-actions">
+          <NotificationCenter state={notifications} />
           <span className="compact-history"><HistoryMenu
             open={historyOpen}
             setOpen={setHistoryOpen}
@@ -985,14 +977,8 @@ export default function App() {
         </div>
       </header>
 
-      {notice && (
-        <div className={`notice${noticeIsError ? " error" : ""}`} role={noticeIsError ? "alert" : "status"}>
-          <span>{notice}</span>
-          <IconButton title="Dismiss" onClick={() => setNotice(null)}>
-            <Icon name="close" />
-          </IconButton>
-        </div>
-      )}
+      <div className="activity-status" role="status">{notifications.status}</div>
+      <ErrorStatus state={notifications} onRefresh={() => vscode.postMessage({ type: "refresh" })} />
 
       {CLOUD_CONTINUITY_ENABLED && <CloudStatusBar
         selectedThread={selectedThread}

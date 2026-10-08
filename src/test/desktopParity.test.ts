@@ -197,3 +197,36 @@ test("tool groups stop at messages and separate turns without losing event order
   assert.deepEqual(blocks.map((block: any) => block.type), ["tools", "event", "tools", "tools"]);
   assert.deepEqual(blocks[0].events.map((item: any) => item.id), ["a", "b"]);
 });
+
+test("provider plans use readable desktop labels", async () => {
+  const { planName } = await bundle("webview/src/accounts.tsx");
+  for (const value of ["prolite", "PROLITE", "pro_lite", "pro-lite", "Pro Lite"]) assert.equal(planName(value), "Pro Lite");
+  assert.equal(planName("pro"), "Pro");
+  assert.equal(planName("free"), "Free");
+  assert.equal(planName("new_plan"), "New Plan");
+  assert.equal(planName(null), null);
+});
+
+test("notification history deduplicates failures and retains unresolved errors through success updates", async () => {
+  const { appendNotification } = await bundle("webview/src/notifications.tsx");
+  let items = appendNotification([], "Cannot save settings", true, 1);
+  items = appendNotification(items, "Connected repository", false, 2);
+  assert.equal(appendNotification(items, "Cannot save settings", true, 3), items);
+  for (let id = 4; id < 30; id++) items = appendNotification(items, `Completed action ${id}`, false, id);
+  assert.equal(items.length, 12);
+  assert.ok(items.some((item: any) => item.message === "Cannot save settings" && !item.dismissed));
+  items = items.map((item: any) => ({ ...item, dismissed: true }));
+  assert.equal(appendNotification(items, "Cannot save settings", true, 31)[0].id, 31);
+  const errors = Array.from({ length: 12 }, (_, id) => ({ id, message: `Failure ${id}`, error: true, dismissed: false }));
+  assert.equal(appendNotification(errors, "New failure", true, 13)[0].message, "New failure");
+});
+
+test("a failed message transport rejects cleanly and can recover on the next action", async () => {
+  const listeners: ((event: any) => void)[] = [];
+  (globalThis as any).window = { addEventListener: (_: string, callback: any) => listeners.push(callback), setTimeout };
+  const { configureTransport, request } = await bundle("webview/src/bridge.ts");
+  configureTransport(() => { throw new Error("Extension connection closed"); });
+  await assert.rejects(request({ type: "refresh" }), /connection closed/);
+  configureTransport((message: any) => listeners[0]({ data: {type: "operationResult", requestId: message.requestId, error: null} }));
+  await request({ type: "refresh" });
+});
