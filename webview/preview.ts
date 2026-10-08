@@ -19,7 +19,7 @@ for (const [name, value] of Object.entries(tokens)) document.documentElement.sty
 if (params.has("width")) document.getElementById("root")!.style.width = `${Number(params.get("width"))}px`;
 const now = new Date().toISOString();
 const accounts: ProviderAccountStatus[] = [
-  { id: "system-codex", label: "Codex sign-in", agent: "codex", auth_mode: "system", enabled: true, use_credits: false, email: "saketh@example.test", plan: "pro", installed: true, authenticated: true, availability: "available", reset_at: null, detail: null, active: true },
+  { id: "system-codex", label: "Codex sign-in", agent: "codex", auth_mode: "system", enabled: true, use_credits: false, email: "saketh@example.test", plan: "prolite", installed: true, authenticated: true, availability: "available", reset_at: null, detail: null, active: true },
   { id: "codex-work", label: "Work", agent: "codex", auth_mode: "isolated_cli", enabled: true, use_credits: false, email: "work@example.test", plan: "business", installed: true, authenticated: true, availability: "limited", reset_at: new Date(Date.now() + 7200000).toISOString(), detail: null, active: false },
   { id: "system-claude_code", label: "Claude sign-in", agent: "claude_code", auth_mode: "system", enabled: true, use_credits: false, email: "saketh@example.test", plan: "max", installed: true, authenticated: true, availability: "available", reset_at: null, detail: null, active: true },
 ];

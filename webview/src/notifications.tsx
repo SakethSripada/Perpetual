@@ -40,7 +40,9 @@ export function NotificationCenter({ state }: { state: ReturnType<typeof useNoti
   return <ActionMenu label="Activity notifications" className="notification-menu" trigger={<button className="icon-btn notification-trigger" title="Notifications" aria-label={errors ? `Notifications, ${errors} unresolved ${errors === 1 ? "error" : "errors"}` : "Notifications"}><Icon name="inbox" />{errors > 0 && <span className="notification-count">{errors}</span>}</button>}>
     <MenuLabel>Recent activity</MenuLabel>
     {!state.items.length && <p className="notification-empty">You’re up to date.</p>}
-    {state.items.map((item) => <div className="notification-entry" key={item.id}><Icon name={item.error ? "alert" : "check"} /><span>{item.message}</span>{item.error && !item.dismissed && <button className="quiet-icon" aria-label="Dismiss error" title="Dismiss error" onClick={() => state.dismiss(item.id)}><Icon name="close" /></button>}</div>)}
+    {state.items.map((item) => item.error && !item.dismissed
+      ? <MenuItem className="notification-entry" key={item.id} aria-label={`Dismiss error: ${item.message}`} onSelect={() => state.dismiss(item.id)}><Icon name="alert" /><span>{item.message}</span><Icon name="close" /></MenuItem>
+      : <div className="notification-entry" key={item.id}><Icon name={item.error ? "alert" : "check"} /><span>{item.message}</span></div>)}
     {state.items.length > 0 && <MenuItem onSelect={state.clear}>Clear history</MenuItem>}
   </ActionMenu>;
 }

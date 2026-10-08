@@ -1,11 +1,17 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useRef, useState } from "react";
 import type { AgentKind, ProviderAccount, ProviderAccountStatus, WorkbenchSnapshot } from "./types";
 import { Icon, ProviderLogo } from "./icons";
 import { post, request } from "./bridge";
+import { ActionMenu, MenuItem, MenuLabel, MenuSeparator } from "./controls";
 
 export const providers: AgentKind[] = ["codex", "claude_code"];
 export const providerName = (agent: AgentKind) => agent === "codex" ? "Codex" : "Claude Code";
+const PLAN_NAMES: Record<string, string> = { free: "Free", plus: "Plus", pro: "Pro", prolite: "Pro Lite", max: "Max", team: "Team", business: "Business", enterprise: "Enterprise", edu: "Edu" };
+export const planName = (plan?: string | null) => {
+  if (!plan?.trim()) return null;
+  const value = plan.trim();
+  return PLAN_NAMES[value.toLowerCase().replace(/[ _-]/g, "")] ?? value.replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+};
 export const accountName = (account: ProviderAccountStatus) => account.email || account.label || `${providerName(account.agent)} sign-in`;
 export function accountState(account: ProviderAccountStatus) {
   if (!account.installed) return "missing";
@@ -41,69 +47,30 @@ export function AccountSwitcher({ snapshot, agent, onManage, onPickAgent }: { sn
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const root = useRef<HTMLDivElement>(null);
-  const menu = useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState<{ left: number; top: number; width: number; maxHeight: number } | null>(null);
+  const busyRef = useRef(false);
   const choices = uniqueAccountChoices(snapshot?.providerAccounts ?? []);
   const active = activeAccount(snapshot, agent);
-  useLayoutEffect(() => {
-    if (!open) return;
-    const place = () => {
-      const anchor = root.current?.getBoundingClientRect();
-      if (!anchor) return;
-      const width = Math.min(320, window.innerWidth - 24);
-      const maxHeight = Math.max(100, Math.min(500, anchor.top - 20));
-      const height = Math.min(menu.current?.scrollHeight ?? maxHeight, maxHeight);
-      setPosition({ left: Math.max(12, Math.min(anchor.left, window.innerWidth - width - 12)), top: Math.max(12, anchor.top - height - 8), width, maxHeight });
-    };
-    place();
-    const observer = new ResizeObserver(place);
-    if (menu.current) observer.observe(menu.current);
-    if (root.current) observer.observe(root.current);
-    window.addEventListener("resize", place);
-    window.addEventListener("scroll", place, true);
-    return () => { observer.disconnect(); window.removeEventListener("resize", place); window.removeEventListener("scroll", place, true); };
-  }, [open, choices.length]);
-  useEffect(() => {
-    if (!open) return;
-    const dismiss = (event: MouseEvent) => { if (!root.current?.contains(event.target as Node) && !menu.current?.contains(event.target as Node)) setOpen(false); };
-    const key = (event: KeyboardEvent) => {
-      if (event.key === "Escape") { setOpen(false); root.current?.querySelector<HTMLButtonElement>(".account-switch-trigger")?.focus(); }
-      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
-      const items = [...(menu.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [])];
-      if (!items.length) return;
-      event.preventDefault();
-      const current = items.indexOf(document.activeElement as HTMLButtonElement);
-      const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (current + (event.key === "ArrowUp" ? -1 : 1) + items.length) % items.length;
-      items[next].focus();
-    };
-    document.addEventListener("mousedown", dismiss); document.addEventListener("keydown", key);
-    menu.current?.querySelector<HTMLButtonElement>("button[aria-checked=true]:not(:disabled), button:not(:disabled)")?.focus();
-    return () => { document.removeEventListener("mousedown", dismiss); document.removeEventListener("keydown", key); };
-  }, [open]);
   const choose = async (account: ProviderAccountStatus) => {
-    if (busy) return;
-    setBusy(true); setError(null);
+    if (busyRef.current) return;
+    busyRef.current = true; setBusy(true); setError(null);
     try { await request({ type: account.authenticated ? "activateProviderAccount" : "signInProviderAccount", accountId: account.id }); if (account.authenticated) onPickAgent?.(account.agent); setOpen(false); }
     catch (error) { setError(String(error instanceof Error ? error.message : error)); }
-    finally { setBusy(false); }
+    finally { busyRef.current = false; setBusy(false); }
   };
-  return <div className="account-switcher" ref={root}>
-    <button className="account-switch-trigger" aria-expanded={open} aria-haspopup="menu" onClick={() => setOpen(!open)} disabled={!snapshot?.trusted} title="Choose the account for your next run">
-      <ProviderBadge agent={agent} /><span>{active ? accountName(active) : "Choose account"}</span><Icon name="caret" />
-    </button>
-    {open && createPortal(<div ref={menu} className="account-switch-menu" role="menu" aria-label="Switch account" style={{ ...position, position: "fixed", visibility: position ? "visible" : "hidden" }}>
-      {providers.map((provider) => <div key={provider}>
-        <div className="account-menu-label">{providerName(provider)}</div>
-        {choices.filter((account) => account.agent === provider).map((account) => <button key={account.id} role="menuitemradio" aria-checked={account.active} disabled={busy || !account.installed || !account.enabled} className={`account-option ${accountState(account)}`} onClick={() => void choose(account)}>
-          <ProviderBadge agent={provider} /><span><strong>{accountName(account)}</strong><small>{accountStateLabel(account)}{account.plan ? ` · ${account.plan}` : ""}</small></span>{account.active && <span aria-hidden="true">✓</span>}
-        </button>)}
-        {!snapshot?.providerAccounts.some((account) => account.agent === provider) && <button role="menuitem" disabled={busy} onClick={() => { setOpen(false); onManage(); }}>Connect {providerName(provider)}</button>}
-      </div>)}
-      {error && <p className="inline-error" role="alert">{error}</p>}
-      <button role="menuitem" className="manage-accounts" onClick={() => { setOpen(false); onManage(); }}><Icon name="settings" /> Manage accounts</button>
-    </div>, document.body)}
-  </div>;
+  return <ActionMenu open={open} onOpenChange={setOpen} label="Switch account" side="top" align="start" className="account-switch-menu" trigger={
+    <button className="account-switch-trigger" disabled={!snapshot?.trusted} title="Choose the account for your next run"><ProviderBadge agent={agent} /><span>{active ? accountName(active) : "Choose account"}</span><Icon name="caret" /></button>
+  }>
+    {providers.map((provider) => <div key={provider}>
+      <MenuLabel>{providerName(provider)}</MenuLabel>
+      {choices.filter((account) => account.agent === provider).map((account) => <MenuItem key={account.id} role="menuitemradio" aria-checked={account.active} disabled={busy || !account.installed || !account.enabled} className={`account-option ${accountState(account)}`} onSelect={(event) => { event.preventDefault(); void choose(account); }}>
+        <ProviderBadge agent={provider} /><span><strong>{accountName(account)}</strong><small>{accountStateLabel(account)}{account.plan ? ` · ${planName(account.plan)}` : ""}</small></span>{account.active && <Icon name="check" />}
+      </MenuItem>)}
+      {!choices.some((account) => account.agent === provider) && <MenuItem disabled={busy} onSelect={onManage}>Connect {providerName(provider)}</MenuItem>}
+    </div>)}
+    {error && <p className="inline-error" role="alert">{error}</p>}
+    <MenuSeparator />
+    <MenuItem onSelect={onManage}><Icon name="settings" />Manage accounts</MenuItem>
+  </ActionMenu>;
 }
 
 export function Accounts({ snapshot }: { snapshot: WorkbenchSnapshot }) {
@@ -120,7 +87,6 @@ export function Accounts({ snapshot }: { snapshot: WorkbenchSnapshot }) {
   const [token, setToken] = useState("");
   const [remove, setRemove] = useState<ProviderAccountStatus | null>(null);
   const [credits, setCredits] = useState<ProviderAccountStatus | null>(null);
-  const [expanded, setExpanded] = useState<string | null>(null);
   const accounts = snapshot.providerAccounts;
   const run = async (action: Record<string, unknown> & { type: string }, done?: () => void) => {
     if (busyRef.current) return;
@@ -137,41 +103,42 @@ export function Accounts({ snapshot }: { snapshot: WorkbenchSnapshot }) {
   };
   const add = () => {
     const id = `${agent === "codex" ? "codex" : "claude"}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    void run({ type: "addProviderAccount", account: { id, label: label.trim(), agent, enabled: true, use_credits: false, auth_mode: agent === "codex" ? "isolated_cli" : auth } }, () => { setAdding(false); setLabel(""); setExpanded(id); });
+    void run({ type: "addProviderAccount", account: { id, label: label.trim(), agent, enabled: true, use_credits: false, auth_mode: agent === "codex" ? "isolated_cli" : auth } }, () => { setAdding(false); setLabel(""); });
   };
   return <div className="desktop-accounts">
     <div className="account-page-heading"><div><h2>Accounts</h2><p>Choose an account. Keep working when limits change.</p></div><button className="secondary-btn" disabled={busy} onClick={() => void run({ type: "refreshReadiness" })}><Icon name="refresh" />Refresh</button></div>
     {error && <p className="inline-error" role="alert">{error}</p>}
     <div className="provider-overview">{providers.map((agent) => {
       const provider = snapshot.agents.find((item) => item.kind === agent);
-      const ready = accounts.filter((account) => account.agent === agent && ["active", "ready"].includes(accountState(account))).length;
+      const ready = uniqueAccountChoices(accounts).filter((account) => account.agent === agent && ["active", "ready"].includes(accountState(account))).length;
       return <div className="provider-overview-card" key={agent}><div><ProviderBadge agent={agent} /><strong>{providerName(agent)}</strong><small>{ready} ready</small></div>{(["five_hour", "weekly"] as const).map((key) => {
         const window = provider?.usage?.[key];
-        return window && <div className="provider-usage" key={key}><label>{key === "five_hour" ? "5-hour" : "Weekly"}<span>{Math.round(Math.max(0, 100 - window.used_percent))}% left</span></label><progress aria-label={`${providerName(agent)} ${key === "five_hour" ? "5-hour" : "weekly"} usage`} value={Math.max(0, Math.min(100, window.used_percent))} max={100} />{window.reset_at && <small>Resets {new Date(window.reset_at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}</small>}</div>;
+        return window && <div className="provider-usage" key={key}><label>{key === "five_hour" ? "5-hour" : "Weekly"}<span>{Math.round(Math.max(0, 100 - window.used_percent))}% left</span></label>{window.reset_at && <small>Resets {new Date(window.reset_at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}</small>}</div>;
       })}{!provider?.usage && <p>Usage appears after the next run.</p>}</div>;
     })}</div>
     <div className="account-list" aria-busy={busy}>
       {accounts.map((account, index) => <article className={`account-card ${accountState(account)}`} key={account.id}>
-        <div className="account-card-main"><ProviderBadge agent={account.agent} /><div className="account-identity"><strong title={accountName(account)}>{accountName(account)}</strong><small>{providerName(account.agent)}{account.plan ? ` · ${account.plan}` : ""}{account.auth_mode === "system" ? " · Shared CLI sign-in" : account.email ? ` · ${account.label}` : " · Isolated profile"}</small></div><span className={`state-badge ${accountState(account)}`}>{snapshot.authPendingAccountIds?.includes(account.id) ? "Connecting…" : accountStateLabel(account)}</span></div>
+        <div className="account-card-main"><ProviderBadge agent={account.agent} /><div className="account-identity"><strong title={accountName(account)}>{accountName(account)}</strong><small>{providerName(account.agent)}{account.plan ? ` · ${planName(account.plan)}` : ""}{account.auth_mode === "system" ? " · Shared CLI sign-in" : account.email ? ` · ${account.label}` : " · Isolated profile"}</small></div><span className={`state-badge ${accountState(account)}`}>{snapshot.authPendingAccountIds?.includes(account.id) ? "Connecting…" : accountStateLabel(account)}</span></div>
         {account.availability === "limited" && account.reset_at && <p className="account-detail">Resets {new Date(account.reset_at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</p>}
         <div className="account-card-actions">
-          {!account.installed ? <button className="secondary-btn" onClick={() => post({ type: "openExternal", url: account.agent === "codex" ? "https://developers.openai.com/codex/cli" : "https://code.claude.com/docs/en/setup" })}>Install CLI</button> : !account.authenticated ? <button className="primary-btn" disabled={busy || snapshot.authPendingAccountIds?.includes(account.id)} onClick={() => void run({ type: "signInProviderAccount", accountId: account.id })}>{account.auth_mode === "oauth_token" ? "Generate setup token" : "Sign in"}</button> : !account.active && <button className="secondary-btn" disabled={busy || !account.enabled} onClick={() => void run({ type: "activateProviderAccount", accountId: account.id })}>Use this account</button>}
-          {account.auth_mode === "oauth_token" && <button className="secondary-btn" disabled={busy} onClick={() => { setTokenId(account.id); setToken(""); }}>Paste setup token</button>}
-          <button className="account-more" aria-expanded={expanded === account.id} disabled={busy} onClick={() => setExpanded(expanded === account.id ? null : account.id)}>Manage <Icon name="caret" /></button>
+          {!account.installed ? <button className="secondary-btn" onClick={() => post({ type: "openExternal", url: account.agent === "codex" ? "https://developers.openai.com/codex/cli" : "https://code.claude.com/docs/en/setup" })}>Install CLI</button> : !account.authenticated ? <button className="primary-btn" disabled={busy || snapshot.authPendingAccountIds?.includes(account.id)} onClick={() => void run({ type: "signInProviderAccount", accountId: account.id })}>{account.auth_mode === "oauth_token" ? "Generate setup token" : "Sign in"}</button> : null}
+          <ActionMenu label={`Manage ${accountName(account)}`} className="account-details-menu" trigger={<button className="quiet-icon" title={`Manage ${accountName(account)}`} aria-label={`Manage ${account.label || accountName(account)}`} disabled={busy}><Icon name="more" /></button>}>
+            <MenuLabel>{account.label || providerName(account.agent)}</MenuLabel>
+            {account.authenticated && <MenuItem disabled={busy || !account.enabled} onSelect={() => void run({ type: "activateProviderAccount", accountId: account.id })}><Icon name="check" />Use this account</MenuItem>}
+            <MenuItem disabled={busy || !account.installed || snapshot.authPendingAccountIds?.includes(account.id)} onSelect={() => void run({ type: "signInProviderAccount", accountId: account.id })}><Icon name="agent" />{account.authenticated ? "Sign in again" : "Sign in"}</MenuItem>
+            <MenuItem disabled={busy || !account.installed} onSelect={() => void run({ type: "openProviderAccountCli", accountId: account.id })}><Icon name="terminal" />Open terminal</MenuItem>
+            {account.auth_mode === "oauth_token" && <MenuItem disabled={busy} onSelect={() => { setTokenId(account.id); setToken(""); }}>Paste setup token</MenuItem>}
+            <MenuSeparator />
+            <MenuItem disabled={busy} onSelect={() => { setEditing(account.id); setRename(account.label); }}>Rename</MenuItem>
+            <MenuItem disabled={busy || index === 0} onSelect={() => move(index, -1)}><Icon name="up" />Move up</MenuItem>
+            <MenuItem disabled={busy || index === accounts.length - 1} onSelect={() => move(index, 1)}><Icon name="down" />Move down</MenuItem>
+            <MenuItem disabled={busy} onSelect={() => update(account.id, { enabled: !account.enabled })}>{account.enabled ? "Pause rotation" : "Resume rotation"}</MenuItem>
+            {account.agent === "codex" && <MenuItem disabled={busy} onSelect={() => account.use_credits ? update(account.id, { use_credits: false }) : setCredits(account)}>{account.use_credits ? "Stop using reset credits" : "Use earned reset credits"}</MenuItem>}
+            <MenuSeparator />
+            <MenuItem danger disabled={busy} onSelect={() => setRemove(account)}><Icon name="trash" />Remove account</MenuItem>
+          </ActionMenu>
         </div>
-        {expanded === account.id && <div className="account-details">
-          {account.detail && <p>{account.detail}</p>}
-          <div className="account-detail-actions">
-            <button disabled={busy || !account.installed} onClick={() => void run({ type: "openProviderAccountCli", accountId: account.id })}><Icon name="terminal" />Open terminal</button>
-            <button disabled={busy || !account.installed} onClick={() => void run({ type: "signInProviderAccount", accountId: account.id })}>Sign in again</button>
-            <button disabled={busy} onClick={() => { setEditing(account.id); setRename(account.label); }}>Rename</button>
-            <button disabled={busy || index === 0} onClick={() => move(index, -1)}><Icon name="up" />Move up</button>
-            <button disabled={busy || index === accounts.length - 1} onClick={() => move(index, 1)}><Icon name="down" />Move down</button>
-            <button disabled={busy} onClick={() => update(account.id, { enabled: !account.enabled })}>{account.enabled ? "Pause rotation" : "Resume rotation"}</button>
-            {account.agent === "codex" && <button disabled={busy} onClick={() => account.use_credits ? update(account.id, { use_credits: false }) : setCredits(account)}>{account.use_credits ? "Stop using reset credits" : "Use earned reset credits"}</button>}
-            <button className="danger-text" disabled={busy} onClick={() => setRemove(account)}>Remove account</button>
-          </div>
-        </div>}
+        {account.detail && <p className="account-detail">{account.detail}</p>}
       </article>)}
       {accounts.length === 0 && <div className="accounts-empty"><Icon name="agent" /><strong>Connect your first account</strong><p>Use your existing CLI sign-in or add a separate profile.</p></div>}
     </div>

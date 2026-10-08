@@ -6,6 +6,7 @@ import "./tailwind.css";
 import "./settings.css";
 import "./desktop.css";
 import "./ai.css";
+import "./controls.css";
 
 createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

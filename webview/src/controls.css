@@ -1,0 +1,117 @@
+/* One compact control language for the workbench, menus and settings. */
+:root { --am-control-radius: 6px; }
+:focus-visible { outline: 2px solid color-mix(in srgb, var(--vscode-foreground) 55%, transparent); outline-offset: 2px; }
+.icon-btn, .quiet-icon { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--am-control-radius); background: transparent; color: var(--am-muted); box-shadow: none; cursor: pointer; }
+.icon-btn:hover:not(:disabled), .quiet-icon:hover:not(:disabled) { color: var(--vscode-foreground); background: var(--am-hover); }
+.quiet-icon svg { width: 15px; height: 15px; }
+.primary-btn, .secondary-btn { min-height: 28px; height: 28px; padding: 4px 10px; border-radius: var(--am-control-radius); font-size: 12px; line-height: 1.3; font-weight: 500; box-shadow: none; }
+.primary-btn { border: 0; background: var(--vscode-foreground); color: var(--vscode-editor-background); }
+.primary-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--vscode-foreground) 85%, var(--vscode-editor-background)); }
+.secondary-btn { border: 1px solid var(--am-border-soft); background: var(--am-surface); color: var(--vscode-foreground); }
+.secondary-btn:hover:not(:disabled) { background: var(--am-hover); border-color: var(--am-border); }
+.primary-btn.danger { background: var(--vscode-errorForeground, #d4453a); color: var(--vscode-editor-background); }
+.action-menu { z-index: 1000; min-width: 190px; max-width: min(340px, calc(100vw - 24px)); max-height: var(--radix-dropdown-menu-content-available-height); overflow-y: auto; padding: 5px; border: 1px solid var(--am-border); border-radius: 8px; background: var(--vscode-menu-background, var(--am-elevated)); color: var(--vscode-foreground); box-shadow: 0 6px 20px #0003; animation: menu-appear 100ms ease-out; outline: none; }
+.action-menu-item { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 5px 8px; border: 0; border-radius: 4px; background: transparent; cursor: default; user-select: none; font-size: 12px; line-height: 1.5; outline: none; }
+.action-menu-item[data-highlighted] { background: var(--am-hover); }
+.action-menu-item[data-disabled] { opacity: .4; pointer-events: none; }
+.action-menu-item > svg { width: 14px; height: 14px; flex-shrink: 0; color: var(--am-muted); }
+.action-menu-item.danger-text > svg { color: inherit; }
+.action-menu-label { padding: 6px 8px 4px; font-size: 11px; color: var(--am-muted); line-height: 1.5; }
+.action-menu-separator { height: 1px; margin: 4px 3px; background: var(--am-border-soft); }
+.account-switch-menu { position: relative; bottom: auto; width: 288px; max-height: var(--radix-dropdown-menu-content-available-height); box-shadow: 0 6px 20px #0003; }
+.account-switch-menu .account-option { padding: 7px 8px; }
+.account-option strong { font-size: 13px; font-weight: 500; }
+.account-option small { font-size: 11px; margin-top: 2px; }
+.account-option.active small { color: var(--am-muted); }
+.account-option .provider-avatar { width: 23px; height: 23px; flex-basis: 23px; background: transparent; border: 0; }
+.account-switch-trigger { padding: 5px 6px; }
+.desktop-accounts .account-list { gap: 0; border-radius: 8px; background: var(--am-surface); overflow: hidden; }
+.desktop-accounts .account-card { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto auto; align-items: center; gap: 4px 8px; padding: 10px 12px; border: 0; border-bottom: 1px solid var(--am-border-soft); border-radius: 0; background: transparent; box-shadow: none; }
+.desktop-accounts .account-card:last-child { border-bottom: 0; }
+.desktop-accounts .account-card:hover { background: color-mix(in srgb, var(--vscode-foreground) 2%, transparent); }
+.desktop-accounts .account-card-main { display: contents; }
+.desktop-accounts .account-card-main > .provider-avatar { grid-column: 1; grid-row: 1; width: 26px; height: 26px; background: transparent; border: 0; }
+.desktop-accounts .account-identity { grid-column: 2; grid-row: 1; min-width: 0; }
+.desktop-accounts .account-identity strong { font-size: 13px; font-weight: 500; line-height: 1.4; }
+.desktop-accounts .account-identity small { font-size: 11px; margin-top: 2px; line-height: 1.4; }
+.desktop-accounts .account-card-main .state-badge { grid-column: 3; grid-row: 1; margin: 0; padding: 0; border: 0; background: transparent; border-radius: 0; font-size: 11px; color: var(--am-muted); }
+.desktop-accounts .state-badge.limited, .desktop-accounts .state-badge.signed-out { color: var(--am-warn); }
+.desktop-accounts .account-card-actions { grid-column: 4; grid-row: 1; margin: 0; gap: 4px; flex-wrap: nowrap; }
+.desktop-accounts .account-card-actions .primary-btn, .desktop-accounts .account-card-actions .secondary-btn { font-size: 11px; padding: 3px 7px; height: 26px; min-height: 26px; }
+.desktop-accounts .account-detail { grid-column: 2 / -1; margin: 0; font-size: 11px; line-height: 1.4; }
+.provider-overview { gap: 8px; margin-bottom: 16px; }
+.provider-overview-card { padding: 12px; border: 0; border-radius: 8px; background: var(--am-surface); }
+.provider-overview-card .provider-avatar { height: 22px; width: 22px; flex-basis: 22px; background: transparent; border: 0; }
+.provider-usage { margin-top: 9px; }
+.provider-usage label { font-size: 11px; }
+.provider-usage label span { color: var(--vscode-foreground); font-weight: 500; }
+.provider-usage small { margin-top: 2px; font-size: 10px; }
+.account-page-heading { margin-bottom: 16px; }
+.account-page-heading h2 { font-size: 18px; font-weight: 600; margin-bottom: 4px; }
+.account-add-actions { gap: 8px; margin-top: 12px; }
+.account-order-note { margin: 10px 0; font-size: 11px; line-height: 1.5; }
+.account-form { padding: 14px; gap: 10px; margin-top: 12px; border: 0; background: var(--am-surface); }
+.account-form input, .account-form select { padding: 6px 8px; min-height: 30px; }
+.sheet.settings-sheet > header { padding: 12px 16px; }
+.settings-heading strong { font-size: 14px; }
+.settings-sheet > header .icon-btn { width: 28px; height: 28px; border: 0; box-shadow: none; }
+.settings-content { padding: 18px; }
+.settings-nav { padding: 8px; }
+.settings-nav button { min-height: 30px; padding: 6px 9px; font-size: 12px; }
+.settings-sheet > footer { padding: 10px 16px; }
+.sheet.settings-sheet > header { min-height: 52px; }
+.sheet.settings-sheet > footer { min-height: 48px; }
+.sheet footer button { padding: 4px 10px; min-height: 28px; height: 28px; border-radius: 6px; }
+.sheet footer .primary { border: 0; background: var(--vscode-foreground); color: var(--vscode-editor-background); }
+.sheet footer .primary:hover { background: color-mix(in srgb, var(--vscode-foreground) 85%, var(--vscode-editor-background)); }
+.field input, .field select { min-height: 30px; height: 30px; padding: 5px 8px; border-radius: 6px; }
+.field { gap: 5px; }
+.field-grid { gap: 10px; }
+.agent-profile-grid { gap: 10px; }
+.agent-profile-card { gap: 10px; padding: 12px; border: 0; border-radius: 8px; background: var(--am-surface); }
+.agent-profile-title { font-size: 12px; }
+.settings-group[data-settings-section] > .group-title:first-child { font-size: 18px; }
+.readiness-row { min-height: 42px; padding: 8px 12px; }
+.readiness-action { height: 28px; padding: 4px 10px; border-radius: 6px; }
+.settings-confirm { padding: 12px; border: 0; background: var(--am-surface); }
+.settings-confirm > svg, .account-security-note svg { color: var(--am-muted); }
+.field input:focus, .field select:focus { border-color: color-mix(in srgb, var(--vscode-foreground) 35%, transparent); }
+.history-menu-head, .repo-menu-head { min-height: 36px; padding: 6px 9px; }
+.history-pick, .repo-row { min-height: 36px; }
+.settings-content .settings-group { gap: 14px; }
+.model-trigger { min-height: 30px; padding: 5px 8px; }
+.menu-item { min-height: 30px; padding: 5px 8px; border-radius: 5px; font-size: 12px; }
+.popover { border-radius: 8px; box-shadow: 0 6px 20px #0003; }
+.run-options { padding: 12px; }
+.inline-error { border: 0; padding: 8px 10px; background: color-mix(in srgb, var(--vscode-errorForeground, #ec8b80) 7%, transparent); }
+.activity-status { padding: 4px 18px; min-height: 24px; font-size: 11px; line-height: 1.5; color: var(--am-muted); background: var(--am-sidebar); }
+.activity-status:empty { display: none; }
+.error-status { display: flex; align-items: flex-start; gap: 8px; padding: 8px 16px; background: var(--am-surface); font-size: 12px; line-height: 1.5; }
+.error-status > svg { width: 15px; height: 15px; margin-top: 2px; color: var(--vscode-errorForeground, #ec8b80); flex-shrink: 0; }
+.error-status > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.error-status .text-btn { font-size: 11px; padding: 1px 0; white-space: nowrap; }
+.error-status .quiet-icon { width: 22px; height: 22px; }
+.notification-trigger { position: relative; }
+.notification-count { position: absolute; top: -2px; right: -3px; min-width: 13px; height: 13px; padding: 0 2px; border-radius: 6px; font-size: 9px; line-height: 13px; background: var(--vscode-errorForeground, #ec8b80); color: var(--vscode-editor-background); }
+.notification-menu { width: 300px; }
+.notification-entry { display: flex; align-items: flex-start; gap: 8px; padding: 8px; font-size: 12px; line-height: 1.5; }
+.notification-entry > svg { flex-shrink: 0; width: 14px; height: 14px; margin-top: 2px; color: var(--am-muted); }
+.notification-entry > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.notification-entry .quiet-icon { width: 22px; height: 22px; }
+.notification-empty { margin: 8px; color: var(--am-muted); font-size: 12px; }
+.session-remove[data-state=open] { opacity: 1; }
+@keyframes menu-appear { from { opacity: 0; } to { opacity: 1; } }
+@media (max-width: 450px) {
+  .settings-content { padding: 12px; }
+  .desktop-accounts .account-card { padding: 9px 10px; gap: 4px 6px; }
+  .desktop-accounts .account-identity small { font-size: 10px; }
+  .provider-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .provider-overview-card { padding: 10px; }
+  .provider-overview-card > div:first-child { gap: 5px; flex-wrap: wrap; }
+  .provider-overview-card > div:first-child small { margin-left: 0; width: 100%; }
+  .error-status { flex-wrap: wrap; }
+  .error-status > span { flex-basis: calc(100% - 24px); }
+  .error-status .text-btn { margin-left: 23px; }
+}
+@media (prefers-reduced-motion: reduce) { .action-menu { animation: none; } }
+body.vscode-high-contrast .action-menu, body.vscode-high-contrast .account-list { border: 1px solid var(--vscode-contrastBorder, var(--vscode-foreground)); }

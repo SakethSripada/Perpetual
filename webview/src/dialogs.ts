@@ -11,6 +11,8 @@ export function useSheetAccessibility(open: boolean) {
     const controls = () => [...sheet.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex="0"]')].filter((element) => element.offsetParent !== null);
     controls()[0]?.focus();
     const key = (event: KeyboardEvent) => {
+      // Nested menus own their keyboard handling, including menus portaled outside the sheet.
+      if (event.defaultPrevented || (event.target instanceof Element && event.target.closest('[role="menu"], [role="listbox"], .popover'))) return;
       if (event.key === "Escape") {
         if (sheet.getAttribute("aria-busy") === "true" || sheet.querySelector('[aria-busy="true"]')) return;
         event.preventDefault(); event.stopPropagation();
