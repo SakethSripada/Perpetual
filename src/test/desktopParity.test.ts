@@ -96,9 +96,11 @@ test("switching rejects limited, missing and signed-out accounts, then recovers 
   assert.equal(activations, 0);
   assert.match(errors[0]!, /usage limit/);
   assert.ok(errors.every(Boolean));
+  controller.detectionCache = { at: Date.now(), state: "ready", providerAccounts: [account] };
   selected = { ...account }; await switchAccount();
   assert.equal(activations, 1);
   assert.equal(errors.at(-1), null);
+  assert.equal(controller.detectionCache.at, 0, "switching rechecks model entitlements without hiding accounts");
   controller.dispose();
 });
 
@@ -185,7 +187,8 @@ test("automatic account transitions refresh account state without forcing model 
   const gate = new Promise<void>((resolve) => { release = resolve; });
   controller.refreshProviderAccounts = async () => { checks++; await gate; };
   controller.lastSnapshot = { threads: [{ id: "thread", status: "running", provider_account_id: "old" }] };
-  controller.onDaemonEvent({ type: "agent_thread_updated", data: {id: "thread", status: "waiting_for_limit", provider_account_id: "old"} });
+  controller.onDaemonEvent({ type: "agent_thread_updated", data: {id: "thread", status: "paused", handoff_state: "budget_paused_provider_limit", provider_account_id: "old"} });
+  assert.equal(checks, 1, "percentage-budget limit pauses refresh account availability too");
   controller.onDaemonEvent({ type: "agent_thread_updated", data: {id: "thread", status: "running", provider_account_id: "new"} });
   assert.equal(checks, 1); assert.equal(controller.detectInflight, null);
   release(); await controller.accountEventRefresh; assert.equal(checks, 2); controller.dispose();
@@ -334,6 +337,8 @@ test("resource loading never presents pending or failed probes as confirmed empt
   assert.equal(resourceState({ ...empty, loadState: "error" }, "threads"), "error");
   assert.equal(resourceState({ ...empty, loadState: "error", providerAccounts: [account] }, "accounts"), "ready");
   assert.equal(resourceState({ ...empty, detectionState: "ready" }, "accounts"), "ready");
+  assert.equal(resourceState({ ...empty, accountDetectionState: "ready", modelDetectionState: "loading" }, "accounts"), "ready");
+  assert.equal(resourceState({ ...empty, accountDetectionState: "ready", modelDetectionState: "loading" }, "models"), "loading");
 });
 
 test("a failed refresh preserves the loaded workspace instead of publishing empty lists", async () => {

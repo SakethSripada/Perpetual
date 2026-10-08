@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.7.5
+
+- Replace general loading tiles and elapsed timers with a compact Radix spinner;
+  keep the tile animation for streaming messages. Show enabled toggles in green.
+- Coalesce concurrent workspace refreshes and publish accounts and policy before
+  slow model probes finish. Keep existing data visible during background checks.
+- Reuse detection for 60 seconds and pause readiness polling while unfocused.
+  Explicit refresh, account activation and completed sign-in trigger fresh discovery.
+- Deliver streaming tokens directly without full workspace reads and batch token
+  bursts once per animation frame. Flush live updates before merging history.
+- Refresh account states after automatic switching, limits and recovery without
+  forcing model probes. Reject attempts to switch to a limited or signed-out account.
+
 ## 0.7.4
 
 - Keep chats, repositories and accounts visible through connection failures;
