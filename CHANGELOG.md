@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.7.10
+
+- Remove GitHub browsing, sign-in and cloning from the extension, including
+  the command, settings entry and unused host requests. Select local projects
+  through the folder picker; existing local clones remain available.
+
 ## 0.7.9
 
 - Combine provider, actual model and supported reasoning choices in a searchable
