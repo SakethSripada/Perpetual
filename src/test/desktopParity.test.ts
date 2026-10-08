@@ -207,6 +207,24 @@ test("provider plans use readable desktop labels", async () => {
   assert.equal(planName(null), null);
 });
 
+test("paused local and Docker features reject operations without probing or contacting providers", async () => {
+  const { WorkbenchController } = await bundle("src/node/workbenchController.ts", true);
+  const called: string[] = [];
+  const api = new Proxy({}, { get: (_, method) => method === "then" ? undefined : async () => { called.push(String(method)); return []; } });
+  const controller = new WorkbenchController({ subscriptions: [] }, { onEvent: () => ({dispose(){}}), getLocalClient: async () => api }, { appendLine() {} });
+  await controller.runDetection(api);
+  assert.ok(!called.includes("detectLocalModels"));
+  assert.ok(!called.includes("detectSandboxRuntime"));
+  called.length = 0;
+  for (const type of ["setSandboxPolicy", "sandboxLogin", "setLocalModelPolicy"]) {
+    const replies: any[] = [];
+    await controller.handleMessage({ type, requestId: type }, (message: any) => replies.push(message));
+    assert.ok(replies.some((message) => message.type === "operationResult" && /temporarily unavailable/.test(message.error)));
+  }
+  assert.equal(called.length, 0);
+  controller.dispose();
+});
+
 test("notification history deduplicates failures and retains unresolved errors through success updates", async () => {
   const { appendNotification } = await bundle("webview/src/notifications.tsx");
   let items = appendNotification([], "Cannot save settings", true, 1);

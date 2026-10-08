@@ -44,7 +44,7 @@ import { useSheetAccessibility } from "./dialogs";
 import { mergeThreadEvents } from "./streaming";
 import { LoadingState, ToolRun } from "./ai";
 import { useNotifications, NotificationCenter, ErrorStatus } from "./notifications";
-import { CLOUD_CONTINUITY_ENABLED, LAN_COLLABORATION_ENABLED } from "./featureFlags";
+import { CLOUD_CONTINUITY_ENABLED, LAN_COLLABORATION_ENABLED, LOCAL_MODELS_ENABLED, DOCKER_SANDBOX_ENABLED } from "./featureFlags";
 import { Markdown } from "./markdown";
 import {
   buildTranscriptItems,
@@ -404,7 +404,7 @@ export default function App() {
       selectedThread?.execution_backend ?? snapshot.defaults.execution_backend,
     );
     const nextModel =
-      selectedThread?.model ??
+      (!LOCAL_MODELS_ENABLED && selectedThread?.local_provider ? snapshot.defaults.model : selectedThread?.model) ??
       (effectiveSelectedId === null ? composerDefaultsRef.current.model : null) ??
       snapshot.defaults.model ??
       defaults.model ??
@@ -439,8 +439,8 @@ export default function App() {
       setBackend(nextBackend);
       setModel(nextModel);
       setReasoning(nextReasoning);
-      setLocalProvider(nextAgent === "codex" ? nextLocalProvider : "");
-      setLocalBaseUrl(nextAgent === "codex" ? nextLocalBaseUrl : "");
+      setLocalProvider(LOCAL_MODELS_ENABLED && nextAgent === "codex" ? nextLocalProvider : "");
+      setLocalBaseUrl(LOCAL_MODELS_ENABLED && nextAgent === "codex" ? nextLocalBaseUrl : "");
       setTaskBudget(nextTaskBudget);
     }
     if (
@@ -1179,9 +1179,9 @@ export default function App() {
           ) => {
             return (async () => {
             await request({ type: "setLimitPolicy", policy: limitPolicy, preserveAccounts: true });
-            await request({ type: "setSandboxPolicy", policy: sandboxPolicy });
+            if (DOCKER_SANDBOX_ENABLED) await request({ type: "setSandboxPolicy", policy: sandboxPolicy });
             if (CLOUD_CONTINUITY_ENABLED) await request({ type: "setCloudPolicy", policy: cloudPolicy });
-            await request({ type: "setLocalModelPolicy", policy: localModelPolicy });
+            if (LOCAL_MODELS_ENABLED) await request({ type: "setLocalModelPolicy", policy: localModelPolicy });
             const activeProfile = limitPolicy.agent_profiles?.find(
               (profile) => profile.agent === agent,
             );
@@ -2892,7 +2892,7 @@ function Composer(props: ComposerProps) {
                         )}
                       </select>
                     </label>
-                    <button
+                    {DOCKER_SANDBOX_ENABLED && <button
                       type="button"
                       className={`sandbox-row${sandboxOn ? " on" : ""}${sandboxAllowed ? "" : " disabled"}`}
                       disabled={!sandboxAllowed}
@@ -2911,8 +2911,8 @@ function Composer(props: ComposerProps) {
                       <span className="sandbox-state">
                         {sandboxOn ? "On" : "Off"}
                       </span>
-                    </button>
-                    <button
+                    </button>}
+                    {LOCAL_MODELS_ENABLED && <button
                       type="button"
                       className={`sandbox-row${localOn ? " on" : ""}${localAllowed ? "" : " disabled"}`}
                       disabled={!localAllowed}
@@ -2942,8 +2942,8 @@ function Composer(props: ComposerProps) {
                       <span className="sandbox-state">
                         {localOn ? labelLocalProvider(props.localProvider) : "Off"}
                       </span>
-                    </button>
-                    {localOn && (
+                    </button>}
+                    {LOCAL_MODELS_ENABLED && localOn && (
                       <>
                         <label className="field">
                           <span>Local provider</span>
@@ -2972,7 +2972,7 @@ function Composer(props: ComposerProps) {
                         </label>
                       </>
                     )}
-                    {sandboxOn && sandbox && !sandbox.authenticated && (
+                    {DOCKER_SANDBOX_ENABLED && sandboxOn && sandbox && !sandbox.authenticated && (
                       <button
                         type="button"
                         className="menu-item"
@@ -2981,7 +2981,7 @@ function Composer(props: ComposerProps) {
                         Sign in to Sandbox
                       </button>
                     )}
-                    {sandboxOn && sandbox && !sandbox.codex_authenticated && (
+                    {DOCKER_SANDBOX_ENABLED && sandboxOn && sandbox && !sandbox.codex_authenticated && (
                       <button
                         type="button"
                         className="menu-item"
@@ -4483,13 +4483,15 @@ function resetSummary(agents: AgentStatus[]): string {
     .join(", ");
 }
 
-const SETTINGS_SECTIONS = [
+const ALL_SETTINGS_SECTIONS = [
   ["accounts", "Accounts", "Manage sign-ins"],
   ["agents", "Providers", "Check connections"],
   ["switching", "Models & limits", "Defaults and routing"],
   ["local", "Local models", "Offline fallback"],
   ["sandbox", "Sandbox", "Isolated execution"],
 ] as const;
+
+const SETTINGS_SECTIONS = ALL_SETTINGS_SECTIONS.filter(([id]) => (id !== "local" || LOCAL_MODELS_ENABLED) && (id !== "sandbox" || DOCKER_SANDBOX_ENABLED));
 
 type SettingsSection = (typeof SETTINGS_SECTIONS)[number][0] | "continuity";
 
@@ -4601,7 +4603,7 @@ function SettingsSheet(props: {
                   )}
                 </div>
               ))}
-              {props.snapshot.localModels?.map((provider) => (
+              {LOCAL_MODELS_ENABLED && props.snapshot.localModels?.map((provider) => (
                 <div key={provider.provider} className="readiness-row">
                   <span>{provider.label}</span>
                   <small>
@@ -4611,7 +4613,7 @@ function SettingsSheet(props: {
                   </small>
                 </div>
               ))}
-              {props.snapshot.sandboxRuntime && (
+              {DOCKER_SANDBOX_ENABLED && props.snapshot.sandboxRuntime && (
                 <div className="readiness-row">
                   <span>Docker Sandbox</span>
                   <small>
@@ -5820,6 +5822,7 @@ function sanitizeBackend(
   agent: AgentKind,
   backend: ExecutionBackend,
 ): ExecutionBackend {
+  if (!DOCKER_SANDBOX_ENABLED) return "host";
   return backend === "docker_sandbox" && agent !== "codex" ? "host" : backend;
 }
 

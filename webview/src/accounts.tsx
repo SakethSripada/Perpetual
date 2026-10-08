@@ -87,7 +87,7 @@ export function Accounts({ snapshot }: { snapshot: WorkbenchSnapshot }) {
   const [token, setToken] = useState("");
   const [remove, setRemove] = useState<ProviderAccountStatus | null>(null);
   const [credits, setCredits] = useState<ProviderAccountStatus | null>(null);
-  const accounts = snapshot.providerAccounts;
+  const accounts = uniqueAccountChoices(snapshot.providerAccounts);
   const run = async (action: Record<string, unknown> & { type: string }, done?: () => void) => {
     if (busyRef.current) return;
     busyRef.current = true; setBusy(true); setError(null);
@@ -97,8 +97,11 @@ export function Accounts({ snapshot }: { snapshot: WorkbenchSnapshot }) {
   };
   const update = (id: string, patch: Partial<ProviderAccount>, done?: () => void) => void run({ type: "updateProviderAccount", accountId: id, patch }, done);
   const move = (index: number, delta: number) => {
-    const orderedIds = accounts.map((account) => account.id);
-    [orderedIds[index], orderedIds[index + delta]] = [orderedIds[index + delta], orderedIds[index]];
+    // Reorder visible identities without dropping hidden sign-in profiles from storage.
+    const orderedIds = snapshot.providerAccounts.map((account) => account.id);
+    const from = orderedIds.indexOf(accounts[index].id);
+    const to = orderedIds.indexOf(accounts[index + delta].id);
+    [orderedIds[from], orderedIds[to]] = [orderedIds[to], orderedIds[from]];
     void run({ type: "reorderProviderAccounts", orderedIds });
   };
   const add = () => {
@@ -142,7 +145,7 @@ export function Accounts({ snapshot }: { snapshot: WorkbenchSnapshot }) {
       </article>)}
       {accounts.length === 0 && <div className="accounts-empty"><Icon name="agent" /><strong>Connect your first account</strong><p>Use your existing CLI sign-in or add a separate profile.</p></div>}
     </div>
-    <div className="account-add-actions"><button className="secondary-btn" disabled={busy} onClick={() => setAdding(true)}><Icon name="plus" />Add account</button>{providers.filter((agent) => !accounts.some((account) => account.agent === agent && account.auth_mode === "system")).map((agent) => <button className="text-btn" disabled={busy} key={agent} onClick={() => void run({ type: "addSystemProviderAccount", agent })}>Connect {providerName(agent)} CLI</button>)}</div>
+    <div className="account-add-actions"><button className="secondary-btn" disabled={busy} onClick={() => setAdding(true)}><Icon name="plus" />Add account</button>{providers.filter((agent) => !snapshot.providerAccounts.some((account) => account.agent === agent && account.auth_mode === "system")).map((agent) => <button className="text-btn" disabled={busy} key={agent} onClick={() => void run({ type: "addSystemProviderAccount", agent })}>Connect {providerName(agent)} CLI</button>)}</div>
     <p className="account-order-note">Accounts rotate in this order. Switching applies to the next run; active turns keep their account.</p>
     {adding && <form className="account-form" onSubmit={(event) => { event.preventDefault(); if (label.trim()) add(); }}><h3>Add account</h3><label>Provider<select value={agent} disabled={busy} onChange={(event) => { setAgent(event.target.value as AgentKind); setAuth("isolated_cli"); }}><option value="codex">Codex</option><option value="claude_code">Claude Code</option></select></label><label>Account name<input autoFocus value={label} disabled={busy} onChange={(event) => setLabel(event.target.value)} placeholder="Personal or work" maxLength={128} /></label>{agent === "claude_code" && <label>Authentication<select value={auth} disabled={busy} onChange={(event) => setAuth(event.target.value as typeof auth)}><option value="isolated_cli">Browser sign-in</option><option value="oauth_token">Setup token</option></select></label>}<p>This profile has its own credentials and provider session history.</p><div><button className="secondary-btn" type="button" disabled={busy} onClick={() => setAdding(false)}>Cancel</button><button className="primary-btn" disabled={busy || !label.trim()}>{busy ? "Adding…" : "Add account"}</button></div></form>}
     {editing && <form className="account-form" onSubmit={(event) => { event.preventDefault(); if (rename.trim()) update(editing, { label: rename.trim() }, () => setEditing(null)); }}><h3>Rename account</h3><input aria-label="Account name" autoFocus value={rename} disabled={busy} onChange={(event) => setRename(event.target.value)} maxLength={128} /><div><button type="button" className="secondary-btn" disabled={busy} onClick={() => setEditing(null)}>Cancel</button><button className="primary-btn" disabled={busy || !rename.trim()}>Save name</button></div></form>}

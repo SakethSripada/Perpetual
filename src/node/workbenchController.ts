@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 import * as vscode from "vscode";
-import { CLOUD_CONTINUITY_ENABLED, LAN_COLLABORATION_ENABLED } from "./featureFlags";
+import { CLOUD_CONTINUITY_ENABLED, LAN_COLLABORATION_ENABLED, LOCAL_MODELS_ENABLED, DOCKER_SANDBOX_ENABLED } from "./featureFlags";
 import type { DaemonApi } from "./protocol";
 import type { DaemonManager } from "./daemonManager";
 import type {
@@ -249,6 +249,8 @@ export class WorkbenchController implements vscode.Disposable {
       if (!CLOUD_CONTINUITY_ENABLED && CLOUD_MESSAGE_TYPES.has(message.type)) {
         throw new Error("Cloud Continuity is temporarily unavailable.");
       }
+      if (!LOCAL_MODELS_ENABLED && message.type === "setLocalModelPolicy") throw new Error("Local models are temporarily unavailable.");
+      if (!DOCKER_SANDBOX_ENABLED && ["setSandboxPolicy", "sandboxLogin"].includes(message.type)) throw new Error("Docker Sandbox is temporarily unavailable.");
       switch (message.type) {
         case "refresh":
           // Manual refresh should re-probe agents/sandbox, not serve the cache.
@@ -935,6 +937,8 @@ export class WorkbenchController implements vscode.Disposable {
       await this.ensureWorkspaceRepos(client, project.id);
     }
     const defaults = getDefaults();
+    if (!LOCAL_MODELS_ENABLED && message.localProvider) throw new Error("Local models are temporarily unavailable. Choose a provider model to continue.");
+    if (!DOCKER_SANDBOX_ENABLED && message.executionBackend === "docker_sandbox") throw new Error("Docker Sandbox is temporarily unavailable. Choose host execution to continue.");
     const agent = message.agent ?? defaults.agent;
     const permission = message.permission ?? defaults.permission;
     const executionBackend = sanitizeBackend(
@@ -942,7 +946,7 @@ export class WorkbenchController implements vscode.Disposable {
       message.executionBackend ?? defaults.execution_backend,
     );
     const localProvider =
-      agent === "codex"
+      LOCAL_MODELS_ENABLED && agent === "codex"
         ? sanitizeLocalProvider(
             message.localProvider ?? defaults.local_provider,
           )
@@ -1525,7 +1529,7 @@ export class WorkbenchController implements vscode.Disposable {
           .agentModelCatalog()
           .then(filterModelCatalog)
           .catch(() => this.detectionCache?.modelCatalog ?? []),
-        client.detectLocalModels().catch(() => []),
+        LOCAL_MODELS_ENABLED ? client.detectLocalModels().catch(() => []) : Promise.resolve([]),
         client
           .getLimitPolicy()
           .then(normalizeLimitPolicy)
@@ -1535,7 +1539,7 @@ export class WorkbenchController implements vscode.Disposable {
           return this.detectionCache?.providerAccounts ?? [];
         }),
         client.getSandboxPolicy().catch(() => null),
-        client.detectSandboxRuntime().catch(() => null),
+        DOCKER_SANDBOX_ENABLED ? client.detectSandboxRuntime().catch(() => null) : Promise.resolve(null),
         client
           .getCloudPolicy()
           .then(normalizeCloudPolicy)
@@ -1631,7 +1635,7 @@ export class WorkbenchController implements vscode.Disposable {
         normalizeLocalModelPolicy({
           ...localModelPolicy,
           auto_resume_cloud: CLOUD_CONTINUITY_ENABLED && settings.localAutoResumeCloud,
-          use_local_fallback: settings.localUseFallback,
+          use_local_fallback: LOCAL_MODELS_ENABLED && settings.localUseFallback,
           switch_back_to_cloud: CLOUD_CONTINUITY_ENABLED && settings.localSwitchBackToCloud,
           probe_interval_secs: settings.localProbeIntervalSeconds,
           ollama_base_url:
@@ -1646,7 +1650,7 @@ export class WorkbenchController implements vscode.Disposable {
     if (sandboxPolicy) {
       await client.setSandboxPolicy({
         ...sandboxPolicy,
-        default_backend: settings.defaultExecutionBackend,
+        default_backend: DOCKER_SANDBOX_ENABLED ? settings.defaultExecutionBackend : "host",
         max_concurrent_sandboxes: settings.sandboxMaxConcurrent,
         cpus: settings.sandboxCpus,
         memory: settings.sandboxMemory,
@@ -2109,15 +2113,15 @@ function getDefaults(): WorkbenchDefaults {
       "defaultPermission",
       "workspace_write",
     ),
-    execution_backend: config.get<ExecutionBackend>(
+    execution_backend: DOCKER_SANDBOX_ENABLED ? config.get<ExecutionBackend>(
       "defaultExecutionBackend",
       "host",
-    ),
+    ) : "host",
     model: profile.model,
     reasoning: profile.reasoning,
-    local_provider: sanitizeLocalProvider(
+    local_provider: LOCAL_MODELS_ENABLED ? sanitizeLocalProvider(
       config.get<string>("defaultLocalProvider", ""),
-    ),
+    ) : null,
     local_base_url: blankToNull(config.get<string>("defaultLocalBaseUrl", "")),
   };
 }
@@ -2224,6 +2228,7 @@ function sanitizeBackend(
   agent: AgentKind,
   backend: ExecutionBackend,
 ): ExecutionBackend {
+  if (!DOCKER_SANDBOX_ENABLED) return "host";
   if (backend === "docker_sandbox" && agent !== "codex") {
     return "host";
   }
