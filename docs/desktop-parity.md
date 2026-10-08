@@ -1,5 +1,23 @@
 # Desktop parity: extension 0.7.0
 
+## 0.7.1 follow-up
+
+Readiness invalidation now retains successful account/model state. Failed probes
+retain those values, and an account revision guard prevents an older background
+probe from overwriting an acknowledged edit. The switcher groups authenticated
+profiles by provider/email without deleting credentials or changing session affinity.
+It uses a fixed portal outside surrounding clipping/stacking contexts.
+
+The desktop's `ai.tsx` loader, shimmer, elapsed timer, collapsible tool traces,
+and file chips are adapted directly, with their MIT notice included in
+`licenses/beautiful-ui.txt`. Typography uses the desktop system font stack and
+larger menu labels. Composer drafts resize after state updates and panel changes.
+
+Verification: 75 extension tests, TypeScript/webview checks, extension-host
+activation, and browser checks at wide and 391px widths in dark/light themes.
+The fixture includes duplicate identities and `?refresh` sends snapshots every
+second to exercise popup stability. Real provider prompts are not required.
+
 Reference: sibling `Perpetual-Desktop`, inspected without edits. Changes are local
 on `dev`; packaging and installation do not publish a release.
 

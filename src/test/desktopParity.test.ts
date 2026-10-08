@@ -138,7 +138,7 @@ test("refresh keeps accounts and models visible through invalidation and failed 
   controller.invalidateDetection();
   assert.deepEqual(controller.detectionCache.providerAccounts, [account]);
   assert.equal(controller.detectionCache.at, 0);
-  const api = new Proxy({}, { get: (_, method) => async () => {
+  const api = new Proxy({}, { get: (_, method) => method === "then" ? undefined : async () => {
     if (["providerAccountStatuses", "agentModelCatalog", "getLimitPolicy"].includes(String(method))) throw new Error("transient probe failure");
     return [];
   } });
@@ -173,7 +173,7 @@ test("an older background probe cannot undo an acknowledged account change", asy
   const pendingProbe = new Promise<any[]>((resolve) => { finishProbe = resolve; });
   const updated = { ...account, label: "Latest label" };
   let probes = 0;
-  const api = new Proxy({}, { get: (_, method) => async () => {
+  const api = new Proxy({}, { get: (_, method) => method === "then" ? undefined : async () => {
     if (method === "providerAccountStatuses") return ++probes === 1 ? pendingProbe : [updated];
     if (method === "getLimitPolicy") return { accounts: [updated] };
     return [];

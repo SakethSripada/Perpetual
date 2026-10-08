@@ -2,7 +2,7 @@
   "name": "perpetual-for-vscode",
   "displayName": "Perpetual for VS Code",
   "description": "Run Codex and Claude Code with persistent sessions, account rotation, safe Git worktrees, and review.",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "publisher": "SakethSripada",
   "license": "MIT",
   "author": {
@@ -44,7 +44,9 @@
     "workspace"
   ],
   "main": "./dist/extension.js",
-  "activationEvents": ["onUri"],
+  "activationEvents": [
+    "onUri"
+  ],
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",

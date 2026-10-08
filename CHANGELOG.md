@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.7.1
+
+- Keep accounts and models visible during readiness refresh and transient probe
+  errors; prevent older background results from overwriting recent account edits.
+- Collapse multiple authenticated profiles for the same provider/email into one
+  run-picker choice while retaining their individual profiles in account management.
+- Render the account picker in a fixed overlay with reliable outside-click and
+  keyboard behavior, larger labels, and real provider logos.
+- Adapt the desktop's tile loader, shimmer labels, elapsed time, expandable tool
+  traces and changed-file chips, including smooth completion disclosures.
+- Use the desktop font stack and clearer text sizes, remove blur transitions,
+  and keep multiline drafts sized correctly after programmatic edits and resizing.
+
 ## 0.7.0
 
 - Bring desktop provider account behavior into the extension: shared CLI sign-ins,
