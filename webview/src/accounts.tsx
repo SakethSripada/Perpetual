@@ -28,7 +28,7 @@ export function accountStateLabel(account: ProviderAccountStatus) {
 export function activeAccount(snapshot: WorkbenchSnapshot | null, agent: AgentKind) {
   return snapshot?.providerAccounts.find((account) => account.agent === agent && account.active);
 }
-/** Profiles remain individually manageable; the run picker lists identities. */
+/** Show identities once while preserving their stored profiles and credentials. */
 export function uniqueAccountChoices(accounts: ProviderAccountStatus[]) {
   const choices = new Map<string, ProviderAccountStatus>();
   for (const account of accounts) {

@@ -160,14 +160,17 @@ body.vscode-high-contrast .action-menu, body.vscode-high-contrast .account-list 
 .welcome-suggestions button { padding: 7px 12px; border: 0; min-height: 30px; background: var(--am-surface); border-radius: 6px; }
 
 /* Compact, quiet surfaces. Pending resources reserve space instead of flashing empty. */
+.resource-loading { display: flex; align-items: center; gap: 8px; min-height: 22px; animation: resource-reveal 120ms ease-out 120ms backwards; }
+.resource-spinner { position: relative; display: inline-block; flex-shrink: 0; width: 16px; height: 16px; opacity: .65; }
+.resource-spinner > span { position: absolute; top: 0; left: 43.75%; width: 12.5%; height: 100%; animation: resource-spinner-fade 800ms linear infinite; }
+.resource-spinner > span::before { content: ""; display: block; width: 100%; height: 30%; border-radius: 2px; background: currentColor; }
+@keyframes resource-spinner-fade { from { opacity: 1; } to { opacity: .25; } }
+@keyframes resource-reveal { from { opacity: 0; } to { opacity: 1; } }
+.toggle input[type="checkbox"]:checked, .toggle-row input[type="checkbox"]:checked { background: #25834a; border-color: #25834a; }
+.toggle input[type="checkbox"]:checked::after, .toggle-row input[type="checkbox"]:checked::after { background: #fff; }
+@media (prefers-reduced-motion: reduce) { .resource-spinner > span, .resource-loading { animation: none; } }
 .resource-state { padding: 12px 8px; color: var(--am-muted); font-size: 12px; }
-.resource-state .ai-loading-state { margin: 0 0 10px; }
 .resource-state > .text-btn { margin-left: 8px; }
-.resource-skeleton { display: grid; gap: 7px; }
-.resource-skeleton span { display: block; height: 24px; border-radius: 4px; background: var(--am-hover); animation: resource-pulse 1.6s ease-in-out infinite; }
-.resource-skeleton span:nth-child(2) { width: 82%; animation-delay: 100ms; }
-.resource-skeleton span:nth-child(3) { width: 65%; animation-delay: 200ms; }
-@keyframes resource-pulse { 0%, 100% { opacity: .45; } 50% { opacity: .85; } }
 .session-row { min-height: 30px; }
 .session-select { min-height: 30px; padding: 5px 8px; gap: 0; }
 .session-copy { display: flex; align-items: center; gap: 8px; min-width: 0; width: 100%; }
@@ -212,4 +215,3 @@ body.vscode-high-contrast .action-menu, body.vscode-high-contrast .account-list 
 .change-line.hunk { color: var(--am-muted); padding: 3px 0; }
 .change-unavailable { color: var(--am-muted); font-size: 12px; padding: 10px; }
 @media (max-width: 680px) { .settings-layout { grid-template-columns: 1fr; } }
-@media (prefers-reduced-motion: reduce) { .resource-skeleton span { animation: none; } }

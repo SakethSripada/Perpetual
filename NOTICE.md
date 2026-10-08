@@ -9,3 +9,6 @@ notices are available from the published npm packages.
 Agent loading and tool-run components and animation styles are adapted from
 the desktop app and Beautiful UI, Copyright (c) 2026 Shane Levine, MIT License.
 See licenses/beautiful-ui.txt.
+
+The general loading spinner is adapted from Radix Themes, Copyright (c) 2023
+WorkOS, MIT License. See licenses/radix-spinner.txt.
