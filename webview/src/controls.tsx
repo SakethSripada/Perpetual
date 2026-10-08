@@ -1,6 +1,7 @@
 import * as Dropdown from "@radix-ui/react-dropdown-menu";
 import * as Context from "@radix-ui/react-context-menu";
-import { Fragment } from "react";
+import { Fragment, useState } from "react";
+import { Icon } from "./icons";
 import type { ComponentProps, ReactNode } from "react";
 
 /** The desktop's menu primitive: collision-aware placement and native key handling. */
@@ -30,3 +31,19 @@ export function ContextActions({ actions, children }: { actions: RowAction[]; ch
   return <Context.Root modal={false}><Context.Trigger asChild>{children}</Context.Trigger><Context.Portal><Context.Content className="action-menu" collisionPadding={12}><RowActions actions={actions} context /></Context.Content></Context.Portal></Context.Root>;
 }
 
+
+/** A single themed choice control for forms and composer options. */
+export function ChoiceSelect({ label, value, options, onChange, disabled = false, searchable = false }: {
+  label: string; value: string; options: { value: string; label: string }[];
+  onChange(value: string): void; disabled?: boolean; searchable?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const selected = options.find((option) => option.value === value);
+  const matches = options.filter((option) => option.label.toLowerCase().includes(query.trim().toLowerCase()));
+  return <ActionMenu label={label} open={open} onOpenChange={(next) => { setOpen(next); if (!next) setQuery(""); }} align="start" className="choice-menu" trigger={<button type="button" className="choice-select" aria-label={label} disabled={disabled}><span>{selected?.label ?? value}</span><Icon name="caret" /></button>}>
+    {searchable && <div className="choice-search"><Icon name="search" /><input aria-label={`Search ${label.toLowerCase()}`} placeholder="Search models" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key !== "Escape" && event.key !== "Tab" && event.key !== "ArrowDown" && event.key !== "ArrowUp") event.stopPropagation(); }} /></div>}
+    {matches.map((option) => <MenuItem role="menuitemradio" aria-checked={option.value === value} key={option.value} onSelect={() => onChange(option.value)}><span>{option.label}</span>{option.value === value && <Icon name="check" />}</MenuItem>)}
+    {!matches.length && <p className="menu-empty">No matching models</p>}
+  </ActionMenu>;
+}

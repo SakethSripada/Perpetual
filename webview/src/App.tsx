@@ -43,6 +43,8 @@ import { SessionHistory } from "./sessions";
 import { resourceState, ResourceState } from "./loading";
 import { ChangeLog } from "./changeLog";
 import { UsageLimits } from "./usage";
+import { usageWindows } from "./usageData";
+import { ChoiceSelect } from "./controls";
 import { RepositoryPicker } from "./repositories";
 import { configureTransport, request } from "./bridge";
 import { useSheetAccessibility } from "./dialogs";
@@ -1815,6 +1817,7 @@ function Popover(props: {
     if (!props.open) return;
     const onPointerDown = (event: MouseEvent) => {
       const target = event.target as Node;
+      if (target instanceof Element && target.closest(".action-menu")) return;
       if (
         !menuRef.current?.contains(target) &&
         !triggerRef.current?.contains(target)
@@ -1823,7 +1826,7 @@ function Popover(props: {
       }
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
+      if (event.defaultPrevented || (event.target instanceof Element && event.target.closest(".action-menu"))) return;
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
@@ -2686,22 +2689,7 @@ function Composer(props: ComposerProps) {
                     />
                     <label className="field">
                       <span>Reasoning effort</span>
-                      <select
-                        value={props.reasoning}
-                        onChange={(event) => props.setReasoning(event.target.value)}
-                      >
-                        {reasoningOptions(
-                          props.agent,
-                          props.snapshot,
-                          props.model,
-                        ).map(
-                          (option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ),
-                        )}
-                      </select>
+                      <ChoiceSelect label="Reasoning effort" value={props.reasoning} options={reasoningOptions(props.agent, props.snapshot, props.model)} onChange={props.setReasoning} />
                     </label>
                     {DOCKER_SANDBOX_ENABLED && <button
                       type="button"
@@ -4221,7 +4209,7 @@ function MonitorSheet(props: {
             )}
           </div>
 
-          <UsageLimits agent={agent} provider={props.snapshot.agents.find((item) => item.kind === agent)} account={activeAccount(props.snapshot, agent)?.email ?? undefined} loading={props.snapshot.detectionState === "loading" || props.snapshot.detectionState === "idle"} error={props.snapshot.detectionState === "error"} />
+          <div className="monitor-usage">{([agent, agent === "codex" ? "claude_code" : "codex"] as AgentKind[]).filter((kind) => kind === agent || usageWindows(props.snapshot.agents.find((item) => item.kind === kind)?.usage).length > 0).map((kind) => <UsageLimits key={kind} agent={kind} provider={props.snapshot.agents.find((item) => item.kind === kind)} account={activeAccount(props.snapshot, kind)?.email ?? undefined} loading={props.snapshot.detectionState === "loading" || props.snapshot.detectionState === "idle"} error={props.snapshot.detectionState === "error"} />)}</div>
 
           {CLOUD_CONTINUITY_ENABLED && <div className="settings-group">
             <div className="group-title">Cloud Continuity</div>
@@ -4380,10 +4368,11 @@ function SettingsSheet(props: {
           <div className="settings-group" data-settings-section="accounts" id="settings-panel-accounts" role="region" aria-labelledby="settings-nav-accounts" hidden={section !== "accounts"}><Accounts snapshot={props.snapshot} /></div>
           <div className="settings-group" data-settings-section="agents" id="settings-panel-agents" role="region" aria-labelledby="settings-nav-agents" hidden={section !== "agents"}>
             <div className="group-title">Providers</div>
+            {!props.snapshot.agents.length && (props.snapshot.detectionState === "ready" ? <p className="menu-empty">No providers detected</p> : <ResourceState state={props.snapshot.detectionState === "error" ? "error" : "loading"} label="providers" />)}
             <div className="readiness-grid">
               {props.snapshot.agents.map((agent) => (
                 <div key={agent.kind} className="readiness-row">
-                  <span>{labelAgent(agent.kind)}</span>
+                  <span className="connection-provider"><AgentMark agent={agent.kind} />{labelAgent(agent.kind)}</span>
                   <small>{agentReadinessLabel(agent, limit)}</small>
                   {agent.installed && !agent.authenticated && (
                     <button
@@ -4442,7 +4431,7 @@ function SettingsSheet(props: {
                 </div>
               )}
 	              <div className="readiness-row">
-	                <span>GitHub</span>
+	                <span className="connection-provider"><Icon name="github" />GitHub</span>
 	                <small>
 	                  {props.snapshot.github?.authenticated
 	                    ? "Ready"
@@ -4471,6 +4460,7 @@ function SettingsSheet(props: {
 
           <div className="settings-group" data-settings-section="switching" id="settings-panel-switching" role="region" aria-labelledby="settings-nav-switching" hidden={section !== "switching"}>
             <div className="group-title">Models &amp; limits</div>
+            {resourceState(props.snapshot, "models") !== "ready" && <ResourceState state={resourceState(props.snapshot, "models") as "loading" | "error"} label="models" />}
             <div className="agent-profile-grid">
               {(["claude_code", "codex"] as const).map((profileAgent) => {
                 const profile = limit.agent_profiles?.find(
@@ -4496,46 +4486,11 @@ function SettingsSheet(props: {
                     </div>
                     <label className="field">
                       <span>Model</span>
-                      <select
-                        value={profile.model ?? ""}
-                        onChange={(event) => {
-                          const model = event.target.value;
-                          updateAgentProfile(profileAgent, {
-                            model: model || null,
-                            reasoning:
-                              reasoningAfterModelChange(
-                                profileAgent,
-                                props.snapshot,
-                                model,
-                                profile.reasoning ?? "",
-                              ) || null,
-                          });
-                        }}
-                      >
-                        <option value="">Provider default</option>
-                        {models.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
+                      <ChoiceSelect label={`${labelAgent(profileAgent)} model`} searchable value={profile.model ?? ""} disabled={resourceState(props.snapshot, "models") !== "ready"} options={[{ value: "", label: "Provider default" }, ...models]} onChange={(model) => updateAgentProfile(profileAgent, { model: model || null, reasoning: reasoningAfterModelChange(profileAgent, props.snapshot, model, profile.reasoning ?? "") || null })} />
                     </label>
                     <label className="field">
                       <span>Reasoning</span>
-                      <select
-                        value={profile.reasoning ?? ""}
-                        onChange={(event) =>
-                          updateAgentProfile(profileAgent, {
-                            reasoning: event.target.value || null,
-                          })
-                        }
-                      >
-                        {efforts.map((option) => (
-                          <option key={option.value || "default"} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
+                      <ChoiceSelect label={`${labelAgent(profileAgent)} reasoning`} value={profile.reasoning ?? ""} options={efforts} onChange={(reasoning) => updateAgentProfile(profileAgent, { reasoning: reasoning || null })} />
                     </label>
                   </div>
                 );

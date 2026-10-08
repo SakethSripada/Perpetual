@@ -320,6 +320,21 @@ body.vscode-high-contrast .action-menu, body.vscode-high-contrast .account-list 
 .usage-meter.low > span { background: var(--am-warn, #d3a35c); }
 .usage-reset { display: block; font-size: 10px; color: var(--am-muted); }
 .usage-empty { display: flex; align-items: center; gap: 7px; padding-top: 12px; font-size: 11px; color: var(--am-muted); }
-.sheet.monitor-sheet { height: min(480px, calc(100dvh - 32px)); max-height: min(480px, calc(100dvh - 32px)); }
-.monitor-body > .usage-panel { margin-top: 14px; }
+.sheet.monitor-sheet { height: min(540px, calc(100dvh - 32px)); max-height: min(540px, calc(100dvh - 32px)); }
+.monitor-usage { display: grid; gap: 10px; }
+.monitor-body { gap: 12px; }
+.monitor-metric { padding: 8px 12px; }
 @media (max-width: 420px) { .repository-trigger { max-width: 98px; } .repository-picker footer { padding: 10px; gap: 5px; } .repository-picker footer button { padding: 6px 8px; font-size: 11px; } }
+.choice-select { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-width: 0; padding: 7px 9px; border: 1px solid var(--am-border-soft); border-radius: 6px; background: var(--am-surface); color: var(--vscode-foreground); font-size: 12px; cursor: pointer; }
+.choice-select:hover { background: var(--am-hover); }
+.choice-select:disabled { opacity: .5; cursor: default; }
+.choice-select > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.choice-select > svg { width: 12px; height: 12px; flex: 0 0 12px; color: var(--am-muted); }
+.action-menu.choice-menu { width: max(200px, var(--radix-dropdown-menu-trigger-width)); max-width: calc(100vw - 24px); }
+.choice-menu .action-menu-item > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.choice-menu .action-menu-item > svg { width: 13px; }
+.choice-search { display: flex; align-items: center; gap: 7px; margin: 4px 4px 7px; padding: 6px 8px; border: 1px solid var(--am-border-soft); border-radius: 5px; }
+.choice-search > svg { width: 13px; color: var(--am-muted); }
+.choice-search input { width: 100%; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; outline: none; font: inherit; font-size: 12px; }
+.connection-provider { display: flex; align-items: center; gap: 9px; }
+.connection-provider svg { width: 16px; height: 16px; color: var(--am-muted); }

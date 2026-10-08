@@ -26,7 +26,7 @@ export function RepositoryPicker(props: {
         {!props.locked && <ActionMenu label={`Options for ${repo.name}`} trigger={<button className="quiet-icon" aria-label={`Options for ${repo.name}`}><Icon name="more" /></button>}><MenuItem danger onSelect={() => setDisconnect(repo)}><Icon name="trash" />Disconnect repository</MenuItem></ActionMenu>}
       </div>)}
     </div>
-    {disconnect && <div className="repository-confirm" role="alert"><span>Disconnect <strong>{disconnect.name}</strong>? Files stay on disk.</span><div><button className="secondary-btn" onClick={() => setDisconnect(null)}>Cancel</button><button className="secondary-btn danger-text" onClick={() => { props.onRemove(disconnect.id); setDisconnect(null); }}>Disconnect</button></div></div>}
+    {disconnect && !props.locked && <div className="repository-confirm" role="alert"><span>Disconnect <strong>{disconnect.name}</strong>? Files stay on disk.</span><div><button className="secondary-btn" onClick={() => setDisconnect(null)}>Cancel</button><button className="secondary-btn danger-text" onClick={() => { props.onRemove(disconnect.id); setDisconnect(null); }}>Disconnect</button></div></div>}
     <footer>{!props.shared && <><button className="secondary-btn" onClick={() => { props.onClose(); props.onLocal(); }}><Icon name="folder" />Connect folder</button><button className="secondary-btn" onClick={() => { props.onClose(); props.onGithub(); }}><Icon name="github" />Browse GitHub</button></>}<button className="primary-btn" onClick={props.onClose}>Done</button></footer>
   </section></div>, document.body);
 }
