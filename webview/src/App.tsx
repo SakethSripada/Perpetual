@@ -222,10 +222,13 @@ export default function App() {
       setPending((pending) => reconcilePendingMessages({ pending, selectedStatus: current.threads.find((thread) => thread.id === current.selectedThreadId)?.status, events, queued: current.details!.queued }));
     }, (callback) => window.requestAnimationFrame(callback), (frame) => window.cancelAnimationFrame(frame));
     const onMessage = (event: MessageEvent<ExtensionMessage>) => {
-      let incoming = event.data;
+      const incoming = event.data;
       if (incoming.type === "detectionUpdate") {
         if (!snapshotRef.current) return;
-        incoming = { type: "snapshot", snapshot: { ...snapshotRef.current, ...incoming.patch } };
+        const next = { ...snapshotRef.current, ...incoming.patch };
+        snapshotRef.current = next;
+        setSnapshot(next);
+        return;
       }
       if (incoming.type === "submitFailed") {
         setNotice(incoming.message, true);
@@ -1818,11 +1821,18 @@ function Popover(props: {
       }
     };
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
         props.setOpen(false);
+        triggerRef.current?.focus();
         return;
       }
       if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      const target = event.target;
+      if (target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) return;
+      if (target instanceof Node && !menuRef.current?.contains(target) && !triggerRef.current?.contains(target)) return;
       const focusable = Array.from(
         menuRef.current?.querySelectorAll<HTMLElement>(
           'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
@@ -1842,10 +1852,10 @@ function Popover(props: {
       focusable[next]?.focus();
     };
     window.addEventListener("mousedown", onPointerDown);
-    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onKeyDown, true);
     return () => {
       window.removeEventListener("mousedown", onPointerDown);
-      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keydown", onKeyDown, true);
     };
   }, [props.open]);
 
@@ -3049,7 +3059,7 @@ function BudgetMenu(props: {
         </button>
       )}
       {props.budget.mode === "tokens" && hostSupported && (
-        <div className="budget-presets">
+        <div className="budget-presets token-presets">
           {[25_000, 50_000, 100_000].map((value) => (
             <button
               key={value}

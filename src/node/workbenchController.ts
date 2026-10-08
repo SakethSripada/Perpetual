@@ -165,9 +165,15 @@ type DiffCacheEntry = {
   diff: AgentThreadDiff | null;
 };
 
+function detectionFields(cache: DetectionCache): Partial<WorkbenchSnapshot> {
+  const { at, state, accountState, modelState, ...fields } = cache;
+  return { ...fields, detectionState: state, accountDetectionState: accountState, modelDetectionState: modelState };
+}
+
 export class WorkbenchController implements vscode.Disposable {
   private readonly snapshots = new vscode.EventEmitter<WorkbenchSnapshot>();
   private readonly threadEvents = new vscode.EventEmitter<AgentThreadEvent>();
+  private readonly detectionUpdates = new vscode.EventEmitter<Partial<WorkbenchSnapshot>>();
   private readonly submissionFailures = new vscode.EventEmitter<{ type: "submitFailed"; threadId: string | null; clientMessageId: string | null; text: string; message: string }>();
   private refreshTimer: NodeJS.Timeout | null = null;
   private readinessTimer: NodeJS.Timeout | null = null;
@@ -189,10 +195,12 @@ export class WorkbenchController implements vscode.Disposable {
   private repoAssignmentsPending = new Map<string, string[]>();
   private repoAssignmentsInFlight = new Map<string, Promise<void>>();
   private workspaceReposReady: Promise<void> | null = null;
+  private githubCache: { sessionId: string; at: number; status: GithubAuthStatus; repos: GithubRepository[] } | null = null;
   private autoConnectSuspended = false;
 
   readonly onSnapshot = this.snapshots.event;
   readonly onThreadEvent = this.threadEvents.event;
+  readonly onDetectionUpdate = this.detectionUpdates.event;
   readonly onSubmissionFailure = this.submissionFailures.event;
 
   constructor(
@@ -229,6 +237,7 @@ export class WorkbenchController implements vscode.Disposable {
     this.authWatchTimers.clear();
     this.snapshots.dispose();
     this.threadEvents.dispose();
+    this.detectionUpdates.dispose();
     this.submissionFailures.dispose();
   }
 
@@ -265,6 +274,7 @@ export class WorkbenchController implements vscode.Disposable {
           await this.refresh();
           return;
         case "ready":
+          if (this.lastSnapshot?.trusted === vscode.workspace.isTrusted) reply?.({ type: "snapshot", snapshot: this.lastSnapshot });
           await this.refresh();
           return;
         case "newSession":
@@ -938,6 +948,8 @@ export class WorkbenchController implements vscode.Disposable {
           device_name: collaborationStatus.deviceName,
         },
         error,
+        // Probes can finish while thread details are loading; use their newest values.
+        ...detectionFields(this.detectionCache ?? detection),
       };
     } catch (err) {
       // A transient connection failure must not erase already loaded conversations or accounts.
@@ -1276,12 +1288,18 @@ export class WorkbenchController implements vscode.Disposable {
     repos: GithubRepository[];
   }> {
     this.assertTrusted();
-    const token = await this.githubToken();
+    const session = await vscode.authentication.getSession("github", ["repo"], { createIfNone: true });
+    const key = `${session.id}:${session.account.id}`;
+    if (this.githubCache?.sessionId === key && Date.now() - this.githubCache.at < 120_000) {
+      return { status: this.githubCache.status, repos: this.githubCache.repos };
+    }
+    const token = session.accessToken;
     const client = await this.daemon.getClient();
     const [status, repos] = await Promise.all([
       client.githubAuthStatus(token),
       client.githubListRepositories(token),
     ]);
+    this.githubCache = { sessionId: key, at: Date.now(), status, repos };
     return { status, repos };
   }
 
@@ -1438,7 +1456,9 @@ export class WorkbenchController implements vscode.Disposable {
         accountState: "ready",
       };
     }
-    await this.refresh();
+    if (this.detectionCache?.at === 0) this.detect(client);
+    if (this.lastSnapshot?.trusted) this.publishDetection();
+    else await this.refresh();
     return providerAccounts;
   }
 
@@ -1494,6 +1514,7 @@ export class WorkbenchController implements vscode.Disposable {
   }
 
   private detectInflight: Promise<DetectionCache> | null = null;
+  private detectionRevision = 0;
   private accountRevision = 0;
   private accountEventRefresh: Promise<void> | null = null;
   private accountEventRefreshQueued = false;
@@ -1513,6 +1534,7 @@ export class WorkbenchController implements vscode.Disposable {
   }
 
   private invalidateDetection(): void {
+    this.detectionRevision++;
     // Keep the last successful values on screen while probes run.
     if (this.detectionCache) this.detectionCache = { ...this.detectionCache, at: 0 };
   }
@@ -1520,32 +1542,32 @@ export class WorkbenchController implements vscode.Disposable {
   /**
    * Agent/sandbox detection shells out to CLIs and can take seconds, so it must
    * never block a snapshot. Serve the last-known values immediately; when stale,
-   * kick off a background re-probe that fires its own refresh when it lands.
+   * kick off a background re-probe that patches its fields as they arrive.
    */
   private detect(client: DaemonApi): DetectionCache {
     const cached = this.detectionCache;
     if (cached) {
       if (Date.now() - cached.at >= DETECTION_TTL_MS && !this.detectInflight) {
-        void this.runDetection(client).then(() => void this.refresh());
+        void this.runDetection(client).then(() => this.finishDetection(client));
       }
       return cached;
     }
     const loading = emptyDetectionCache("loading");
     this.detectionCache = loading;
-    void this.runDetection(client).then(() => void this.refresh());
+    void this.runDetection(client).then(() => this.finishDetection(client));
     return loading;
   }
 
   private runDetection(client: DaemonApi): Promise<DetectionCache> {
     if (this.detectInflight) return this.detectInflight;
     const accountRevision = this.accountRevision;
+    const detectionRevision = this.detectionRevision;
     if (!this.detectionCache) this.detectionCache = emptyDetectionCache("loading");
     const publish = (patch: Partial<DetectionCache>, accounts = false) => {
-      if (this.disposed || (accounts && accountRevision !== this.accountRevision)) return;
+      if (this.disposed || detectionRevision !== this.detectionRevision || (accounts && accountRevision !== this.accountRevision)) return;
       this.detectionCache = { ...this.detectionCache!, ...patch };
-      // Fast resources are delivered without waiting for slower model/CLI probes.
-      // Queue reconciliation when the first workspace read is already in flight.
-      if (this.lastSnapshot || this.refreshInflight) void this.refresh();
+      // Publish only detection fields; no database reads or transcript transfer.
+      this.publishDetection();
     };
     this.detectInflight = (async () => {
       let probeFailed = false;
@@ -1642,14 +1664,18 @@ export class WorkbenchController implements vscode.Disposable {
         next.providerAccounts = this.detectionCache.providerAccounts;
         next.limitPolicy = this.detectionCache.limitPolicy;
       }
-      this.detectionCache = next;
-      return next;
+      if (detectionRevision !== this.detectionRevision) {
+        // An account switch or settings edit invalidated this probe. Keep it stale
+        // so the changed entitlement gets its own probe as soon as this one ends.
+        this.detectionCache = { ...this.detectionCache!, at: 0 };
+      } else this.detectionCache = next;
+      return this.detectionCache;
     })()
       .catch((err) => {
         this.output.appendLine(
           `[workbench] detection failed: ${formatError(err)}`,
         );
-        const failed = { ...(this.detectionCache ?? emptyDetectionCache("error")), at: Date.now(), state: "error" as const };
+        const failed = { ...(this.detectionCache ?? emptyDetectionCache("error")), at: detectionRevision === this.detectionRevision ? Date.now() : 0, state: "error" as const };
         this.detectionCache = failed;
         return failed;
       })
@@ -1657,6 +1683,18 @@ export class WorkbenchController implements vscode.Disposable {
         this.detectInflight = null;
       });
     return this.detectInflight;
+  }
+
+  private publishDetection(): void {
+    if (this.disposed || !this.detectionCache || !this.lastSnapshot?.trusted) return;
+    const patch = { ...detectionFields(this.detectionCache), authPendingAccountIds: [...this.authPendingAccounts] };
+    this.lastSnapshot = { ...this.lastSnapshot, ...patch };
+    this.detectionUpdates.fire(patch);
+  }
+
+  private finishDetection(client: DaemonApi): void {
+    this.publishDetection();
+    if (!this.disposed && this.detectionCache?.at === 0) this.detect(client);
   }
 
   private async syncSettings(client: DaemonApi): Promise<void> {

@@ -15,6 +15,7 @@ export class WorkbenchWebviewProvider implements vscode.WebviewViewProvider, vsc
   ) {
     this.disposables.push(
       controller.onSnapshot((snapshot) => this.postAll({ type: "snapshot", snapshot })),
+      controller.onDetectionUpdate((patch) => this.postAll({ type: "detectionUpdate", patch })),
       controller.onThreadEvent((event) => this.postAll({ type: "threadEvent", event })),
       controller.onSubmissionFailure((event) => this.postAll(event))
     );

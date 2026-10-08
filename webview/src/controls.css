@@ -45,6 +45,12 @@
 .approval-actions { gap: 6px; }
 .approval-btn { min-height: 28px; height: 28px; padding: 4px 8px; border-radius: 6px; font-size: 12px; }
 .user-question-option { padding: 7px 9px; border-radius: 6px; }
+.user-question-header { text-transform: none; letter-spacing: 0; font-weight: 500; }
+.user-question-option.active { border-color: color-mix(in srgb, var(--vscode-foreground) 35%, transparent); }
+.approval-btn.allow { border: 0; background: var(--vscode-foreground); color: var(--vscode-editor-background); }
+.approval-btn.allow:hover { background: color-mix(in srgb, var(--vscode-foreground) 85%, var(--vscode-editor-background)); }
+.repo-row input[type="checkbox"] { accent-color: #25834a; }
+.budget-presets.token-presets { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 @media (prefers-reduced-motion: reduce) { .sheet, .popover, .slash-menu { animation: none; } }
 :focus-visible { outline: 2px solid color-mix(in srgb, var(--vscode-foreground) 55%, transparent); outline-offset: 2px; }
 .icon-btn, .quiet-icon { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--am-control-radius); background: transparent; color: var(--am-muted); box-shadow: none; cursor: pointer; }

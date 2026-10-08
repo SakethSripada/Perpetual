@@ -15,7 +15,7 @@ async function bundle(entry: string, stubVscode = false): Promise<any> {
       fire(value) { for (const fn of this.listeners) fn(value); } dispose() {}
     }
     const listener = () => ({dispose(){}});
-    module.exports = { EventEmitter, workspace: { isTrusted: true, getConfiguration: () => ({get: (_, fallback) => fallback, inspect: () => undefined}), onDidGrantWorkspaceTrust: listener, onDidChangeWorkspaceFolders: listener, onDidChangeConfiguration: listener }, window: { onDidChangeWindowState: listener }, env: {} };
+    module.exports = { EventEmitter, workspace: { isTrusted: true, getConfiguration: () => ({get: (_, fallback) => fallback, inspect: () => undefined}), onDidGrantWorkspaceTrust: listener, onDidChangeWorkspaceFolders: listener, onDidChangeConfiguration: listener }, window: { onDidChangeWindowState: listener }, authentication: {getSession: async () => globalThis.__perpetualTestGithubSession}, env: {} };
   `);
   await build({ entryPoints: [path.resolve(entry)], outfile, bundle: true, platform: "node", format: "cjs", alias: stubVscode ? { vscode: stub } : undefined, logLevel: "silent" });
   const loaded = require(outfile);
@@ -85,8 +85,8 @@ test("switching cannot activate an account with a missing CLI or expired sign-in
 
 test("switching rejects limited, missing and signed-out accounts, then recovers for a ready account", async () => {
   const { WorkbenchController } = await bundle("src/node/workbenchController.ts", true);
-  let selected: any = { ...account, availability: "limited" }, activations = 0;
-  const api = { providerAccountStatuses: async () => selected ? [selected] : [], activateProviderAccount: async () => { activations++; }, getLimitPolicy: async () => ({ accounts: [selected] }) };
+  let selected: any = { ...account, availability: "limited" }, activations = 0, modelProbes = 0;
+  const api = new Proxy({ providerAccountStatuses: async () => selected ? [selected] : [], activateProviderAccount: async () => { activations++; }, getLimitPolicy: async () => ({ accounts: [selected] }), agentModelCatalog: async () => { modelProbes++; return []; } }, { get: (target, method) => method in target ? target[method as keyof typeof target] : method === "then" ? undefined : async () => [] });
   const controller = new WorkbenchController({ subscriptions: [] }, { onEvent: () => ({dispose(){}}), getLocalClient: async () => api }, { appendLine() {} });
   controller.refresh = async () => undefined;
   const errors: (string | null)[] = [];
@@ -100,7 +100,8 @@ test("switching rejects limited, missing and signed-out accounts, then recovers 
   selected = { ...account }; await switchAccount();
   assert.equal(activations, 1);
   assert.equal(errors.at(-1), null);
-  assert.equal(controller.detectionCache.at, 0, "switching rechecks model entitlements without hiding accounts");
+  assert.equal(modelProbes, 1, "switching immediately rechecks model entitlements");
+  assert.equal(controller.detectionCache.providerAccounts[0].id, account.id, "visible accounts stay loaded");
   controller.dispose();
 });
 
@@ -155,6 +156,61 @@ test("fresh detection is reused and invalidation shares one pending probe", asyn
   assert.equal(probes, 0);
   controller.invalidateDetection(); controller.detect({}); controller.detect({});
   assert.equal(probes, 1); release(); await gate; controller.dispose();
+});
+
+test("progressive discovery patches loaded resources without reading or transferring conversation history", async () => {
+  const { WorkbenchController } = await bundle("src/node/workbenchController.ts", true);
+  const controller = new WorkbenchController({ subscriptions: [] }, { onEvent: () => ({dispose(){}}) }, { appendLine() {} });
+  const details = { events: [{id: "retained-message"}] };
+  controller.lastSnapshot = { trusted: true, threads: [{id: "retained-chat"}], details };
+  let reads = 0;
+  controller.refresh = async () => { reads++; };
+  const updates: any[] = []; controller.onDetectionUpdate((patch: any) => updates.push(patch));
+  const api = new Proxy({}, { get: (_, method) => method === "then" ? undefined : async () => method === "providerAccountStatuses" ? [account] : method === "getLimitPolicy" ? {accounts: [account]} : [] });
+  await controller.runDetection(api); controller.publishDetection();
+  assert.equal(reads, 0);
+  assert.ok(updates.some((patch) => patch.providerAccounts[0]?.id === account.id));
+  assert.ok(updates.every((patch) => !("details" in patch) && !("threads" in patch)));
+  assert.equal(controller.lastSnapshot.details, details);
+  assert.equal(controller.lastSnapshot.detectionState, "ready");
+  controller.dispose();
+});
+
+test("invalidation during model discovery discards old entitlements and schedules a fresh probe", async () => {
+  const { WorkbenchController } = await bundle("src/node/workbenchController.ts", true);
+  const controller = new WorkbenchController({ subscriptions: [] }, { onEvent: () => ({dispose(){}}) }, { appendLine() {} });
+  let release!: (models: any[]) => void, probes = 0;
+  const oldModels = new Promise<any[]>((resolve) => { release = resolve; });
+  const currentModels = [{agent: "codex", models: [{id: "new-model"}]}];
+  const api = new Proxy({}, { get: (_, method) => method === "then" ? undefined : async () => method === "agentModelCatalog" ? (++probes === 1 ? oldModels : currentModels) : method === "getLimitPolicy" ? {accounts: []} : [] });
+  controller.detect(api); const oldProbe = controller.detectInflight;
+  controller.invalidateDetection();
+  release([{agent: "codex", models: [{id: "old-model"}]}]);
+  await oldProbe;
+  await new Promise((resolve) => setImmediate(resolve));
+  if (controller.detectInflight) await controller.detectInflight;
+  assert.equal(probes, 2);
+  assert.equal(controller.detectionCache.modelCatalog[0].models[0].id, "new-model");
+  assert.equal(controller.detectionCache.modelState, "ready");
+  controller.dispose();
+});
+
+test("GitHub repository caching is short lived, session scoped and never caches a failure", async () => {
+  const { WorkbenchController } = await bundle("src/node/workbenchController.ts", true);
+  let reads = 0, fail = false;
+  const api = { githubAuthStatus: async () => ({authenticated: true}), githubListRepositories: async () => { reads++; if (fail) throw new Error("Network interrupted"); return [{id: reads}]; } };
+  const controller = new WorkbenchController({ subscriptions: [] }, { onEvent: () => ({dispose(){}}), getClient: async () => api }, { appendLine() {} });
+  (globalThis as any).__perpetualTestGithubSession = { id: "session-a", account: {id: "user-a"}, accessToken: "test-token" };
+  try {
+    assert.equal((await controller.githubRepos()).repos[0].id, 1);
+    assert.equal((await controller.githubRepos()).repos[0].id, 1); assert.equal(reads, 1);
+    controller.githubCache.at = 0; await controller.githubRepos(); assert.equal(reads, 2);
+    (globalThis as any).__perpetualTestGithubSession.id = "session-b";
+    fail = true; await assert.rejects(controller.githubRepos(), /Network interrupted/);
+    fail = false; assert.equal((await controller.githubRepos()).repos[0].id, 4);
+    assert.equal(controller.githubCache.sessionId, "session-b:user-a");
+    assert.ok(!JSON.stringify(controller.githubCache).includes("test-token"));
+  } finally { controller.dispose(); delete (globalThis as any).__perpetualTestGithubSession; }
 });
 
 test("token bursts bypass workspace reads but completion reconciles durable state", async () => {

@@ -549,6 +549,7 @@ export interface GithubRepository {
 }
 
 export type ExtensionMessage =
+  | { type: "detectionUpdate"; patch: Partial<WorkbenchSnapshot> }
   | { type: "operationResult"; requestId: string; error: string | null }
   | { type: "submitFailed"; threadId: string | null; clientMessageId: string | null; text: string; message: string }
   | { type: "snapshot"; snapshot: WorkbenchSnapshot }
