@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.7.9
+
+- Combine provider, actual model and supported reasoning choices in a searchable
+  composer menu. Remove the Default model option; remember choices per provider,
+  restore them across panels, and recover cleanly from failed saves.
+- Remove the redundant session status/account subtitle from the chat header.
+- Review visible repositories against current HEAD so committed edits clear.
+  Include staged, unstaged and untracked edits without modifying the Git index;
+  retain committed task changes in isolated worktrees until applied.
+- Refresh open repository reviews on Git changes with debounced, coalesced reads.
+  Label review scopes explicitly and retain readable narrow repository controls.
+
 ## 0.7.8
 
 - Replace the ambiguous repository button with a labeled, searchable picker.
