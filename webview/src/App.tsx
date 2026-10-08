@@ -40,6 +40,8 @@ import { BrandMark, Icon, ProviderLogo as AgentMark } from "./icons";
 import { Accounts, AccountSwitcher, activeAccount, accountName } from "./accounts";
 import { SessionSidebar, statusLabel } from "./navigation";
 import { SessionHistory } from "./sessions";
+import { resourceState, ResourceState } from "./loading";
+import { ChangeLog } from "./changeLog";
 import { configureTransport, request } from "./bridge";
 import { useSheetAccessibility } from "./dialogs";
 import { mergeThreadEvents } from "./streaming";
@@ -1010,8 +1012,9 @@ export default function App() {
           ref={transcriptRef}
           onScroll={onTranscriptScroll}
         >
-          {navigating && <LoadingState label="Loading conversation" since={Date.now()} />}
-          {!navigating &&
+          {navigating && <ResourceState state="loading" label="chat" />}
+          {!navigating && resourceState(snapshot, "threads") !== "ready" && !selectedThread && <ResourceState state={resourceState(snapshot, "threads") as "loading" | "error"} label="workspace" />}
+          {!navigating && resourceState(snapshot, "threads") === "ready" &&
             ((!selectedThread && pending.length === 0) || welcomeLeaving) && (
             <EmptyState
               exiting={welcomeLeaving}
@@ -1170,7 +1173,8 @@ export default function App() {
 
       {historyOpen && <SessionHistory snapshot={snapshot} selectedId={effectiveSelectedId} onClose={() => setHistoryOpen(false)} onNew={newSession} onSelect={selectThread} onDelete={deleteThread} onReview={(id) => { selectThread(id); setReviewOpen({ threadId: id, nonce: Date.now() }); vscode.postMessage({ type: "loadDiff", threadId: id }); }} />}
 
-      {settingsOpen && snapshot && (
+      {settingsOpen && (!snapshot || !snapshot.limitPolicy) && <div className="sheet-backdrop" onClick={() => setSettingsOpen(false)}><section className="sheet settings-pending-sheet" role="dialog" aria-modal="true" aria-label="Settings" onClick={(event) => event.stopPropagation()}><header><strong>Settings</strong><IconButton title="Close" onClick={() => setSettingsOpen(false)}><Icon name="close" /></IconButton></header><ResourceState state={snapshot?.error || snapshot?.detectionState === "error" ? "error" : "loading"} label="settings" /></section></div>}
+      {settingsOpen && snapshot?.limitPolicy && (
         <SettingsSheet
           snapshot={snapshot}
           onClose={() => setSettingsOpen(false)}
@@ -1972,7 +1976,7 @@ function ModelField(props: {
             {selected?.label ??
               (props.value ? prettyModel(props.value) : "Default model")}
           </span>
-          <small>{selected?.source ?? "installed CLI default"}</small>
+
         </span>
         <Icon name="caret" />
       </button>
@@ -2056,7 +2060,7 @@ function ModelBrowser(props: {
             <Icon name="plus" />
             <span className="history-text">
               <span>{custom}</span>
-              <small>Use custom model id</small>
+
             </span>
           </button>
         )}
@@ -2070,12 +2074,13 @@ function ModelBrowser(props: {
           >
             <span className="history-text">
               <span>Default model</span>
-              <small>Use the installed CLI default</small>
+
             </span>
             {!props.value.trim() && <Icon name="check" />}
           </button>
         )}
-        {groups.map((group) => (
+        {resourceState(props.snapshot, "models") !== "ready" && <ResourceState state={resourceState(props.snapshot, "models") as "loading" | "error"} label="models" />}
+        {resourceState(props.snapshot, "models") === "ready" && groups.map((group) => (
           <Fragment key={group.source}>
             <div className="menu-head">{group.source}</div>
             {group.options.map((option) => {
@@ -2091,7 +2096,7 @@ function ModelBrowser(props: {
                 >
                   <span className="history-text">
                     <span>{option.label}</span>
-                    <small>{option.value}</small>
+
                   </span>
                   {active && <Icon name="check" />}
                 </button>
@@ -2099,7 +2104,7 @@ function ModelBrowser(props: {
             })}
           </Fragment>
         ))}
-        {filtered.length === 0 && !canUseCustom && (
+        {resourceState(props.snapshot, "models") === "ready" && filtered.length === 0 && !canUseCustom && (
           <div className="menu-empty">No matching models</div>
         )}
       </div>
@@ -2314,6 +2319,7 @@ function Composer(props: ComposerProps) {
   const sandboxOn = props.backend === "docker_sandbox";
   const sandbox = props.snapshot?.sandboxRuntime;
   const repos = props.snapshot?.repos ?? [];
+  const reposState = resourceState(props.snapshot, "repos");
   const sharedRepoMember = props.snapshot?.collaboration.role === "member";
   const repoSelectionLocked = props.reposLocked || sharedRepoMember;
   const selectedRepos = repos.filter((repo) => props.repoIds.includes(repo.id));
@@ -2331,6 +2337,7 @@ function Composer(props: ComposerProps) {
     !!draft.trim() &&
     (isAppOnlyCommand ||
       (!!props.snapshot?.trusted &&
+        resourceState(props.snapshot, "threads") === "ready" && props.snapshot.loadState !== "error" &&
         !noRepoSelected &&
         (!localOn || !!props.model.trim())));
   const sendDisabledReason = !props.snapshot
@@ -2363,7 +2370,7 @@ function Composer(props: ComposerProps) {
       : selectedRepos.length === 1
         ? selectedRepos[0].name
         : `${selectedRepos.length} repos`;
-  const reposTitle = noRepoSelected
+  const reposTitle = reposState !== "ready" ? (reposState === "loading" ? "Loading repositories" : "Repositories unavailable") : noRepoSelected
     ? "Select a repository for this run"
     : selectedRepos.length === 0
       ? "Connected repos — none attached yet"
@@ -2490,11 +2497,10 @@ function Composer(props: ComposerProps) {
                   type="button"
                   className="composer-icon-btn"
                   title={reposTitle}
-                  aria-label={reposLabel}
+                  aria-label={reposState === "ready" ? reposLabel : reposTitle}
                   onClick={toggle}
                 >
-                  <Icon name="plus" />
-                  {selectedRepos.length > 0 && <span className="context-dot" />}
+                  <Icon name={selectedRepos.length > 0 ? "folder" : "plus"} />
                 </button>
               )}
             >
@@ -2514,14 +2520,15 @@ function Composer(props: ComposerProps) {
                     </button>
                   )}
                 </div>
-                {repos.length === 0 && (
+                {resourceState(props.snapshot, "repos") !== "ready" && <ResourceState state={resourceState(props.snapshot, "repos") as "loading" | "error"} label="repositories" />}
+                {resourceState(props.snapshot, "repos") === "ready" && repos.length === 0 && (
                   <div className="menu-empty">No repositories connected</div>
                 )}
                 {repoSelectionLocked && (
                   <div className="menu-empty repo-lock-note">
                     {sharedRepoMember
-                      ? "The host manages the shared repository list. Keep matching clones open on this device."
-                      : "Repositories are fixed after this session creates a managed workspace. Start a new session to use a different set."}
+                      ? "Managed by the host."
+                      : "Repository fixed for this chat."}
                   </div>
                 )}
                 {repos.map((repo) => {
@@ -3703,6 +3710,7 @@ function ChangesView(props: {
     ) ?? [];
   const hasWorktree = props.repos.some((repo) => !!repo.worktree_path);
   const hasManagedWorktree = props.repos.some(isManagedThreadWorkspace);
+  useSheetAccessibility(open && hasWorktree);
   useEffect(() => {
     if (props.openSignal > 0) setOpen(true);
   }, [props.openSignal]);
@@ -3761,7 +3769,7 @@ function ChangesView(props: {
               <button
                 type="button"
                 className="primary-btn"
-                disabled={loading || (loaded && diffFiles.length === 0)}
+                disabled={!loaded || diffFiles.length === 0}
                 onClick={() => props.onApply(props.threadId)}
               >
                 <Icon name="check" />
@@ -3786,24 +3794,14 @@ function ChangesView(props: {
             </div>
           ))}
 
-          {loading && <div className="menu-empty">Loading diff...</div>}
+          {loading && <ResourceState state="loading" label="changes" />}
           {props.diffState === "error" && (
             <div className="menu-empty">Could not load the diff.</div>
           )}
           {loaded && diffFiles.length === 0 && (
             <div className="menu-empty">No changes to apply.</div>
           )}
-          {diffFiles.length > 0 && (
-            <div className="diff-list">
-              {diffFiles.map((file) => (
-                <div key={`${file.repo}:${file.path}`} className="diff-item">
-                  <span className="detail-name">{file.path}</span>
-                  <span className="diff-add">+{file.additions}</span>
-                  <span className="diff-del">-{file.deletions}</span>
-                </div>
-              ))}
-            </div>
-          )}
+          {loaded && props.diff && diffFiles.length > 0 && <ChangeLog diff={props.diff} />}
 
           {props.applyResult && (
             <div
@@ -4476,8 +4474,8 @@ function SettingsSheet(props: {
       >
         <header>
           <div className="settings-heading">
-            <strong>Perpetual settings</strong>
-            <span>Configure accounts, routing, and execution</span>
+            <strong>Settings</strong>
+
           </div>
           <IconButton title="Close" onClick={() => { if (!saving) props.onClose(); }}>
             <Icon name="close" />
@@ -4492,7 +4490,7 @@ function SettingsSheet(props: {
                 aria-controls={`settings-panel-${value}`}
                 className={section === value ? "active" : ""}
                 onClick={() => setSection(value)}>
-                <span className="settings-nav-copy"><strong>{label}</strong><small>{description}</small></span>
+                <span className="settings-nav-copy">{label}</span>
               </button>
             ))}
           </nav>
@@ -4612,7 +4610,7 @@ function SettingsSheet(props: {
                     <div className="agent-profile-title">
                       <AgentMark agent={profileAgent} />
                       <strong>{labelAgent(profileAgent)}</strong>
-                      <span>Default profile</span>
+
                     </div>
                     <label className="field">
                       <span>Model</span>
@@ -4670,7 +4668,7 @@ function SettingsSheet(props: {
                 }
               />
               <span>
-                Switch to the next ready account when the current one is limited
+                Auto-switch accounts
               </span>
             </label>
             <label className="toggle">
@@ -4684,7 +4682,7 @@ function SettingsSheet(props: {
                   })
                 }
               />
-              <span>Resume automatically when rate limits reset</span>
+              <span>Resume after reset</span>
             </label>
             <label className="toggle">
               <input
@@ -4695,10 +4693,10 @@ function SettingsSheet(props: {
                   setLimit({ ...limit, switch_back: event.target.checked })
                 }
               />
-              <span>Return to the original agent after it recovers</span>
+              <span>Return to preferred provider</span>
             </label>
             <label className="field">
-              <span>Retry unknown resets after seconds</span>
+              <span>Retry interval (seconds)</span>
               <input
                 type="number"
                 min={0}
@@ -4712,7 +4710,7 @@ function SettingsSheet(props: {
               />
             </label>
             <div className="field">
-              <span>Cloud agent order</span>
+              <span>Provider order</span>
               <div className="fallback-order" aria-label="Cloud fallback order">
                 {normalizeAgentOrder(limit.agent_priority).map((agent, index) => (
                   <div
@@ -4721,7 +4719,7 @@ function SettingsSheet(props: {
                   >
                     <span>
                       {labelAgent(agent)}
-                      <small>Cloud agent</small>
+
                     </span>
                     <button
                       type="button"

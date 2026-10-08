@@ -1,4 +1,4 @@
-Portions of src/components/ai.tsx and src/index.css are adapted from
+Portions of webview/src/ai.tsx, ai.css, changeLog.tsx and controls.css are adapted from
 Beautiful UI (https://www.beautifului.dev).
 
 MIT License

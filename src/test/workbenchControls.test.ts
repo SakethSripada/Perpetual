@@ -397,7 +397,7 @@ test("repo assignment UI retains the serialized write and lock guidance", () => 
   assert.match(controller, /drainRepoAssignments/);
   assert.match(controller, /repoAssignmentFailed/);
   assert.match(app, /pendingRepoAssignmentRef/);
-  assert.match(app, /Start a new session to use a different set/);
+  assert.match(app, /Start a new session to change repositories/);
 });
 
 type SignInModule = {

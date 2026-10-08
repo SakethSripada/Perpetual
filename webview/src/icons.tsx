@@ -2,6 +2,7 @@ import type { SVGProps } from "react";
 
 type IconName =
   | "inbox"
+  | "file"
   | "more"
   | "plus"
   | "history"
@@ -39,6 +40,7 @@ type IconName =
   | "devices";
 
 const PATHS: Record<IconName, string> = {
+  file: "M4 2h5l3 3v9H4zM9 2v3h3",
   inbox: "M2.5 3.5h11v9h-11zM2.5 9h3l1 1.5h3l1-1.5h3",
   more: "M3.5 8h.01M8 8h.01M12.5 8h.01",
   plus: "M8 2.5v11M2.5 8h11",

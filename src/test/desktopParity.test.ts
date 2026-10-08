@@ -241,6 +241,18 @@ test("a failed refresh preserves the loaded workspace instead of publishing empt
   controller.dispose();
 });
 
+test("unified change previews preserve hunk numbers, header-like code and deleted file paths", async () => {
+  const { parsePatch } = await bundle("webview/src/changeLog.tsx");
+  const files = parsePatch('diff --git a/example.ts b/example.ts\n--- a/example.ts\n+++ b/example.ts\n@@ -10,2 +20,2 @@\n context\n-old\n+++new\ndiff --git a/old.ts b/old.ts\n--- a/old.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-gone\n');
+  assert.deepEqual(files.get("example.ts").slice(1), [
+    { old: 10, current: 20, kind: "context", text: "context" },
+    { old: 11, current: null, kind: "del", text: "old" },
+    { old: null, current: 21, kind: "add", text: "++new" },
+  ]);
+  assert.equal(files.get("old.ts")[1].text, "gone");
+  assert.equal(parsePatch('--- "a/a file.ts"\n+++ "b/a file.ts"\n@@ -0,0 +1 @@\n+first').get("a file.ts")[1].current, 1);
+});
+
 test("paused local and Docker features reject operations without probing or contacting providers", async () => {
   const { WorkbenchController } = await bundle("src/node/workbenchController.ts", true);
   const called: string[] = [];

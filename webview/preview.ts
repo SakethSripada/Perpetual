@@ -39,7 +39,14 @@ let snapshot: WorkbenchSnapshot = {
   collaboration: { role: "standalone", connected: false, host_name: null, device_id: "preview", device_name: "Preview", devices: [], assignments: [], change_sets: [], server_time: now }, error: null,
 };
 const emit = (message: ExtensionMessage) => window.dispatchEvent(new MessageEvent("message", { data: message }));
-function refresh() { snapshot.limitPolicy!.accounts = snapshot.providerAccounts; emit({ type: "snapshot", snapshot: structuredClone(snapshot) }); }
+function refresh() {
+  snapshot.limitPolicy!.accounts = snapshot.providerAccounts;
+  const next = structuredClone(snapshot);
+  if (params.has("loading")) Object.assign(next, { loadState: "loading", detectionState: "loading", threads: [], repos: [], agents: [], providerAccounts: [], modelCatalog: [], limitPolicy: null });
+  if (params.has("detection-loading")) Object.assign(next, { detectionState: "loading", agents: [], providerAccounts: [], modelCatalog: [], limitPolicy: null });
+  if (params.has("load-error")) Object.assign(next, { loadState: "error", error: "Could not connect. Retry to reconnect.", threads: [], repos: [], agents: [], providerAccounts: [], modelCatalog: [], limitPolicy: null });
+  emit({ type: "snapshot", snapshot: next });
+}
 const messages: any[] = [];
 (window as any).previewMessages = messages;
 let state: unknown = {};
@@ -51,6 +58,7 @@ window.acquireVsCodeApi = () => ({ getState: () => state, setState: (next) => { 
       snapshot.details = message.threadId ? { events: [ { id: "user-one", thread_id: message.threadId, turn_id: "turn-one", role: "user", kind: "message", text: "Can you improve the dashboard and make the account state clearer?", data: {}, ts: now }, { id: "assistant-one", thread_id: message.threadId, turn_id: "turn-one", role: "assistant", kind: "message", text: "I updated the dashboard with a quieter layout and clear account states.\n\n### What changed\n\n- Added an account switcher near the composer.\n- Kept account identity visible throughout the session.\n- Improved spacing, keyboard focus, and narrow panel layouts.\n\nYou can review the changes and choose which account to use for your next run.", data: {}, ts: now } ], activities: [], repos: [], turns: [], queued: [], cloudRuns: [], diff: null, approvals: [] } : null;
     }
     if (message.type === 'selectThread' && snapshot.details) {
+      snapshot.details.repos = [{ repo_id: "repo-one", repo_name: "Perpetual", worktree_path: "C:/Development/Perpetual", branch: "am/thread-preview", workspace_backend: "host" }] as any;
       const toolEvents = [
         { id: 'call-read', thread_id: message.threadId, turn_id: 'turn-one', role: 'assistant', kind: 'tool_call', text: 'Read', data: { call_id: 'read', input: { file_path: 'src/accounts.tsx' } }, ts: now },
         { id: 'result-read', thread_id: message.threadId, turn_id: 'turn-one', role: 'tool', kind: 'tool_result', text: 'Read 180 lines', data: { call_id: 'read', ok: true }, ts: now },
@@ -62,6 +70,10 @@ window.acquireVsCodeApi = () => ({ getState: () => state, setState: (next) => { 
       if (message.threadId === 'session-three') {
         snapshot.details.events = snapshot.details.events.filter((event) => !['assistant-one', 'result-test'].includes(event.id));
       }
+    }
+    if (message.type === "loadDiff" && snapshot.details) {
+      snapshot.details.diffState = "ready";
+      snapshot.details.diff = { repos: [{ repo_id: "repo-one", repo_name: "Perpetual", remote_url: null, branch: "am/thread-preview", base_ref: "dev", head_ref: "HEAD", worktree_path: "C:/Development/Perpetual", files: [{ path: "src/accounts.tsx", additions: 2, deletions: 1 }], patch: "diff --git a/src/accounts.tsx b/src/accounts.tsx\n--- a/src/accounts.tsx\n+++ b/src/accounts.tsx\n@@ -1,2 +1,3 @@\n export function accounts() {\n-  return profiles;\n+  const identities = uniqueAccountChoices(profiles);\n+  return identities;\n" }] };
     }
     if (message.type === "activateProviderAccount") { const selected = snapshot.providerAccounts.find((a) => a.id === message.accountId)!; snapshot.providerAccounts.forEach((a) => { if (a.agent === selected.agent) a.active = a.id === selected.id && a.availability !== "limited"; }); }
     if (message.type === "updateProviderAccount") snapshot.providerAccounts = snapshot.providerAccounts.map((a) => a.id === message.accountId ? { ...a, ...message.patch } : a);
