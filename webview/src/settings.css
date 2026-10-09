@@ -54,8 +54,6 @@
 .settings-sheet .toggle { gap: 12px; min-height: 42px; padding: 10px 0; border-bottom: 1px solid var(--am-border-soft); line-height: 1.5; font-size: 12px; }
 .sheet .toggle-row { display: inline-flex; align-items: center; gap: 10px; min-height: 32px; cursor: pointer; font-size: 12px; }
 .sheet .toggle input[type="checkbox"], .sheet .toggle-row input[type="checkbox"] { flex: 0 0 32px; }
-.sheet .toggle input[type="checkbox"]:checked, .sheet .toggle-row input[type="checkbox"]:checked { background: var(--vscode-foreground); border-color: var(--vscode-foreground); }
-.sheet .toggle input[type="checkbox"]:checked::after, .sheet .toggle-row input[type="checkbox"]:checked::after { background: var(--vscode-editor-background); }
 .account-manager-hero { align-items: center; }
 .account-count { border: 0; padding: 0; font-size: 12px; }
 .account-add-row { display: flex; flex-wrap: wrap; gap: 8px; }

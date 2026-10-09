@@ -125,6 +125,7 @@ pub(crate) async fn run_cloud_command(
     timeout: Duration,
 ) -> Result<CommandOutput, CloudError> {
     let mut cmd = tokio::process::Command::new(binary);
+    am_proto::hide_console(cmd.as_std_mut());
     cmd.args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

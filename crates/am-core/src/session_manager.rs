@@ -21,6 +21,7 @@ pub type SessionPermit = AdmissionPermit;
 /// CPU/RAM.
 pub struct SessionManager {
     active: Mutex<HashMap<String, SessionControl>>,
+    launches: std::sync::Mutex<HashMap<String, std::sync::Weak<Mutex<()>>>>,
     admission: AdmissionController,
     inactive: Notify,
 }
@@ -29,9 +30,27 @@ impl SessionManager {
     pub fn new(max_concurrent: usize) -> Self {
         Self {
             active: Mutex::new(HashMap::new()),
+            launches: std::sync::Mutex::new(HashMap::new()),
             admission: AdmissionController::new(max_concurrent),
             inactive: Notify::new(),
         }
+    }
+
+    /// Serialize only the startup of the same task. Different tasks can still
+    /// initialize concurrently; weak entries do not retain finished task IDs.
+    pub async fn lock_start(&self, task_id: &str) -> tokio::sync::OwnedMutexGuard<()> {
+        let lock = {
+            let mut launches = self.launches.lock().unwrap_or_else(|err| err.into_inner());
+            launches.retain(|_, lock| lock.strong_count() > 0);
+            if let Some(lock) = launches.get(task_id).and_then(std::sync::Weak::upgrade) {
+                lock
+            } else {
+                let lock = std::sync::Arc::new(Mutex::new(()));
+                launches.insert(task_id.to_string(), std::sync::Arc::downgrade(&lock));
+                lock
+            }
+        };
+        lock.lock_owned().await
     }
 
     pub async fn is_active(&self, task_id: &str) -> bool {
@@ -246,5 +265,31 @@ mod tests {
         assert!(!mgr.is_active("b").await);
         assert!(rx_a.try_recv().is_ok());
         assert!(rx_b.try_recv().is_ok());
+    }
+    #[tokio::test]
+    async fn startup_lock_does_not_block_other_tasks_and_releases_on_drop() {
+        let mgr = SessionManager::new(2);
+        let first = mgr.lock_start("first").await;
+        let other = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            mgr.lock_start("other"),
+        )
+        .await
+        .expect("independent tasks start concurrently");
+        assert!(tokio::time::timeout(
+            std::time::Duration::from_millis(10),
+            mgr.lock_start("first")
+        )
+        .await
+        .is_err());
+        drop(first);
+        let retry = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            mgr.lock_start("first"),
+        )
+        .await
+        .unwrap();
+        drop(retry);
+        drop(other);
     }
 }

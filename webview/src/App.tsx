@@ -24,7 +24,6 @@ import type {
   CollaborationDevice,
   ExecutionBackend,
   ExtensionMessage,
-  GithubRepository,
   LimitPolicy,
   LocalModelPolicy,
   LocalModelProvider,
@@ -36,11 +35,28 @@ import type {
   ThreadDetails,
   WorkbenchSnapshot,
 } from "./types";
-import { BrandMark, Icon } from "./icons";
-import { CLOUD_CONTINUITY_ENABLED, LAN_COLLABORATION_ENABLED } from "./featureFlags";
+import { BrandMark, Icon, ProviderLogo as AgentMark } from "./icons";
+import { Accounts, AccountSwitcher, activeAccount, accountName } from "./accounts";
+import { SessionSidebar, statusLabel } from "./navigation";
+import { SessionHistory } from "./sessions";
+import { resourceState, ResourceState } from "./loading";
+import { ChangeLog } from "./changeLog";
+import { UsageLimits } from "./usage";
+import { usageWindows } from "./usageData";
+import { ChoiceSelect } from "./controls";
+import { ModelControls } from "./modelControls";
+import { readModelSelections, resolveModelSelection, formatModelLabel, type ModelSelections } from "./modelSelection";
+import { RepositoryPicker } from "./repositories";
+import { configureTransport, request } from "./bridge";
+import { useSheetAccessibility } from "./dialogs";
+import { createEventBatcher, mergeThreadEvents } from "./streaming";
+import { LoadingState, ToolRun } from "./ai";
+import { useNotifications, NotificationCenter, ErrorStatus } from "./notifications";
+import { CLOUD_CONTINUITY_ENABLED, LAN_COLLABORATION_ENABLED, LOCAL_MODELS_ENABLED, DOCKER_SANDBOX_ENABLED } from "./featureFlags";
 import { Markdown } from "./markdown";
 import {
   buildTranscriptItems,
+  groupToolRuns,
   reconcilePendingMessages,
   type PendingTranscriptMessage,
   type TranscriptItem,
@@ -58,6 +74,7 @@ type PersistedState = {
   lastAgent?: AgentKind;
   lastModel?: string;
   lastReasoning?: string;
+  modelSelections?: ModelSelections;
 };
 
 type PendingRepoAssignment = {
@@ -85,27 +102,37 @@ const vscode =
     setState: () => undefined,
   } satisfies VsCodeApi);
 
+configureTransport((message) => vscode.postMessage(message));
+
 function readPersistedState(): PersistedState {
   const state = vscode.getState();
   return state && typeof state === "object" ? (state as PersistedState) : {};
 }
 
 function writePersistedState(state: PersistedState): void {
+  if (JSON.stringify(state) === JSON.stringify(vscode.getState())) return;
   vscode.setState(state);
 }
 
 export default function App() {
   const persisted = useMemo(() => readPersistedState(), []);
+  const modelSelectionsRef = useRef(readModelSelections(persisted));
+  const confirmedModelSelectionsRef = useRef(modelSelectionsRef.current);
+  const modelWritesPending = useRef(0);
+  const modelWriteRevision = useRef(0);
   const [snapshot, setSnapshot] = useState<WorkbenchSnapshot | null>(null);
   const [agent, setAgent] = useState<AgentKind>(
     persisted.lastAgent ?? "claude_code",
   );
+  const providerChoiceRef = useRef<{ threadId: string | null; agent: AgentKind } | null>(null);
+  const activeAgentRef = useRef(agent);
+  activeAgentRef.current = agent;
   const [permission, setPermission] =
     useState<PermissionPolicy>("workspace_write");
   const [backend, setBackend] = useState<ExecutionBackend>("host");
-  const [model, setModel] = useState(persisted.lastModel ?? "");
+  const [model, setModel] = useState(modelSelectionsRef.current[agent]?.model ?? "");
   const [reasoning, setReasoning] = useState(
-    persisted.lastReasoning ?? "medium",
+    modelSelectionsRef.current[agent]?.reasoning ?? "",
   );
   const [localProvider, setLocalProvider] = useState<LocalModelProvider | "">(
     "",
@@ -117,29 +144,34 @@ export default function App() {
   const [repoIds, setRepoIds] = useState<string[]>(persisted.repoIds ?? []);
   const repoIdsRef = useRef(repoIds);
   repoIdsRef.current = repoIds;
-  const [notice, setNoticeText] = useState<string | null>(null);
-  const [noticeIsError, setNoticeIsError] = useState(false);
-  const setNotice = (message: string | null, isError = false) => {
-    setNoticeIsError(isError);
-    setNoticeText(message);
-  };
+  const notifications = useNotifications();
+  const setNotice = notifications.notify;
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [monitorOpen, setMonitorOpen] = useState(false);
   const [collaborationOpen, setCollaborationOpen] = useState(false);
   const [collaborationInvite, setCollaborationInvite] = useState<string | null>(null);
   const [executionDeviceId, setExecutionDeviceId] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [githubOpen, setGithubOpen] = useState(false);
+  useEffect(() => {
+    const search = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setHistoryOpen(true); }
+    };
+    window.addEventListener("keydown", search);
+    return () => window.removeEventListener("keydown", search);
+  }, []);
+  useSheetAccessibility(settingsOpen || monitorOpen || collaborationOpen, settingsOpen ? (snapshot?.limitPolicy ? "settings" : "settings-pending") : monitorOpen ? "status" : "collaboration");
   const [reviewOpen, setReviewOpen] = useState<{
     threadId: string;
     nonce: number;
   } | null>(null);
-  const [githubRepos, setGithubRepos] = useState<GithubRepository[]>([]);
-  const [githubLoading, setGithubLoading] = useState(false);
   const [welcomeLeaving, setWelcomeLeaving] = useState(false);
   // Optimistically-rendered user messages: shown the instant the user sends, then
   // dropped once the real event for them arrives in a snapshot.
   const [pending, setPending] = useState<PendingMessage[]>([]);
+  const submissionLock = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [recoveryDraft, setRecoveryDraft] = useState<{ text: string; nonce: number } | null>(null);
+  const [showLatest, setShowLatest] = useState(false);
   const [editDraft, setEditDraft] = useState<{ text: string; nonce: number } | null>(null);
   const [answeredQuestionEvents, setAnsweredQuestionEvents] = useState<Set<string>>(
     () => new Set(),
@@ -177,49 +209,46 @@ export default function App() {
   });
 
   useEffect(() => {
+    const stream = createEventBatcher((updates) => {
+      const current = snapshotRef.current;
+      if (!current?.details) return;
+      const visible = updates.filter((event) => event.thread_id === current.selectedThreadId);
+      if (!visible.length) return;
+      const events = mergeThreadEvents(current.details.events, visible);
+      for (const event of visible) if (event.role === "assistant" && event.text) animatedMessageIdsRef.current.add(event.id);
+      const next = { ...current, details: { ...current.details, events } };
+      snapshotRef.current = next; setSnapshot(next);
+      setPending((pending) => reconcilePendingMessages({ pending, selectedStatus: current.threads.find((thread) => thread.id === current.selectedThreadId)?.status, events, queued: current.details!.queued }));
+    }, (callback) => window.requestAnimationFrame(callback), (frame) => window.cancelAnimationFrame(frame));
     const onMessage = (event: MessageEvent<ExtensionMessage>) => {
       const incoming = event.data;
-      if (incoming.type === "threadEvent") {
-        const current = snapshotRef.current;
-        const details = current?.details;
-        if (
-          !current ||
-          !details ||
-          current.selectedThreadId !== incoming.event.thread_id
-        ) {
-          return;
-        }
-        const events = [...details.events];
-        const index = events.findIndex((item) => item.id === incoming.event.id);
-        if (index >= 0) events[index] = incoming.event;
-        else events.push(incoming.event);
-        const next = {
-          ...current,
-          details: { ...details, events },
-        };
-        if (incoming.event.role === "assistant" && incoming.event.text) {
-          animatedMessageIdsRef.current.add(incoming.event.id);
-        }
+      if (incoming.type === "detectionUpdate") {
+        if (!snapshotRef.current) return;
+        const next = { ...snapshotRef.current, ...incoming.patch };
         snapshotRef.current = next;
         setSnapshot(next);
-        const selected = current.threads.find(
-          (thread) => thread.id === current.selectedThreadId,
-        );
-        setPending((prev) =>
-          reconcilePendingMessages({
-            pending: prev,
-            selectedStatus: selected?.status,
-            events,
-            queued: details.queued,
-          }),
-        );
+        return;
+      }
+      if (incoming.type === "submitFailed") {
+        setNotice(incoming.message, true);
+        setPending((current) => current.filter((item) => item.id !== incoming.clientMessageId));
+        const selected = snapshotRef.current?.selectedThreadId;
+        if (!incoming.threadId || selected === incoming.threadId) setRecoveryDraft({ text: incoming.text, nonce: Date.now() });
+        return;
+      }
+      if (incoming.type === "threadEvent") {
+        if (snapshotRef.current?.selectedThreadId === incoming.event.thread_id) stream.enqueue(incoming.event);
         return;
       }
       if (incoming.type === "snapshot") {
+        stream.flush();
         const previous = snapshotRef.current;
         const sameThread =
           !!previous &&
           previous.selectedThreadId === incoming.snapshot.selectedThreadId;
+        if (sameThread && previous.details && incoming.snapshot.details) {
+          incoming.snapshot = { ...incoming.snapshot, details: { ...incoming.snapshot.details, events: mergeThreadEvents(previous.details.events, incoming.snapshot.details.events) } };
+        }
         if (!sameThread) {
           animatedMessageIdsRef.current.clear();
         } else {
@@ -260,12 +289,6 @@ export default function App() {
             queued,
           }),
         );
-        return;
-      }
-      if (incoming.type === "githubRepos") {
-        setGithubRepos(incoming.repos);
-        setGithubLoading(false);
-        setGithubOpen(true);
         return;
       }
       if (incoming.type === "repoConnected") {
@@ -311,7 +334,7 @@ export default function App() {
       }
       if (incoming.type === "notice" || incoming.type === "error") {
         setNotice(incoming.message, incoming.type === "error");
-        if (incoming.type === "error") setPending([]);
+
         return;
       }
       if (incoming.type === "sandboxLoginPrompt") {
@@ -325,7 +348,7 @@ export default function App() {
     };
     window.addEventListener("message", onMessage);
     vscode.postMessage({ type: "ready" });
-    return () => window.removeEventListener("message", onMessage);
+    return () => { stream.dispose(); window.removeEventListener("message", onMessage); };
   }, []);
 
   useEffect(
@@ -336,12 +359,6 @@ export default function App() {
     },
     [],
   );
-
-  useEffect(() => {
-    if (!notice) return;
-    const timer = window.setTimeout(() => setNotice(null), 6500);
-    return () => window.clearTimeout(timer);
-  }, [notice]);
 
   useEffect(() => {
     writePersistedState({
@@ -379,6 +396,7 @@ export default function App() {
   useEffect(() => {
     if (!snapshot) return;
     const nextAgent =
+      (providerChoiceRef.current?.threadId === effectiveSelectedId ? providerChoiceRef.current.agent : undefined) ??
       selectedThread?.active_agent ??
       selectedThread?.preferred_agent ??
       (effectiveSelectedId === null
@@ -391,18 +409,16 @@ export default function App() {
       nextAgent,
       selectedThread?.execution_backend ?? snapshot.defaults.execution_backend,
     );
-    const nextModel =
-      selectedThread?.model ??
-      (effectiveSelectedId === null ? composerDefaultsRef.current.model : null) ??
-      snapshot.defaults.model ??
-      defaults.model ??
-      "";
-    const nextReasoning =
-      selectedThread?.reasoning ??
-      (effectiveSelectedId === null ? composerDefaultsRef.current.reasoning : null) ??
-      snapshot.defaults.reasoning ??
-      defaults.reasoning ??
-      "medium";
+    if (snapshot.modelSelections && modelWritesPending.current === 0) {
+      modelSelectionsRef.current = { ...modelSelectionsRef.current, ...readModelSelections({ modelSelections: snapshot.modelSelections }) };
+      confirmedModelSelectionsRef.current = modelSelectionsRef.current;
+    }
+    const savedSelection = modelSelectionsRef.current[nextAgent];
+    const resolved = resolveModelSelection(snapshot, nextAgent,
+      savedSelection?.model ?? selectedThread?.model ?? defaults.model ?? "",
+      savedSelection?.reasoning ?? selectedThread?.reasoning ?? defaults.reasoning ?? "");
+    const nextModel = resolved.model;
+    const nextReasoning = resolved.reasoning;
     const nextLocalProvider =
       selectedThread?.local_provider ?? snapshot.defaults.local_provider ?? "";
     const nextLocalBaseUrl =
@@ -427,8 +443,8 @@ export default function App() {
       setBackend(nextBackend);
       setModel(nextModel);
       setReasoning(nextReasoning);
-      setLocalProvider(nextAgent === "codex" ? nextLocalProvider : "");
-      setLocalBaseUrl(nextAgent === "codex" ? nextLocalBaseUrl : "");
+      setLocalProvider(LOCAL_MODELS_ENABLED && nextAgent === "codex" ? nextLocalProvider : "");
+      setLocalBaseUrl(LOCAL_MODELS_ENABLED && nextAgent === "codex" ? nextLocalBaseUrl : "");
       setTaskBudget(nextTaskBudget);
     }
     if (
@@ -478,6 +494,8 @@ export default function App() {
     snapshot?.details?.repos,
     snapshot?.defaultRepoIds,
     snapshot?.runDefaults,
+    snapshot?.modelCatalog,
+    snapshot?.modelSelections,
   ]);
 
   useEffect(() => {
@@ -487,6 +505,7 @@ export default function App() {
       lastAgent: agent,
       lastModel: model,
       lastReasoning: reasoning,
+      modelSelections: modelSelectionsRef.current,
     });
   }, [agent, model, reasoning]);
 
@@ -549,6 +568,7 @@ export default function App() {
     if (!el) return;
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     stickToBottomRef.current = distanceFromBottom < 96;
+    setShowLatest(distanceFromBottom >= 96);
   };
 
   useEffect(() => {
@@ -560,7 +580,7 @@ export default function App() {
       threadId,
       pendingCount: pending.length,
     };
-    if (threadChanged) stickToBottomRef.current = true;
+    if (threadChanged) { stickToBottomRef.current = true; setShowLatest(false); }
     if (!stickToBottomRef.current && !pendingAdded) return;
     window.requestAnimationFrame(() => {
       const el = transcriptRef.current;
@@ -623,7 +643,7 @@ export default function App() {
   // transcript; it hands us the final text here on submit.
   const send = (raw: string): boolean => {
     const text = raw.trim();
-    if (!text) return false;
+    if (!text || submissionLock.current) return false;
     const command = resolveAppCommand(text, agent);
     if (command?.kind === "error") {
       setNotice(command.message);
@@ -697,14 +717,11 @@ export default function App() {
           return false;
         }
         if (nextModel.toLowerCase() === "default") {
-          setModel("");
+          saveModelSelection("", "");
           setNotice(`Using the ${labelAgent(agent)} default model for future runs.`);
           return true;
         }
-        setModel(nextModel);
-        setReasoning(
-          reasoningAfterModelChange(agent, snapshot, nextModel, reasoning),
-        );
+        chooseModel(nextModel);
         setNotice(`Model set to ${prettyModel(nextModel)} for future ${labelAgent(agent)} runs.`);
         return true;
       }
@@ -715,7 +732,7 @@ export default function App() {
           return false;
         }
         if (["auto", "default"].includes(requestedEffort.toLowerCase())) {
-          setReasoning("");
+          chooseReasoning("");
           setNotice(`Using the ${labelAgent(agent)} default reasoning effort.`);
           return false;
         }
@@ -729,7 +746,7 @@ export default function App() {
           );
           return true;
         }
-        setReasoning(supportedEffort.value);
+        chooseReasoning(supportedEffort.value);
         setNotice(
           `Reasoning effort set to ${humanize(supportedEffort.value)} for future ${labelAgent(agent)} runs.`,
         );
@@ -766,9 +783,14 @@ export default function App() {
     const runPermission = run?.permission ?? permission;
     const submittedLocalProvider =
       agent === "codex" ? localProvider || null : null;
+    const effectiveSelection = resolveModelSelection(snapshot, agent, model, reasoning);
+    if (effectiveSelection.unavailable) {
+      setNotice("This model is unavailable for the current sign-in. Choose another model.", true);
+      return false;
+    }
     const submittedModel = sanitizeModelForAgent(
       agent,
-      model,
+      effectiveSelection.model,
       submittedLocalProvider,
     );
     if (model.trim() && !submittedModel) {
@@ -795,7 +817,9 @@ export default function App() {
       ...prev,
       { id: clientMessageId, text, firstTurn },
     ]);
-    vscode.postMessage({
+    submissionLock.current = true;
+    setSubmitting(true);
+    void request({
       type: "submit",
       message,
       clientMessageId,
@@ -805,16 +829,47 @@ export default function App() {
       permission: runPermission,
       executionBackend: sanitizeBackend(agent, backend),
       model: submittedModel,
-      reasoning: reasoning.trim() || null,
+      reasoning: effectiveSelection.reasoning || null,
       localProvider: submittedLocalProvider,
       localBaseUrl: submittedLocalProvider ? localBaseUrl.trim() || null : null,
       taskBudget,
       deviceId: executionDeviceId,
-    });
+    }).catch((error) => {
+      setNotice(error instanceof Error ? error.message : String(error), true);
+      setPending((current) => current.filter((item) => item.id !== clientMessageId));
+      setRecoveryDraft({ text, nonce: Date.now() });
+    }).finally(() => { submissionLock.current = false; setSubmitting(false); });
     return true;
   };
 
+  const saveModelSelection = (nextModel: string, nextReasoning: string) => {
+    const resolved = resolveModelSelection(snapshot, agent, nextModel, nextReasoning);
+    if (modelSelectionsRef.current[agent]?.model === resolved.model && modelSelectionsRef.current[agent]?.reasoning === resolved.reasoning) return;
+    const revision = ++modelWriteRevision.current;
+    modelWritesPending.current++;
+    void request({ type: "setModelSelection", agent, model: resolved.model, reasoning: resolved.reasoning }).then(() => {
+      confirmedModelSelectionsRef.current = { ...confirmedModelSelectionsRef.current, [agent]: { model: resolved.model, reasoning: resolved.reasoning } };
+    }).catch((error) => {
+      if (revision === modelWriteRevision.current) {
+        const previous = confirmedModelSelectionsRef.current;
+        modelSelectionsRef.current = previous;
+        const currentAgent = activeAgentRef.current;
+        const restored = resolveModelSelection(snapshot, currentAgent, previous[currentAgent]?.model, previous[currentAgent]?.reasoning);
+        setModel(restored.model); setReasoning(restored.reasoning);
+        writePersistedState({ ...readPersistedState(), modelSelections: previous });
+      }
+      setNotice(error instanceof Error ? error.message : String(error), true);
+    }).finally(() => { modelWritesPending.current--; });
+    modelSelectionsRef.current = { ...modelSelectionsRef.current, [agent]: { model: resolved.model, reasoning: resolved.reasoning } };
+    setModel(resolved.model);
+    setReasoning(resolved.reasoning);
+    writePersistedState({ ...readPersistedState(), lastAgent: agent, modelSelections: modelSelectionsRef.current });
+  };
+  const chooseModel = (nextModel: string) => saveModelSelection(nextModel, "");
+  const chooseReasoning = (nextReasoning: string) => saveModelSelection(model, nextReasoning);
+
   const pickAgent = (nextAgent: AgentKind) => {
+    providerChoiceRef.current = { threadId: effectiveSelectedId, agent: nextAgent };
     setAgent(nextAgent);
     if (nextAgent !== "codex") {
       setBackend("host");
@@ -829,9 +884,10 @@ export default function App() {
       setReasoning("");
       return;
     }
-    const defaults = runDefaults(snapshot, nextAgent);
-    setModel(defaults.model ?? "");
-    setReasoning(defaults.reasoning ?? "");
+    const saved = modelSelectionsRef.current[nextAgent];
+    const resolved = resolveModelSelection(snapshot, nextAgent, saved?.model, saved?.reasoning);
+    setModel(resolved.model);
+    setReasoning(resolved.reasoning);
   };
 
   const setDraftRepoIds = (next: string[]) => {
@@ -881,14 +937,15 @@ export default function App() {
     vscode.postMessage({ type: "selectThread", threadId: id });
   };
 
-  const deleteThread = (id: string, force: boolean) => {
+  const deleteThread = async (id: string, force: boolean) => {
+    await request({ type: "deleteThread", threadId: id, force });
     // Deleting clears the daemon's selection; if we're removing the open thread,
     // jump to a fresh session optimistically so the view doesn't flash stale.
     if (id === effectiveSelectedId) {
       setPending([]);
       setNavThreadId(null);
     }
-    vscode.postMessage({ type: "deleteThread", threadId: id, force });
+
   };
   const reviewChanges = () => {
     if (!selectedThread) return;
@@ -901,22 +958,18 @@ export default function App() {
 
   return (
     <main className="app-shell">
+      <SessionSidebar snapshot={snapshot} selected={selectedThread} agent={agent} onNew={newSession} onSelect={selectThread} onDelete={deleteThread} onAccounts={() => setSettingsOpen(true)} onAgent={pickAgent} onSettings={() => setSettingsOpen(true)} onReview={(id) => { selectThread(id); setReviewOpen({ threadId: id, nonce: Date.now() }); vscode.postMessage({ type: "loadDiff", threadId: id }); }} />
+      <div className="workspace-main">
       <header className="topbar">
         <div className="brand">
           <div className="brand-text">
             <strong>{selectedThread?.title ?? "New session"}</strong>
+
           </div>
         </div>
         <div className="top-actions">
-          <HistoryMenu
-            open={historyOpen}
-            setOpen={setHistoryOpen}
-            snapshot={snapshot}
-            selectedThread={selectedThread}
-            onNew={newSession}
-            onSelect={selectThread}
-            onDelete={deleteThread}
-          />
+          <NotificationCenter state={notifications} />
+          <IconButton title="Search conversations" onClick={() => setHistoryOpen(true)}><Icon name="search" /></IconButton>
           <IconButton title="Settings" onClick={() => setSettingsOpen(true)}>
             <Icon name="settings" />
           </IconButton>
@@ -954,14 +1007,8 @@ export default function App() {
         </div>
       </header>
 
-      {notice && (
-        <div className={`notice${noticeIsError ? " error" : ""}`} role={noticeIsError ? "alert" : "status"}>
-          <span>{notice}</span>
-          <IconButton title="Dismiss" onClick={() => setNotice(null)}>
-            <Icon name="close" />
-          </IconButton>
-        </div>
-      )}
+      <div className="activity-status" role="status">{notifications.status}</div>
+      <ErrorStatus state={notifications} onRefresh={() => vscode.postMessage({ type: "refresh" })} />
 
       {CLOUD_CONTINUITY_ENABLED && <CloudStatusBar
         selectedThread={selectedThread}
@@ -985,21 +1032,26 @@ export default function App() {
         }
       />}
 
+      {showLatest && <button className="jump-to-latest" onClick={() => { transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: prefersReducedMotion() ? "auto" : "smooth" }); stickToBottomRef.current = true; setShowLatest(false); }}>↓ Latest messages</button>}
       <section className="conversation">
         <div
           className={`transcript${welcomeLeaving ? " is-starting" : ""}`}
           ref={transcriptRef}
           onScroll={onTranscriptScroll}
         >
-          {navigating && <div className="thinking">Loading…</div>}
-          {!navigating &&
+          {navigating && <ResourceState state="loading" label="chat" />}
+          {!navigating && resourceState(snapshot, "threads") !== "ready" && !selectedThread && <ResourceState state={resourceState(snapshot, "threads") as "loading" | "error"} label="workspace" />}
+          {!navigating && resourceState(snapshot, "threads") === "ready" &&
             ((!selectedThread && pending.length === 0) || welcomeLeaving) && (
             <EmptyState
               exiting={welcomeLeaving}
+              onExample={(text) => setEditDraft({ text, nonce: Date.now() })}
             />
           )}
           {(selectedThread || pending.length > 0) &&
-            transcriptItems.map((item) => (
+            groupToolRuns(transcriptItems).map((item, index, blocks) => item.type === "tools" ? (
+              <ToolRun key={item.id} events={item.events} live={isRunning && index === blocks.length - 1} onOpenFiles={reviewChanges} />
+            ) : (
               <TranscriptItemView
                 key={transcriptItemKey(item)}
                 item={item}
@@ -1065,8 +1117,12 @@ export default function App() {
         </div>
       </section>
 
+      <div className="account-dock"><AccountSwitcher snapshot={snapshot} agent={agent} onManage={() => setSettingsOpen(true)} onPickAgent={pickAgent} />{snapshot?.detectionState === "loading" && <span className="detection-hint">Updating models and accounts…</span>}</div>
       <Composer
         snapshot={snapshot}
+        submitting={submitting}
+        recoveryDraft={recoveryDraft}
+        onRecoveryConsumed={() => setRecoveryDraft(null)}
         selectedThread={selectedThread}
         agent={agent}
         setAgent={pickAgent}
@@ -1075,9 +1131,9 @@ export default function App() {
         backend={backend}
         setBackend={setBackend}
         model={model}
-        setModel={setModel}
+        setModel={chooseModel}
         reasoning={reasoning}
-        setReasoning={setReasoning}
+        setReasoning={chooseReasoning}
         localProvider={localProvider}
         setLocalProvider={setLocalProvider}
         localBaseUrl={localBaseUrl}
@@ -1101,10 +1157,6 @@ export default function App() {
             threadId: selectedThread.id,
           })
         }
-        onGithub={() => {
-          setGithubLoading(true);
-          vscode.postMessage({ type: "githubList" });
-        }}
         onLocalRepo={() => vscode.postMessage({ type: "connectLocalRepo" })}
         onRemoveRepo={(repoId) =>
           vscode.postMessage({ type: "deleteRepo", repoId })
@@ -1126,6 +1178,7 @@ export default function App() {
           diff={details.diff}
           diffState={details.diffState ?? "idle"}
           repos={details.repos}
+          connectedRepos={snapshot?.repos ?? []}
           applyResult={details.applyResult ?? null}
           openSignal={
             reviewOpen?.threadId === selectedThread.id ? reviewOpen.nonce : 0
@@ -1142,7 +1195,10 @@ export default function App() {
         />
       )}
 
-      {settingsOpen && snapshot && (
+      {historyOpen && <SessionHistory snapshot={snapshot} selectedId={effectiveSelectedId} onClose={() => setHistoryOpen(false)} onNew={newSession} onSelect={selectThread} onDelete={deleteThread} onReview={(id) => { selectThread(id); setReviewOpen({ threadId: id, nonce: Date.now() }); vscode.postMessage({ type: "loadDiff", threadId: id }); }} />}
+
+      {settingsOpen && (!snapshot || !snapshot.limitPolicy) && <div className="sheet-backdrop" onClick={() => setSettingsOpen(false)}><section className="sheet settings-sheet settings-pending-sheet" role="dialog" aria-modal="true" aria-label="Settings" onClick={(event) => event.stopPropagation()}><header><strong>Settings</strong><IconButton title="Close" onClick={() => setSettingsOpen(false)}><Icon name="close" /></IconButton></header><ResourceState state={snapshot?.error || snapshot?.detectionState === "error" ? "error" : "loading"} label="settings" /></section></div>}
+      {settingsOpen && snapshot?.limitPolicy && (
         <SettingsSheet
           snapshot={snapshot}
           onClose={() => setSettingsOpen(false)}
@@ -1152,10 +1208,15 @@ export default function App() {
             cloudPolicy,
             localModelPolicy,
           ) => {
+            return (async () => {
+            await request({ type: "setLimitPolicy", policy: limitPolicy, preserveAccounts: true });
+            if (DOCKER_SANDBOX_ENABLED) await request({ type: "setSandboxPolicy", policy: sandboxPolicy });
+            if (CLOUD_CONTINUITY_ENABLED) await request({ type: "setCloudPolicy", policy: cloudPolicy });
+            if (LOCAL_MODELS_ENABLED) await request({ type: "setLocalModelPolicy", policy: localModelPolicy });
             const activeProfile = limitPolicy.agent_profiles?.find(
               (profile) => profile.agent === agent,
             );
-            if (activeProfile && !selectedThread) {
+            if (activeProfile && !selectedThread && !modelSelectionsRef.current[agent]) {
               const nextModel = activeProfile.model ?? "";
               const nextReasoning = activeProfile.reasoning ?? "";
               composerDefaultsRef.current = {
@@ -1166,19 +1227,8 @@ export default function App() {
               setModel(nextModel);
               setReasoning(nextReasoning);
             }
-            vscode.postMessage({ type: "setLimitPolicy", policy: limitPolicy });
-            vscode.postMessage({
-              type: "setSandboxPolicy",
-              policy: sandboxPolicy,
-            });
-            if (CLOUD_CONTINUITY_ENABLED) {
-              vscode.postMessage({ type: "setCloudPolicy", policy: cloudPolicy });
-            }
-            vscode.postMessage({
-              type: "setLocalModelPolicy",
-              policy: localModelPolicy,
-            });
             setSettingsOpen(false);
+            })();
           }}
           onOpenSettings={() => vscode.postMessage({ type: "openSettings" })}
           onOpenExternal={(url) =>
@@ -1205,7 +1255,6 @@ export default function App() {
           onSandboxLogin={(codex) =>
             vscode.postMessage({ type: "sandboxLogin", codex })
           }
-          onGithubSignIn={() => vscode.postMessage({ type: "githubSignIn" })}
           onRefreshReadiness={() =>
             vscode.postMessage({ type: "refreshReadiness" })
           }
@@ -1215,6 +1264,8 @@ export default function App() {
       {monitorOpen && snapshot && (
         <MonitorSheet
           snapshot={snapshot}
+          draftAgent={agent}
+          draftModel={model}
           selectedThread={selectedThread}
           details={details ?? null}
           onClose={() => setMonitorOpen(false)}
@@ -1281,17 +1332,7 @@ export default function App() {
         />
       )}
 
-      {githubOpen && (
-        <GithubSheet
-          loading={githubLoading}
-          repos={githubRepos}
-          onClose={() => setGithubOpen(false)}
-          onConnect={(repo) => {
-            setGithubOpen(false);
-            vscode.postMessage({ type: "connectGithubRepo", repo });
-          }}
-        />
-      )}
+      </div>
     </main>
   );
 }
@@ -1642,14 +1683,9 @@ function nextRevealBoundary(text: string, proposed: number): number {
 }
 
 function WorkingIndicator() {
+  const [since] = useState(() => Date.now());
   return (
-    <div
-      className="thinking working-indicator"
-      role="status"
-      aria-live="polite"
-    >
-      <span className="thinking-label">Working</span>
-    </div>
+    <LoadingState label="Working" since={since} />
   );
 }
 
@@ -1790,6 +1826,7 @@ function Popover(props: {
     if (!props.open) return;
     const onPointerDown = (event: MouseEvent) => {
       const target = event.target as Node;
+      if (target instanceof Element && target.closest(".action-menu")) return;
       if (
         !menuRef.current?.contains(target) &&
         !triggerRef.current?.contains(target)
@@ -1798,11 +1835,18 @@ function Popover(props: {
       }
     };
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || (event.target instanceof Element && event.target.closest(".action-menu"))) return;
       if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
         props.setOpen(false);
+        triggerRef.current?.focus();
         return;
       }
       if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      const target = event.target;
+      if (target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) return;
+      if (target instanceof Node && !menuRef.current?.contains(target) && !triggerRef.current?.contains(target)) return;
       const focusable = Array.from(
         menuRef.current?.querySelectorAll<HTMLElement>(
           'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
@@ -1822,10 +1866,10 @@ function Popover(props: {
       focusable[next]?.focus();
     };
     window.addEventListener("mousedown", onPointerDown);
-    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onKeyDown, true);
     return () => {
       window.removeEventListener("mousedown", onPointerDown);
-      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keydown", onKeyDown, true);
     };
   }, [props.open]);
 
@@ -1954,7 +1998,7 @@ function ModelField(props: {
             {selected?.label ??
               (props.value ? prettyModel(props.value) : "Default model")}
           </span>
-          <small>{selected?.source ?? "installed CLI default"}</small>
+
         </span>
         <Icon name="caret" />
       </button>
@@ -2038,26 +2082,12 @@ function ModelBrowser(props: {
             <Icon name="plus" />
             <span className="history-text">
               <span>{custom}</span>
-              <small>Use custom model id</small>
+
             </span>
           </button>
         )}
-        {!normalizedQuery && (
-          <button
-            type="button"
-            role="option"
-            aria-selected={!props.value.trim()}
-            className={!props.value.trim() ? "menu-item selected" : "menu-item"}
-            onClick={() => props.onSelect("")}
-          >
-            <span className="history-text">
-              <span>Default model</span>
-              <small>Use the installed CLI default</small>
-            </span>
-            {!props.value.trim() && <Icon name="check" />}
-          </button>
-        )}
-        {groups.map((group) => (
+        {resourceState(props.snapshot, "models") !== "ready" && <ResourceState state={resourceState(props.snapshot, "models") as "loading" | "error"} label="models" />}
+        {resourceState(props.snapshot, "models") === "ready" && groups.map((group) => (
           <Fragment key={group.source}>
             <div className="menu-head">{group.source}</div>
             {group.options.map((option) => {
@@ -2073,7 +2103,7 @@ function ModelBrowser(props: {
                 >
                   <span className="history-text">
                     <span>{option.label}</span>
-                    <small>{option.value}</small>
+
                   </span>
                   {active && <Icon name="check" />}
                 </button>
@@ -2081,101 +2111,11 @@ function ModelBrowser(props: {
             })}
           </Fragment>
         ))}
-        {filtered.length === 0 && !canUseCustom && (
+        {resourceState(props.snapshot, "models") === "ready" && filtered.length === 0 && !canUseCustom && (
           <div className="menu-empty">No matching models</div>
         )}
       </div>
     </div>
-  );
-}
-
-function HistoryMenu(props: {
-  open: boolean;
-  setOpen(open: boolean): void;
-  snapshot: WorkbenchSnapshot | null;
-  selectedThread: AgentThread | null;
-  onNew(): void;
-  onSelect(id: string): void;
-  onDelete(id: string, force: boolean): void;
-}) {
-  const threads = props.snapshot?.threads ?? [];
-  return (
-    <Popover
-      open={props.open}
-      setOpen={props.setOpen}
-      align="center"
-      trigger={({ toggle, ref }) => (
-        <button
-          ref={ref as (el: HTMLButtonElement | null) => void}
-          type="button"
-          className="icon-btn"
-          title="Sessions"
-          aria-label="Sessions"
-          onClick={toggle}
-        >
-          <Icon name="history" />
-        </button>
-      )}
-    >
-      <div className="menu history-menu" role="menu">
-        <div className="history-menu-head">
-          <strong>Sessions</strong>
-          <button
-            type="button"
-            className="history-new"
-            title="New session"
-            aria-label="New session"
-            onClick={props.onNew}
-          >
-            <Icon name="plus" />
-          </button>
-        </div>
-        {threads.length === 0 && (
-          <div className="menu-empty">No sessions yet</div>
-        )}
-        {threads.map((thread) => {
-          const running = thread.status === "running";
-          const selected = thread.id === props.selectedThread?.id;
-          return (
-            <div
-              key={thread.id}
-              className={selected ? "history-row selected" : "history-row"}
-            >
-              <button
-                type="button"
-                className="history-pick"
-                onClick={() => props.onSelect(thread.id)}
-                title={thread.title}
-              >
-                <span
-                  className={running ? "history-spinner" : "history-dot"}
-                  data-status={thread.status}
-                />
-                <span className="history-text">
-                  <span className="history-title">{thread.title}</span>
-                  <small>
-                    {labelAgent(thread.active_agent ?? thread.preferred_agent)}{" "}
-                    · {humanize(thread.status)}
-                  </small>
-                </span>
-              </button>
-              <button
-                type="button"
-                className="history-del"
-                title={running ? "Stop and delete session" : "Delete session"}
-                aria-label="Delete session"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  props.onDelete(thread.id, running);
-                }}
-              >
-                <Icon name="trash" />
-              </button>
-            </div>
-          );
-        })}
-      </div>
-    </Popover>
   );
 }
 
@@ -2299,6 +2239,9 @@ function ApprovalCard(props: {
 }
 
 type ComposerProps = {
+  submitting: boolean;
+  recoveryDraft: { text: string; nonce: number } | null;
+  onRecoveryConsumed(): void;
   snapshot: WorkbenchSnapshot | null;
   selectedThread: AgentThread | null;
   agent: AgentKind;
@@ -2328,7 +2271,6 @@ type ComposerProps = {
   editDraft: { text: string; nonce: number } | null;
   onEditDraftConsumed(): void;
   onStop(): void;
-  onGithub(): void;
   onLocalRepo(): void;
   onRemoveRepo(repoId: string): void;
   onClearRepos(): void;
@@ -2352,6 +2294,18 @@ function Composer(props: ComposerProps) {
   const [draft, setDraft] = useState("");
   const [selectionStart, setSelectionStart] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  useLayoutEffect(() => { if (textareaRef.current) autoGrow(textareaRef.current); }, [draft]);
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    let width = el.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (el.clientWidth !== width) { width = el.clientWidth; autoGrow(el); }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => { if (props.recoveryDraft && !draft.trim()) { setDraft(props.recoveryDraft.text); props.onRecoveryConsumed(); requestAnimationFrame(() => { if (textareaRef.current) { textareaRef.current.focus(); autoGrow(textareaRef.current); } }); } }, [props.recoveryDraft?.nonce]);
   useEffect(() => {
     if (!props.editDraft) return;
     setDraft(props.editDraft.text);
@@ -2371,6 +2325,7 @@ function Composer(props: ComposerProps) {
   const sandboxOn = props.backend === "docker_sandbox";
   const sandbox = props.snapshot?.sandboxRuntime;
   const repos = props.snapshot?.repos ?? [];
+  const reposState = resourceState(props.snapshot, "repos");
   const sharedRepoMember = props.snapshot?.collaboration.role === "member";
   const repoSelectionLocked = props.reposLocked || sharedRepoMember;
   const selectedRepos = repos.filter((repo) => props.repoIds.includes(repo.id));
@@ -2384,9 +2339,11 @@ function Composer(props: ComposerProps) {
   const isAppOnlyCommand =
     draftCommand !== null && draftCommand.kind !== "run";
   const canSend =
+    !props.submitting &&
     !!draft.trim() &&
     (isAppOnlyCommand ||
       (!!props.snapshot?.trusted &&
+        resourceState(props.snapshot, "threads") === "ready" && props.snapshot.loadState !== "error" &&
         !noRepoSelected &&
         (!localOn || !!props.model.trim())));
   const sendDisabledReason = !props.snapshot
@@ -2407,7 +2364,7 @@ function Composer(props: ComposerProps) {
   // back into a send/queue button.
   const stopMode = props.isRunning && !draft.trim();
   const submit = () => {
-    if (!canSend) return;
+    if (!canSend || props.submitting) return;
     if (!props.onSend(draft)) return;
     setDraft("");
     const el = textareaRef.current;
@@ -2419,11 +2376,9 @@ function Composer(props: ComposerProps) {
       : selectedRepos.length === 1
         ? selectedRepos[0].name
         : `${selectedRepos.length} repos`;
-  const reposTitle = noRepoSelected
-    ? "Select a repository for this run"
-    : selectedRepos.length === 0
-      ? "Connected repos — none attached yet"
-      : `Connected repos: ${selectedRepos.map((repo) => repo.name).join(", ")}`;
+  const reposTitle = reposState !== "ready" ? (reposState === "loading" ? "Loading repositories" : "Repositories unavailable") : selectedRepos.length
+    ? `Repositories for this chat: ${selectedRepos.map((repo) => repo.name).join(", ")}`
+    : "Choose repositories for this chat";
   const perm =
     PERMISSIONS.find((item) => item.value === props.permission) ??
     PERMISSIONS[1];
@@ -2439,6 +2394,7 @@ function Composer(props: ComposerProps) {
 
   return (
     <footer className="composer">
+      {props.recoveryDraft && <div className="recovery-banner">Your previous message could not be sent.<button className="secondary-btn" onClick={() => { setDraft((current) => current ? `${current}\n\n${props.recoveryDraft!.text}` : props.recoveryDraft!.text); props.onRecoveryConsumed(); }}>Restore message</button><button className="text-btn" onClick={props.onRecoveryConsumed}>Dismiss</button></div>}
       <div className="composer-box">
         {slashState && slashMatches.length > 0 && (
           <div className="slash-menu" role="listbox">
@@ -2534,142 +2490,10 @@ function Composer(props: ComposerProps) {
 
         <div className="toolbar">
           <div className="toolbar-chips">
-            <Popover
-              open={reposOpen}
-              setOpen={setReposOpen}
-              placement="above"
-              fullWidth
-              trigger={({ toggle, ref }) => (
-                <button
-                  ref={ref as (el: HTMLButtonElement | null) => void}
-                  type="button"
-                  className="composer-icon-btn"
-                  title={reposTitle}
-                  aria-label={reposLabel}
-                  onClick={toggle}
-                >
-                  <Icon name="plus" />
-                  {selectedRepos.length > 0 && <span className="context-dot" />}
-                </button>
-              )}
-            >
-              <div className="menu repo-menu">
-                <div className="repo-menu-head">
-                  <span className="menu-head">Connected Repos</span>
-                  {repos.length > 0 && !repoSelectionLocked && (
-                    <button
-                      type="button"
-                      className="repo-clear"
-                      onClick={() => {
-                        setReposOpen(false);
-                        props.onClearRepos();
-                      }}
-                    >
-                      Clear all
-                    </button>
-                  )}
-                </div>
-                {repos.length === 0 && (
-                  <div className="menu-empty">No repositories connected</div>
-                )}
-                {repoSelectionLocked && (
-                  <div className="menu-empty repo-lock-note">
-                    {sharedRepoMember
-                      ? "The host manages the shared repository list. Keep matching clones open on this device."
-                      : "Repositories are fixed after this session creates a managed workspace. Start a new session to use a different set."}
-                  </div>
-                )}
-                {repos.map((repo) => {
-                  const checked = props.repoIds.includes(repo.id);
-                  return (
-                    <div key={repo.id} className="repo-row">
-                      <label
-                        className={
-                          checked
-                            ? "menu-item check selected"
-                            : "menu-item check"
-                        }
-                        title={
-                          repoSelectionLocked
-                            ? "Start a new session to change repositories"
-                            : undefined
-                        }
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          disabled={repoSelectionLocked}
-                          onChange={(event) => {
-                            const next = event.target.checked
-                              ? [...props.repoIds, repo.id]
-                              : props.repoIds.filter((id) => id !== repo.id);
-                            props.setRepoIds(next);
-                          }}
-                        />
-                        <span className="history-text">
-                          <span>{repo.name}</span>
-                          <small>
-                            {repo.kind === "github" ? "GitHub" : "Local"}
-                          </small>
-                        </span>
-                      </label>
-                      <button
-                        type="button"
-                        className="history-del"
-                        title={
-                          repoSelectionLocked
-                            ? "Start a new session to change repositories"
-                            : `Disconnect ${repo.name}`
-                        }
-                        aria-label={`Disconnect ${repo.name}`}
-                        disabled={repoSelectionLocked}
-                        onClick={() => props.onRemoveRepo(repo.id)}
-                      >
-                        <Icon name="trash" />
-                      </button>
-                    </div>
-                  );
-                })}
-                {!sharedRepoMember && <div className="menu-sep" />}
-                {!sharedRepoMember && <button
-                  type="button"
-                  className="menu-item"
-                  onClick={() => {
-                    setReposOpen(false);
-                    props.onLocalRepo();
-                  }}
-                >
-                  <Icon name="folder" />
-                  <span>Add local folder</span>
-                </button>}
-                {!sharedRepoMember && <button
-                  type="button"
-                  className="menu-item"
-                  onClick={() => {
-                    setReposOpen(false);
-                    props.onGithub();
-                  }}
-                >
-                  <Icon name="github" />
-                  <span>Add from GitHub</span>
-                </button>}
-              </div>
-            </Popover>
+            <button type="button" className="chip-btn repository-trigger" title={reposTitle} aria-label="Choose repositories" aria-haspopup="dialog" aria-expanded={reposOpen} onClick={() => setReposOpen(true)}><Icon name="folder" /><span className="repository-name">{selectedRepos.length ? reposLabel : "Repos"}</span><span className="repository-short">Repos</span><Icon name="caret" /></button>
+            {reposOpen && <RepositoryPicker repos={repos} selected={props.repoIds} state={reposState} locked={repoSelectionLocked} shared={sharedRepoMember} onSelect={props.setRepoIds} onClose={() => setReposOpen(false)} onLocal={props.onLocalRepo} onRemove={props.onRemoveRepo} />}
 
-            <Dropdown
-              ariaLabel="Agent"
-              title="Agent"
-              className="chip-btn agent-chip"
-              icon={<AgentMark agent={props.agent} />}
-              value={props.agent}
-              placement="above"
-              onChange={(value) => props.setAgent(value as AgentKind)}
-              fullWidth
-              options={[
-                { value: "claude_code", label: "Claude" },
-                { value: "codex", label: "Codex" },
-              ]}
-            />
+            <ModelControls agent={props.agent} snapshot={props.snapshot} model={props.model} reasoning={props.reasoning} options={modelOptions(props.agent, props.snapshot, null, props.model)} onAgent={props.setAgent} onModel={props.setModel} onReasoning={props.setReasoning} />
 
             {props.snapshot?.collaboration.connected && (
               <Dropdown
@@ -2788,7 +2612,7 @@ function Composer(props: ComposerProps) {
               />
             </Popover>
 
-            <Popover
+            {(LOCAL_MODELS_ENABLED || DOCKER_SANDBOX_ENABLED) && <Popover
               open={optionsOpen}
               setOpen={(open) => {
                 setOptionsOpen(open);
@@ -2802,7 +2626,7 @@ function Composer(props: ComposerProps) {
                   ref={ref as (el: HTMLButtonElement | null) => void}
                   type="button"
                   className={`composer-icon-btn${optionsActive ? " active" : ""}`}
-                  title="Model, reasoning & sandbox"
+                  title="Model and reasoning"
                   aria-label="Run options"
                   onClick={toggle}
                 >
@@ -2843,24 +2667,9 @@ function Composer(props: ComposerProps) {
                     />
                     <label className="field">
                       <span>Reasoning effort</span>
-                      <select
-                        value={props.reasoning}
-                        onChange={(event) => props.setReasoning(event.target.value)}
-                      >
-                        {reasoningOptions(
-                          props.agent,
-                          props.snapshot,
-                          props.model,
-                        ).map(
-                          (option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ),
-                        )}
-                      </select>
+                      <ChoiceSelect label="Reasoning effort" value={props.reasoning} options={reasoningOptions(props.agent, props.snapshot, props.model)} onChange={props.setReasoning} />
                     </label>
-                    <button
+                    {DOCKER_SANDBOX_ENABLED && <button
                       type="button"
                       className={`sandbox-row${sandboxOn ? " on" : ""}${sandboxAllowed ? "" : " disabled"}`}
                       disabled={!sandboxAllowed}
@@ -2879,8 +2688,8 @@ function Composer(props: ComposerProps) {
                       <span className="sandbox-state">
                         {sandboxOn ? "On" : "Off"}
                       </span>
-                    </button>
-                    <button
+                    </button>}
+                    {LOCAL_MODELS_ENABLED && <button
                       type="button"
                       className={`sandbox-row${localOn ? " on" : ""}${localAllowed ? "" : " disabled"}`}
                       disabled={!localAllowed}
@@ -2910,8 +2719,8 @@ function Composer(props: ComposerProps) {
                       <span className="sandbox-state">
                         {localOn ? labelLocalProvider(props.localProvider) : "Off"}
                       </span>
-                    </button>
-                    {localOn && (
+                    </button>}
+                    {LOCAL_MODELS_ENABLED && localOn && (
                       <>
                         <label className="field">
                           <span>Local provider</span>
@@ -2940,7 +2749,7 @@ function Composer(props: ComposerProps) {
                         </label>
                       </>
                     )}
-                    {sandboxOn && sandbox && !sandbox.authenticated && (
+                    {DOCKER_SANDBOX_ENABLED && sandboxOn && sandbox && !sandbox.authenticated && (
                       <button
                         type="button"
                         className="menu-item"
@@ -2949,7 +2758,7 @@ function Composer(props: ComposerProps) {
                         Sign in to Sandbox
                       </button>
                     )}
-                    {sandboxOn && sandbox && !sandbox.codex_authenticated && (
+                    {DOCKER_SANDBOX_ENABLED && sandboxOn && sandbox && !sandbox.codex_authenticated && (
                       <button
                         type="button"
                         className="menu-item"
@@ -2961,7 +2770,7 @@ function Composer(props: ComposerProps) {
                   </>
                 )}
               </div>
-            </Popover>
+            </Popover>}
           </div>
 
           <button
@@ -3099,7 +2908,7 @@ function BudgetMenu(props: {
         </button>
       )}
       {props.budget.mode === "tokens" && hostSupported && (
-        <div className="budget-presets">
+        <div className="budget-presets token-presets">
           {[25_000, 50_000, 100_000].map((value) => (
             <button
               key={value}
@@ -3191,21 +3000,6 @@ function BudgetMenu(props: {
         </div>
       )}
     </div>
-  );
-}
-
-function AgentMark({ agent }: { agent: AgentKind }) {
-  if (agent === "codex") {
-    return (
-      <svg className="agent-mark codex" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M14.949 6.547a3.94 3.94 0 0 0-.348-3.273 4.11 4.11 0 0 0-4.4-1.934A4.1 4.1 0 0 0 8.423.2 4.15 4.15 0 0 0 6.305.086a4.1 4.1 0 0 0-1.891.948 4.04 4.04 0 0 0-1.158 1.753 4.1 4.1 0 0 0-1.563.679A4 4 0 0 0 .554 4.72a3.99 3.99 0 0 0 .502 4.731 3.94 3.94 0 0 0 .346 3.274 4.11 4.11 0 0 0 4.402 1.933c.382.425.852.764 1.377.995.526.231 1.095.35 1.67.346 1.78.002 3.358-1.132 3.901-2.804a4.1 4.1 0 0 0 1.563-.68 4 4 0 0 0 1.14-1.253 3.99 3.99 0 0 0-.506-4.716m-6.097 8.406a3.05 3.05 0 0 1-1.945-.694l.096-.054 3.23-1.838a.53.53 0 0 0 .265-.455v-4.49l1.366.778q.02.011.025.035v3.722c-.003 1.653-1.361 2.992-3.037 2.996m-6.53-2.75a2.95 2.95 0 0 1-.36-2.01l.095.057L5.29 12.09a.53.53 0 0 0 .527 0l3.949-2.246v1.555a.05.05 0 0 1-.022.041L6.473 13.3c-1.454.826-3.311.335-4.15-1.098m-.85-6.94A3.02 3.02 0 0 1 3.07 3.949v3.785a.51.51 0 0 0 .262.451l3.93 2.237-1.366.779a.05.05 0 0 1-.048 0L2.585 9.342a2.98 2.98 0 0 1-1.113-4.094zm11.216 2.571L8.747 5.576l1.362-.776a.05.05 0 0 1 .048 0l3.265 1.86a3 3 0 0 1 1.173 1.207 2.96 2.96 0 0 1-.27 3.2 3.05 3.05 0 0 1-1.36.997V8.279a.52.52 0 0 0-.276-.445m1.36-2.015-.097-.057-3.226-1.855a.53.53 0 0 0-.53 0L6.249 6.153V4.598a.04.04 0 0 1 .019-.04L9.533 2.7a3.07 3.07 0 0 1 3.257.139c.474.325.843.778 1.066 1.303.223.526.289 1.103.191 1.664zM5.503 8.575 4.139 7.8a.05.05 0 0 1-.026-.037V4.049c0-.57.166-1.127.476-1.607s.752-.864 1.275-1.105a3.08 3.08 0 0 1 3.234.41l-.096.054-3.23 1.838a.53.53 0 0 0-.265.455zm.742-1.577 1.758-1 1.762 1v2l-1.755 1-1.762-1z" />
-      </svg>
-    );
-  }
-  return (
-    <svg className="agent-mark claude" viewBox="0 0 100 100" aria-hidden="true">
-      <path d="m19.6 66.5 19.7-11 .3-1-.3-.5h-1l-3.3-.2-11.2-.3L14 53l-9.5-.5-2.4-.5L0 49l.2-1.5 2-1.3 2.9.2 6.3.5 9.5.6 6.9.4L38 49.1h1.6l.2-.7-.5-.4-.4-.4L29 41l-10.6-7-5.6-4.1-3-2-1.5-2-.6-4.2 2.7-3 3.7.3.9.2 3.7 2.9 8 6.1L37 36l1.5 1.2.6-.4.1-.3-.7-1.1L33 25l-6-10.4-2.7-4.3-.7-2.6c-.3-1-.4-2-.4-3l3-4.2L28 0l4.2.6L33.8 2l2.6 6 4.1 9.3L47 29.9l2 3.8 1 3.4.3 1h.7v-.5l.5-7.2 1-8.7 1-11.2.3-3.2 1.6-3.8 3-2L61 2.6l2 2.9-.3 1.8-1.1 7.7L59 27.1l-1.5 8.2h.9l1-1.1 4.1-5.4 6.9-8.6 3-3.5L77 13l2.3-1.8h4.3l3.1 4.7-1.4 4.9-4.4 5.6-3.7 4.7-5.3 7.1-3.2 5.7.3.4h.7l12-2.6 6.4-1.1 7.6-1.3 3.5 1.6.4 1.6-1.4 3.4-8.2 2-9.6 2-14.3 3.3-.2.1.2.3 6.4.6 2.8.2h6.8l12.6 1 3.3 2 1.9 2.7-.3 2-5.1 2.6-6.8-1.6-16-3.8-5.4-1.3h-.8v.4l4.6 4.5 8.3 7.5L89 80.1l.5 2.4-1.3 2-1.4-.2-9.2-7-3.6-3-8-6.8h-.5v.7l1.8 2.7 9.8 14.7.5 4.5-.7 1.4-2.6 1-2.7-.6-5.8-8-6-9-4.7-8.2-.5.4-2.9 30.2-1.3 1.5-3 1.2-2.5-2-1.4-3 1.4-6.2 1.6-8 1.3-6.4 1.2-7.9.7-2.6v-.2H49L43 72l-9 12.3-7.2 7.6-1.7.7-3-1.5.3-2.8L24 86l10-12.8 6-7.9 4-4.6-.1-.5h-.3L17.2 77.4l-4.7.6-2-2 .2-3 1-1 8-5.5Z" />
-    </svg>
   );
 }
 
@@ -3760,6 +3554,7 @@ function ChangesView(props: {
   diff: NonNullable<WorkbenchSnapshot["details"]>["diff"];
   diffState: NonNullable<WorkbenchSnapshot["details"]>["diffState"];
   repos: NonNullable<WorkbenchSnapshot["details"]>["repos"];
+  connectedRepos: WorkbenchSnapshot["repos"];
   applyResult: NonNullable<WorkbenchSnapshot["details"]>["applyResult"] | null;
   openSignal: number;
   onLoadDiff(threadId: string): void;
@@ -3772,7 +3567,13 @@ function ChangesView(props: {
       repo.files.map((file) => ({ ...file, repo: repo.repo_name })),
     ) ?? [];
   const hasWorktree = props.repos.some((repo) => !!repo.worktree_path);
-  const hasManagedWorktree = props.repos.some(isManagedThreadWorkspace);
+  const hasManagedWorktree = props.repos.some((repo) => isManagedThreadWorkspace(repo, props.connectedRepos));
+  useSheetAccessibility(open && hasWorktree);
+  useEffect(() => {
+    if (!open || !hasWorktree) return;
+    vscode.postMessage({ type: "reviewVisibility", threadId: props.threadId, visible: true });
+    return () => vscode.postMessage({ type: "reviewVisibility", threadId: props.threadId, visible: false });
+  }, [open, hasWorktree, props.threadId]);
   useEffect(() => {
     if (props.openSignal > 0) setOpen(true);
   }, [props.openSignal]);
@@ -3817,6 +3618,7 @@ function ChangesView(props: {
         </header>
 
         <div className="sheet-body changes-body">
+          <div className="changes-scope">{hasManagedWorktree ? "Task changes" : "Uncommitted changes"}</div>
           <div className="changes-actions">
             <button
               type="button"
@@ -3825,17 +3627,17 @@ function ChangesView(props: {
               onClick={() => props.onLoadDiff(props.threadId)}
             >
               <Icon name="refresh" />
-              <span>{loaded ? "Reload Diff" : "Load Diff"}</span>
+              <span>{loaded ? "Refresh diff" : "Load diff"}</span>
             </button>
             {hasManagedWorktree && (
               <button
                 type="button"
                 className="primary-btn"
-                disabled={loading || (loaded && diffFiles.length === 0)}
+                disabled={!loaded || diffFiles.length === 0}
                 onClick={() => props.onApply(props.threadId)}
               >
                 <Icon name="check" />
-                <span>Apply to Repo</span>
+                <span>Apply changes</span>
               </button>
             )}
           </div>
@@ -3850,30 +3652,20 @@ function ChangesView(props: {
                   className="link-btn"
                   onClick={() => props.onOpenPath(repo.worktree_path!)}
                 >
-                  {isManagedThreadWorkspace(repo) ? "Open Worktree" : "Open Repo"}
+                  {isManagedThreadWorkspace(repo, props.connectedRepos) ? "Open worktree" : "Open repository"}
                 </button>
               )}
             </div>
           ))}
 
-          {loading && <div className="menu-empty">Loading diff...</div>}
+          {loading && <ResourceState state="loading" label="changes" />}
           {props.diffState === "error" && (
             <div className="menu-empty">Could not load the diff.</div>
           )}
           {loaded && diffFiles.length === 0 && (
-            <div className="menu-empty">No changes to apply.</div>
+            <div className="menu-empty">{hasManagedWorktree ? "No task changes to apply." : "No uncommitted changes."}</div>
           )}
-          {diffFiles.length > 0 && (
-            <div className="diff-list">
-              {diffFiles.map((file) => (
-                <div key={`${file.repo}:${file.path}`} className="diff-item">
-                  <span className="detail-name">{file.path}</span>
-                  <span className="diff-add">+{file.additions}</span>
-                  <span className="diff-del">-{file.deletions}</span>
-                </div>
-              ))}
-            </div>
-          )}
+          {loaded && props.diff && diffFiles.length > 0 && <ChangeLog diff={props.diff} />}
 
           {props.applyResult && (
             <div
@@ -3906,7 +3698,11 @@ function ChangesView(props: {
 
 function isManagedThreadWorkspace(
   repo: NonNullable<WorkbenchSnapshot["details"]>["repos"][number],
+  connectedRepos: WorkbenchSnapshot["repos"],
 ): boolean {
+  const original = connectedRepos.find((item) => item.id === repo.repo_id)?.local_path;
+  const normalized = (value: string) => value.replace(/\\/g, "/").replace(/\/$/, "").toLowerCase();
+  if (original && repo.worktree_path) return normalized(original) !== normalized(repo.worktree_path);
   return Boolean(repo.worktree_path && repo.branch?.startsWith("am/thread-"));
 }
 
@@ -4323,6 +4119,8 @@ function relativeDeviceSeen(value: string): string {
 
 function MonitorSheet(props: {
   snapshot: WorkbenchSnapshot;
+  draftAgent: AgentKind;
+  draftModel?: string;
   selectedThread: AgentThread | null;
   details: ThreadDetails | null;
   onClose(): void;
@@ -4334,7 +4132,8 @@ function MonitorSheet(props: {
   const activeCloud = CLOUD_CONTINUITY_ENABLED
     ? props.details?.cloudRuns.find((run) => isActiveCloudRun(run.status))
     : undefined;
-  const agent = thread?.active_agent ?? thread?.preferred_agent ?? null;
+  const agent = thread?.active_agent ?? thread?.preferred_agent ?? props.draftAgent;
+  const account = props.snapshot.providerAccounts.find((account) => account.id === thread?.provider_account_id) ?? (agent ? activeAccount(props.snapshot, agent) : undefined);
   const activeTurn = props.details?.turns.find((turn) => !turn.ended_at);
   const cloudReady =
     !!agent &&
@@ -4352,19 +4151,22 @@ function MonitorSheet(props: {
     <div className="sheet-backdrop" onMouseDown={props.onClose}>
       <section
         className="sheet monitor-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Session status"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header>
-          <strong>Status Monitor</strong>
+          <strong>Session status</strong>
           <IconButton title="Close" onClick={props.onClose}>
             <Icon name="close" />
           </IconButton>
         </header>
-        <div className="sheet-body">
+        <div className="sheet-body monitor-body">
+          <div className="monitor-session"><strong>{thread?.title ?? "New session"}</strong><span>{thread ? statusLabel(thread.status) : "Draft"}</span></div>
           <div className="monitor-grid">
-            <MonitorMetric label="Session" value={thread?.title ?? "New session"} />
-            <MonitorMetric label="State" value={thread ? humanize(thread.status) : "Draft"} />
-            <MonitorMetric label="Route" value={routeLabel(thread, activeCloud)} />
+            <MonitorMetric label="Provider" value={thread ? routeLabel(thread, activeCloud) : labelAgent(agent)} />
+            <MonitorMetric label="Account" value={account ? accountName(account) : "Not selected"} />
             <MonitorMetric
               label="Model"
               value={
@@ -4372,28 +4174,21 @@ function MonitorSheet(props: {
                   ? `${prettyModel(thread.model ?? "Local")} via ${labelLocalProvider(thread.local_provider)}`
                   : thread?.model
                     ? prettyModel(thread.model)
-                    : "Provider default"
+                    : !thread && props.draftModel ? prettyModel(props.draftModel) : "Provider default"
               }
             />
-            <MonitorMetric
+            {DOCKER_SANDBOX_ENABLED && <MonitorMetric
               label="Backend"
               value={
                 thread?.execution_backend === "docker_sandbox"
                   ? `Docker Sandbox${activeTurn?.sandbox_name ? ` · ${activeTurn.sandbox_name}` : ""}`
                   : "Host"
               }
-            />
-            <MonitorMetric
-              label="Limit Reset"
-              value={
-                thread?.limit_reset_at
-                  ? formatResetTime(thread.limit_reset_at)
-                  : resetSummary(props.snapshot.agents)
-              }
-            />
+            />}
+            {thread?.limit_reset_at && <MonitorMetric label="Resume" value={formatResetTime(thread.limit_reset_at)} />}
             <MonitorMetric
               label="Queued"
-              value={`${props.details?.queued.length ?? 0} follow-up${props.details?.queued.length === 1 ? "" : "s"}`}
+              value={thread && !props.details ? "Checking…" : `${props.details?.queued.length ?? 0} follow-up${props.details?.queued.length === 1 ? "" : "s"}`}
             />
             {CLOUD_CONTINUITY_ENABLED && (
               <MonitorMetric
@@ -4402,6 +4197,8 @@ function MonitorSheet(props: {
               />
             )}
           </div>
+
+          <div className="monitor-usage">{([agent, agent === "codex" ? "claude_code" : "codex"] as AgentKind[]).filter((kind) => kind === agent || usageWindows(props.snapshot.agents.find((item) => item.kind === kind)?.usage).length > 0).map((kind) => <UsageLimits key={kind} agent={kind} provider={props.snapshot.agents.find((item) => item.kind === kind)} account={activeAccount(props.snapshot, kind)?.email ?? undefined} loading={props.snapshot.detectionState === "loading" || props.snapshot.detectionState === "idle"} error={props.snapshot.detectionState === "error"} />)}</div>
 
           {CLOUD_CONTINUITY_ENABLED && <div className="settings-group">
             <div className="group-title">Cloud Continuity</div>
@@ -4441,38 +4238,30 @@ function MonitorMetric(props: { label: string; value: string }) {
   return (
     <div className="monitor-metric">
       <small>{props.label}</small>
-      <span>{props.value}</span>
+      <span title={props.value}>{props.value}</span>
     </div>
   );
 }
 
 function routeLabel(thread: AgentThread | null, cloud: CloudRun | undefined): string {
   if (cloud) return `${labelAgent(cloud.agent_kind)} Cloud`;
-  if (!thread) return "Local";
+  if (!thread) return "Not selected";
   if (thread.local_provider) return `Local ${labelLocalProvider(thread.local_provider)}`;
   if (thread.fallback_agent && thread.active_agent === thread.fallback_agent) {
     return `${labelAgent(thread.fallback_agent)} fallback`;
   }
-  return `${labelAgent(thread.active_agent ?? thread.preferred_agent)} local`;
+  return labelAgent(thread.active_agent ?? thread.preferred_agent);
 }
 
-function resetSummary(agents: AgentStatus[]): string {
-  const limited = agents.filter((agent) => agent.availability === "limited");
-  if (limited.length === 0) return "No active limits";
-  return limited
-    .map((agent) =>
-      `${labelAgent(agent.kind)} ${agent.reset_at ? formatResetTime(agent.reset_at) : "unknown"}`,
-    )
-    .join(", ");
-}
-
-const SETTINGS_SECTIONS = [
+const ALL_SETTINGS_SECTIONS = [
   ["accounts", "Accounts", "Manage sign-ins"],
   ["agents", "Providers", "Check connections"],
   ["switching", "Models & limits", "Defaults and routing"],
   ["local", "Local models", "Offline fallback"],
   ["sandbox", "Sandbox", "Isolated execution"],
 ] as const;
+
+const SETTINGS_SECTIONS = ALL_SETTINGS_SECTIONS.filter(([id]) => (id !== "local" || LOCAL_MODELS_ENABLED) && (id !== "sandbox" || DOCKER_SANDBOX_ENABLED));
 
 type SettingsSection = (typeof SETTINGS_SECTIONS)[number][0] | "continuity";
 
@@ -4490,7 +4279,7 @@ function SettingsSheet(props: {
     sandboxPolicy: SandboxPolicy,
     cloudPolicy: CloudPolicy,
     localModelPolicy: LocalModelPolicy,
-  ): void;
+  ): Promise<void>;
   onOpenSettings(): void;
   onOpenExternal(url: string): void;
   onSignInAgent(agent: AgentKind): void;
@@ -4500,7 +4289,6 @@ function SettingsSheet(props: {
   onDeleteProviderAccount(accountId: string): void;
   onSaveLimitPolicy(policy: LimitPolicy): void;
   onSandboxLogin(codex: boolean): void;
-  onGithubSignIn(): void;
   onRefreshReadiness(): void;
 }) {
   const [limit, setLimit] = useState<LimitPolicy>(
@@ -4516,50 +4304,9 @@ function SettingsSheet(props: {
     () => props.snapshot.localModelPolicy ?? defaultLocalModelPolicy(),
   );
   const [section, setSection] = useState<SettingsSection>("accounts");
-  const [expandedAccounts, setExpandedAccounts] = useState<Record<string, boolean>>({});
-  const [accountTokens, setAccountTokens] = useState<Record<string, string>>({});
-  const [creditConfirmId, setCreditConfirmId] = useState<string | null>(null);
-  const [removeConfirmId, setRemoveConfirmId] = useState<string | null>(null);
-  const accounts = limit.accounts ?? [];
-  const saveAccounts = (nextAccounts: ProviderAccount[]) => {
-    const next = { ...limit, accounts: nextAccounts };
-    setLimit(next);
-    props.onSaveLimitPolicy(next);
-  };
-  const updateAccount = (
-    id: string,
-    patch: Partial<ProviderAccount>,
-    save = true,
-  ) => {
-    const nextAccounts = accounts.map((account) =>
-      account.id === id ? { ...account, ...patch } : account,
-    );
-    if (save) saveAccounts(nextAccounts);
-    else setLimit({
-      ...limit,
-      accounts: nextAccounts,
-    });
-  };
-  const addAccount = (agent: "codex" | "claude_code") => {
-    const number = accounts.filter((account) => account.agent === agent).length + 1;
-    const id = `${agent === "codex" ? "codex" : "claude"}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    setExpandedAccounts((current) => ({ ...current, [id]: true }));
-    saveAccounts([...accounts, {
-      id,
-      label: `${agent === "codex" ? "Codex" : "Claude"} ${number}`,
-      agent,
-      enabled: true,
-      use_credits: false,
-      auth_mode: agent === "claude_code" ? "oauth_token" : "isolated_cli",
-    }]);
-  };
-  const moveAccount = (index: number, delta: number) => {
-    const target = index + delta;
-    if (target < 0 || target >= accounts.length) return;
-    const next = [...accounts];
-    [next[index], next[target]] = [next[target], next[index]];
-    saveAccounts(next);
-  };
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const savingRef = useRef(false);
   const updateAgentProfile = (
     agent: AgentKind,
     patch: { model?: string | null; reasoning?: string | null },
@@ -4577,18 +4324,18 @@ function SettingsSheet(props: {
   return (
     <div
       className="sheet-backdrop"
-      onMouseDown={props.onClose}
+      onMouseDown={() => { if (!saving) props.onClose(); }}
     >
       <section
-        className="sheet settings-sheet" role="dialog" aria-modal="true" aria-label="Perpetual settings"
+        className="sheet settings-sheet" role="dialog" aria-modal="true" aria-label="Perpetual settings" aria-busy={saving}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header>
           <div className="settings-heading">
-            <strong>Perpetual settings</strong>
-            <span>Configure accounts, routing, and execution</span>
+            <strong>Settings</strong>
+
           </div>
-          <IconButton title="Close" onClick={props.onClose}>
+          <IconButton title="Close" onClick={() => { if (!saving) props.onClose(); }}>
             <Icon name="close" />
           </IconButton>
         </header>
@@ -4601,114 +4348,19 @@ function SettingsSheet(props: {
                 aria-controls={`settings-panel-${value}`}
                 className={section === value ? "active" : ""}
                 onClick={() => setSection(value)}>
-                <span className="settings-nav-copy"><strong>{label}</strong><small>{description}</small></span>
+                <span className="settings-nav-copy">{label}</span>
               </button>
             ))}
           </nav>
           <div className="settings-content" key={section}>
-          <div className="settings-group account-manager" data-settings-section="accounts" id="settings-panel-accounts" role="region" aria-labelledby="settings-nav-accounts" hidden={section !== "accounts"}>
-            <div className="account-manager-hero">
-              <div>
-                <div className="settings-page-title">Accounts</div>
-              </div>
-              <span className="account-count">{accounts.length} {accounts.length === 1 ? "account" : "accounts"}</span>
-            </div>
-            <div className="account-add-row">
-              <button type="button" className="account-add-button" onClick={() => addAccount("codex")}><AgentMark agent="codex" /><span>Add Codex</span><Icon name="plus" /></button>
-              <button type="button" className="account-add-button" onClick={() => addAccount("claude_code")}><AgentMark agent="claude_code" /><span>Add Claude</span><Icon name="plus" /></button>
-            </div>
-            {accounts.length === 0 ? (
-              <div className="account-empty">
-                <strong>No accounts</strong>
-                <span>Add Codex or Claude to begin.</span>
-              </div>
-            ) : (
-              <div className="account-stack">
-                {accounts.map((account, index) => {
-                  const status = props.snapshot.providerAccounts?.find((item) => item.id === account.id);
-                  const saved = !!status;
-                  const authPending = props.snapshot.authPendingAccountIds?.includes(account.id) ?? false;
-                  const state = authPending ? "Connecting…" : !account.enabled ? "Paused" : !saved ? "Ready to sign in" : !status.authenticated ? "Sign-in required" : status.availability === "limited" ? (status.reset_at ? `Limited · ${formatResetTime(status.reset_at)}` : "Limited") : "Ready";
-                  const token = accountTokens[account.id] ?? "";
-                  const displayName = providerAccountDisplayName(account, status);
-                  const expanded = !!expandedAccounts[account.id];
-                  return (
-                    <article className="provider-account" key={account.id}>
-                      <div className="provider-account-header">
-                        <button type="button" className="account-disclosure" aria-expanded={expanded} aria-controls={`account-details-${account.id}`} onClick={() => setExpandedAccounts((current) => ({ ...current, [account.id]: !current[account.id] }))}>
-                          <Icon name="caret" />
-                          <AgentMark agent={account.agent} />
-                          <span title={displayName}>{displayName}</span>
-                        </button>
-                        <span className={`account-status${status?.authenticated && !authPending ? " ready" : ""}${authPending ? " pending" : ""}`}>{state}</span>
-                        <div className="account-reorder" role="group" aria-label={`Order for ${displayName}`}>
-                          <button type="button" disabled={index === 0} aria-label={`Move ${displayName} up`} title="Move up" onClick={() => moveAccount(index, -1)}><Icon name="up" /></button>
-                          <button type="button" disabled={index === accounts.length - 1} aria-label={`Move ${displayName} down`} title="Move down" onClick={() => moveAccount(index, 1)}><Icon name="down" /></button>
-                        </div>
-                      </div>
-                      <div className="provider-account-body" id={`account-details-${account.id}`} hidden={!expanded}>
-                        <div className="account-auth-row">
-                          <div className="account-auth-copy">
-                            <strong>{status?.authenticated ? status.email || "Authenticated" : account.auth_mode === "oauth_token" ? "Connect with a setup token" : "Connect this account"}</strong>
-                            <small>{status?.authenticated ? "Credentials are stored in this isolated profile." : account.auth_mode === "oauth_token" ? "Generate a token, then paste it below." : "Finish sign-in in the terminal that opens."}</small>
-                          </div>
-                          <div className="account-primary-actions">
-                            {saved && status?.authenticated && (
-                              <button type="button" className="secondary-btn account-cli" title="Manage plugins and MCP for this account" onClick={() => props.onOpenProviderAccountCli(account.id)}><Icon name="terminal" /><span>Open CLI</span></button>
-                            )}
-                            <button type="button" className="primary-btn" disabled={authPending} onClick={() => props.onSignInProviderAccount(account.id)}>{authPending ? "Connecting…" : account.auth_mode === "oauth_token" ? "Generate token" : status?.authenticated ? "Sign in again" : "Sign in"}</button>
-                          </div>
-                        </div>
-                        {account.agent === "claude_code" && account.auth_mode === "oauth_token" && (
-                          <div className="account-token-field">
-                            <div className="account-token-entry">
-                              <input aria-label="Setup token" id={`account-token-${account.id}`} type="password" autoComplete="off" placeholder="Paste setup token" value={token} onChange={(event) => setAccountTokens({ ...accountTokens, [account.id]: event.target.value })} />
-                              <button type="button" className="secondary-btn" disabled={!token.trim()} onClick={() => {
-                                props.onSetProviderAccountToken(account.id, token);
-                                setAccountTokens({ ...accountTokens, [account.id]: "" });
-                              }}>Store token</button>
-                            </div>
-                          </div>
-                        )}
-                        <details className="account-advanced">
-                          <summary>Account settings</summary>
-                          <div className="account-settings-grid">
-                            <label className="field">
-                              <span>Account name</span>
-                              <input aria-label="Account name" value={account.label} onChange={(event) => updateAccount(account.id, { label: event.target.value }, false)} onBlur={() => props.onSaveLimitPolicy(limit)} />
-                            </label>
-                            {account.agent === "claude_code" && (
-                              <label className="field">
-                                <span>Authentication</span>
-                                <select value={account.auth_mode} onChange={(event) => updateAccount(account.id, { auth_mode: event.target.value as ProviderAccount["auth_mode"] })}>
-                                  <option value="oauth_token">Setup token</option>
-                                  <option value="isolated_cli">CLI profile</option>
-                                </select>
-                              </label>
-                            )}
-                          </div>
-                          <div className="account-preferences">
-                            <label className="toggle-row"><span>Available for tasks</span><input type="checkbox" checked={account.enabled} onChange={(event) => updateAccount(account.id, { enabled: event.target.checked })} /></label>
-                            {account.agent === "codex" && <label className="toggle-row" title="Redeem an earned Codex rate-limit reset when this account reaches its limit."><span>Use reset credits</span><input type="checkbox" checked={account.use_credits} onChange={(event) => event.target.checked ? setCreditConfirmId(account.id) : updateAccount(account.id, { use_credits: false })} /></label>}
-                          </div>
-                          <button type="button" className="account-remove" onClick={() => {
-                            if (saved) setRemoveConfirmId(account.id);
-                            else saveAccounts(accounts.filter((item) => item.id !== account.id));
-                          }}><Icon name="trash" /><span>Remove account</span></button>
-                        </details>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+          <div className="settings-group" data-settings-section="accounts" id="settings-panel-accounts" role="region" aria-labelledby="settings-nav-accounts" hidden={section !== "accounts"}><Accounts snapshot={props.snapshot} /></div>
           <div className="settings-group" data-settings-section="agents" id="settings-panel-agents" role="region" aria-labelledby="settings-nav-agents" hidden={section !== "agents"}>
             <div className="group-title">Providers</div>
+            {!props.snapshot.agents.length && (props.snapshot.detectionState === "ready" ? <p className="menu-empty">No providers detected</p> : <ResourceState state={props.snapshot.detectionState === "error" ? "error" : "loading"} label="providers" />)}
             <div className="readiness-grid">
               {props.snapshot.agents.map((agent) => (
                 <div key={agent.kind} className="readiness-row">
-                  <span>{labelAgent(agent.kind)}</span>
+                  <span className="connection-provider"><AgentMark agent={agent.kind} />{labelAgent(agent.kind)}</span>
                   <small>{agentReadinessLabel(agent, limit)}</small>
                   {agent.installed && !agent.authenticated && (
                     <button
@@ -4721,7 +4373,7 @@ function SettingsSheet(props: {
                   )}
                 </div>
               ))}
-              {props.snapshot.localModels?.map((provider) => (
+              {LOCAL_MODELS_ENABLED && props.snapshot.localModels?.map((provider) => (
                 <div key={provider.provider} className="readiness-row">
                   <span>{provider.label}</span>
                   <small>
@@ -4731,7 +4383,7 @@ function SettingsSheet(props: {
                   </small>
                 </div>
               ))}
-              {props.snapshot.sandboxRuntime && (
+              {DOCKER_SANDBOX_ENABLED && props.snapshot.sandboxRuntime && (
                 <div className="readiness-row">
                   <span>Docker Sandbox</span>
                   <small>
@@ -4766,23 +4418,6 @@ function SettingsSheet(props: {
                     )}
                 </div>
               )}
-	              <div className="readiness-row">
-	                <span>GitHub</span>
-	                <small>
-	                  {props.snapshot.github?.authenticated
-	                    ? "Ready"
-	                    : "Use VS Code sign-in"}
-	                </small>
-	                {!props.snapshot.github?.authenticated && (
-	                  <button
-	                    type="button"
-	                    className="readiness-action"
-	                    onClick={props.onGithubSignIn}
-	                  >
-	                    Sign in
-	                  </button>
-	                )}
-	              </div>
             </div>
             <button
               type="button"
@@ -4796,6 +4431,7 @@ function SettingsSheet(props: {
 
           <div className="settings-group" data-settings-section="switching" id="settings-panel-switching" role="region" aria-labelledby="settings-nav-switching" hidden={section !== "switching"}>
             <div className="group-title">Models &amp; limits</div>
+            {resourceState(props.snapshot, "models") !== "ready" && <ResourceState state={resourceState(props.snapshot, "models") as "loading" | "error"} label="models" />}
             <div className="agent-profile-grid">
               {(["claude_code", "codex"] as const).map((profileAgent) => {
                 const profile = limit.agent_profiles?.find(
@@ -4817,50 +4453,15 @@ function SettingsSheet(props: {
                     <div className="agent-profile-title">
                       <AgentMark agent={profileAgent} />
                       <strong>{labelAgent(profileAgent)}</strong>
-                      <span>Default profile</span>
+
                     </div>
                     <label className="field">
                       <span>Model</span>
-                      <select
-                        value={profile.model ?? ""}
-                        onChange={(event) => {
-                          const model = event.target.value;
-                          updateAgentProfile(profileAgent, {
-                            model: model || null,
-                            reasoning:
-                              reasoningAfterModelChange(
-                                profileAgent,
-                                props.snapshot,
-                                model,
-                                profile.reasoning ?? "",
-                              ) || null,
-                          });
-                        }}
-                      >
-                        <option value="">Provider default</option>
-                        {models.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
+                      <ChoiceSelect label={`${labelAgent(profileAgent)} model`} searchable value={profile.model ?? ""} disabled={resourceState(props.snapshot, "models") !== "ready"} options={[{ value: "", label: "Provider default" }, ...models]} onChange={(model) => updateAgentProfile(profileAgent, { model: model || null, reasoning: reasoningAfterModelChange(profileAgent, props.snapshot, model, profile.reasoning ?? "") || null })} />
                     </label>
                     <label className="field">
                       <span>Reasoning</span>
-                      <select
-                        value={profile.reasoning ?? ""}
-                        onChange={(event) =>
-                          updateAgentProfile(profileAgent, {
-                            reasoning: event.target.value || null,
-                          })
-                        }
-                      >
-                        {efforts.map((option) => (
-                          <option key={option.value || "default"} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
+                      <ChoiceSelect label={`${labelAgent(profileAgent)} reasoning`} value={profile.reasoning ?? ""} options={efforts} onChange={(reasoning) => updateAgentProfile(profileAgent, { reasoning: reasoning || null })} />
                     </label>
                   </div>
                 );
@@ -4875,7 +4476,7 @@ function SettingsSheet(props: {
                 }
               />
               <span>
-                Switch to the other agent when the current one is limited
+                Auto-switch accounts
               </span>
             </label>
             <label className="toggle">
@@ -4889,7 +4490,7 @@ function SettingsSheet(props: {
                   })
                 }
               />
-              <span>Resume automatically when rate limits reset</span>
+              <span>Resume after reset</span>
             </label>
             <label className="toggle">
               <input
@@ -4900,10 +4501,10 @@ function SettingsSheet(props: {
                   setLimit({ ...limit, switch_back: event.target.checked })
                 }
               />
-              <span>Return to the original agent after it recovers</span>
+              <span>Return to preferred provider</span>
             </label>
             <label className="field">
-              <span>Retry unknown resets after seconds</span>
+              <span>Retry interval (seconds)</span>
               <input
                 type="number"
                 min={0}
@@ -4917,7 +4518,7 @@ function SettingsSheet(props: {
               />
             </label>
             <div className="field">
-              <span>Cloud agent order</span>
+              <span>Provider order</span>
               <div className="fallback-order" aria-label="Cloud fallback order">
                 {normalizeAgentOrder(limit.agent_priority).map((agent, index) => (
                   <div
@@ -4926,7 +4527,7 @@ function SettingsSheet(props: {
                   >
                     <span>
                       {labelAgent(agent)}
-                      <small>Cloud agent</small>
+
                     </span>
                     <button
                       type="button"
@@ -5391,38 +4992,7 @@ function SettingsSheet(props: {
           </div>
         </div>
 
-        {creditConfirmId && (
-          <div className="settings-confirm-backdrop" role="presentation" onMouseDown={() => setCreditConfirmId(null)}>
-            <div className="settings-confirm" role="dialog" aria-modal="true" aria-labelledby="credit-confirm-title" onMouseDown={(event) => event.stopPropagation()}>
-              <strong id="credit-confirm-title">Use reset credits?</strong>
-              <p>Perpetual can redeem an earned credit when this account reaches its limit. It will never purchase credits.</p>
-              <div className="settings-confirm-actions">
-                <button type="button" className="secondary-btn" onClick={() => setCreditConfirmId(null)}>Cancel</button>
-                <button type="button" className="primary-btn" onClick={() => {
-                  updateAccount(creditConfirmId, { use_credits: true });
-                  setCreditConfirmId(null);
-                }}>Allow</button>
-              </div>
-            </div>
-          </div>
-        )}
-        {removeConfirmId && (
-          <div className="settings-confirm-backdrop" role="presentation" onMouseDown={() => setRemoveConfirmId(null)}>
-            <div className="settings-confirm" role="dialog" aria-modal="true" aria-labelledby="remove-account-title" onMouseDown={(event) => event.stopPropagation()}>
-              <strong id="remove-account-title">Remove account?</strong>
-              <p>Its isolated sign-in data will be deleted from this device.</p>
-              <div className="settings-confirm-actions">
-                <button type="button" className="secondary-btn" onClick={() => setRemoveConfirmId(null)}>Cancel</button>
-                <button type="button" className="primary-btn danger-confirm" onClick={() => {
-                  props.onDeleteProviderAccount(removeConfirmId);
-                  setLimit({ ...limit, accounts: accounts.filter((item) => item.id !== removeConfirmId) });
-                  setRemoveConfirmId(null);
-                }}>Remove</button>
-              </div>
-            </div>
-          </div>
-        )}
-
+        {saveError && <p className="inline-error" role="alert">{saveError}</p>}
         <footer>
           <button type="button" className="secondary-btn" onClick={props.onOpenSettings}>
             VS Code settings
@@ -5430,9 +5000,10 @@ function SettingsSheet(props: {
           <button
             type="button"
             className="primary"
-            onClick={() => props.onApply(limit, sandbox, cloud, localPolicy)}
+            disabled={saving}
+            onClick={async () => { if (savingRef.current) return; savingRef.current = true; setSaving(true); setSaveError(null); try { await props.onApply(limit, sandbox, cloud, localPolicy); } catch (error) { setSaveError(error instanceof Error ? error.message : String(error)); } finally { savingRef.current = false; setSaving(false); } }}
           >
-            Save changes
+            {saving ? "Saving…" : "Save changes"}
           </button>
         </footer>
       </section>
@@ -5476,74 +5047,14 @@ function CloudSetupCard(props: {
   );
 }
 
-function GithubSheet(props: {
-  loading: boolean;
-  repos: GithubRepository[];
-  onClose(): void;
-  onConnect(repo: GithubRepository): void;
-}) {
-  const [query, setQuery] = useState("");
-  const filtered = props.repos.filter((repo) =>
-    repo.full_name.toLowerCase().includes(query.toLowerCase()),
-  );
-  return (
-    <div className="sheet-backdrop" onMouseDown={props.onClose}>
-      <section
-        className="sheet repo-sheet"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <header>
-          <strong>Add from GitHub</strong>
-          <IconButton title="Close" onClick={props.onClose}>
-            <Icon name="close" />
-          </IconButton>
-        </header>
-        <div className="sheet-search">
-          <Icon name="search" />
-          <input
-            autoFocus
-            placeholder="Filter repositories"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-        </div>
-        <div className="github-list">
-          {props.loading && (
-            <div className="menu-empty">Loading repositories…</div>
-          )}
-          {!props.loading && filtered.length === 0 && (
-            <div className="menu-empty">No matching repositories</div>
-          )}
-          {!props.loading &&
-            filtered.map((repo) => (
-              <button
-                key={repo.id}
-                type="button"
-                className="github-row"
-                onClick={() => props.onConnect(repo)}
-              >
-                <Icon name={repo.private ? "lock" : "github"} />
-                <span className="history-text">
-                  <span>{repo.full_name}</span>
-                  <small>
-                    {repo.private ? "Private" : "Public"} ·{" "}
-                    {repo.default_branch}
-                  </small>
-                </span>
-              </button>
-            ))}
-        </div>
-      </section>
-    </div>
-  );
-}
-
 function EmptyState({
   compact = false,
   exiting = false,
+  onExample,
 }: {
   compact?: boolean;
   exiting?: boolean;
+  onExample?(text: string): void;
 }) {
   return (
     <div
@@ -5555,8 +5066,9 @@ function EmptyState({
       aria-hidden={exiting || undefined}
     >
       <span className="empty-mark">
-        <BrandMark size={240} />
+        <BrandMark size={52} />
       </span>
+      {!compact && <div className="welcome-copy"><h1>What are we building?</h1><p>A continuous workspace for your ideas.</p><div className="welcome-suggestions"><button onClick={() => onExample?.("Help me build a new feature in this codebase.")}>Build something new</button><button onClick={() => onExample?.("Find a bug in this codebase, explain it, and fix it.")}>Find and fix a bug</button><button onClick={() => onExample?.("Explore this codebase and explain how its main components work.")}>Explore this codebase</button></div></div>}
     </div>
   );
 }
@@ -5571,7 +5083,8 @@ export function runDefaults(snapshot: WorkbenchSnapshot, agent: AgentKind) {
     (item) => item.agent === agent,
   );
   if (profile) {
-    return { model: profile.model, reasoning: profile.reasoning };
+    const cli = snapshot.runDefaults.find((item) => item.kind === agent);
+    return { model: profile.model ?? cli?.model ?? null, reasoning: profile.reasoning ?? cli?.reasoning ?? null };
   }
   return (
     snapshot.runDefaults.find((item) => item.kind === agent) ?? {
@@ -5684,7 +5197,7 @@ function fallbackModelOptions(agent: AgentKind): PickerModelOption[] {
 function catalogOption(option: AgentModelOption): PickerModelOption {
   return {
     value: option.id,
-    label: option.label || prettyModel(option.id),
+    label: formatModelLabel(option.label || prettyModel(option.id)),
     source: option.default
       ? `${sourceLabel(option.source)} default`
       : sourceLabel(option.source),
@@ -5847,6 +5360,7 @@ function sanitizeModelForAgent(
 function prettyModel(value: string): string {
   const v = baseModelId(value);
   if (!v) return "";
+  if (/^gpt(?=[\s-])/i.test(v)) return formatModelLabel(v);
   const known: Record<string, string> = {
     opus: "Opus (latest)",
     sonnet: "Sonnet (latest)",
@@ -5967,6 +5481,7 @@ function sanitizeBackend(
   agent: AgentKind,
   backend: ExecutionBackend,
 ): ExecutionBackend {
+  if (!DOCKER_SANDBOX_ENABLED) return "host";
   return backend === "docker_sandbox" && agent !== "codex" ? "host" : backend;
 }
 

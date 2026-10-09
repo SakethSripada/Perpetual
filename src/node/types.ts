@@ -47,35 +47,6 @@ export interface NewLocalRepo {
   path: string;
 }
 
-export interface NewGithubRepo {
-  project_id: string;
-  name: string;
-  full_name: string;
-  clone_url: string;
-  ssh_url: string;
-  default_branch: string;
-}
-
-export interface GithubAuthStatus {
-  configured: boolean;
-  authenticated: boolean;
-  login: string | null;
-  avatar_url: string | null;
-  error: string | null;
-}
-
-export interface GithubRepository {
-  id: number;
-  name: string;
-  full_name: string;
-  private: boolean;
-  html_url: string;
-  clone_url: string;
-  ssh_url: string;
-  default_branch: string;
-  updated_at: string | null;
-}
-
 export interface ActivityEvent {
   id: string;
   project_id: string | null;
@@ -302,12 +273,13 @@ export interface LimitPolicy {
   agent_priority: AgentKind[];
   agent_profiles?: AgentTargetProfile[];
   accounts?: ProviderAccount[];
+  dismissed_system_accounts?: AgentKind[];
   resume_with_earliest: boolean;
   unknown_reset_retry_secs: number;
   keep_awake: boolean;
 }
 
-export type ProviderAccountAuthMode = "isolated_cli" | "oauth_token";
+export type ProviderAccountAuthMode = "isolated_cli" | "oauth_token" | "system";
 export interface ProviderAccount {
   id: string;
   label: string;
@@ -318,6 +290,9 @@ export interface ProviderAccount {
 }
 export interface ProviderAccountStatus extends ProviderAccount {
   email?: string | null;
+  plan?: string | null;
+  installed: boolean;
+  active: boolean;
   authenticated: boolean;
   availability: AvailabilityState;
   reset_at: string | null;
@@ -445,6 +420,7 @@ export interface AgentThread {
   limit_reset_at: string | null;
   switch_back: boolean;
   handoff_state: string;
+  provider_account_id?: string | null;
   objective: string;
   decisions: string;
   progress: string;
@@ -769,6 +745,8 @@ export interface ThreadDetails {
 }
 
 export interface WorkbenchSnapshot {
+  modelSelections?: Partial<Record<AgentKind, { model: string; reasoning: string }>>;
+  loadState?: "loading" | "ready" | "error";
   trusted: boolean;
   defaults: WorkbenchDefaults;
   project: Project | null;
@@ -781,6 +759,8 @@ export interface WorkbenchSnapshot {
   localModels?: LocalModelStatus[];
   localModelPolicy: LocalModelPolicy | null;
   detectionState?: "idle" | "loading" | "ready" | "error";
+  accountDetectionState?: "loading" | "ready" | "error";
+  modelDetectionState?: "loading" | "ready" | "error";
   defaultRepoIds?: string[];
   limitPolicy: LimitPolicy | null;
   providerAccounts: ProviderAccountStatus[];
@@ -790,7 +770,6 @@ export interface WorkbenchSnapshot {
   cloudPolicy: CloudPolicy | null;
   cloudAvailability: CloudAvailability[];
   details: ThreadDetails | null;
-  github: GithubAuthStatus | null;
   collaboration: WorkbenchCollaboration;
   error: string | null;
 }

@@ -96,6 +96,10 @@ pub struct AgentThread {
     pub limit_reset_at: Option<DateTime<Utc>>,
     pub switch_back: bool,
     pub handoff_state: String,
+    /// The provider account this session last ran on. `None` when the
+    /// provider has no account pool or the session has not run yet.
+    #[serde(default)]
+    pub provider_account_id: Option<String>,
     pub objective: String,
     pub decisions: String,
     pub progress: String,

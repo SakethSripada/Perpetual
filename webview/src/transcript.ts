@@ -36,6 +36,21 @@ export type PendingTranscriptMessage = {
   firstTurn?: boolean;
 };
 
+export type ToolTranscriptBlock = { type: "tools"; id: string; events: AgentThreadEvent[] };
+
+/** Keep native tool calls/results together between conversational messages. */
+export function groupToolRuns(items: TranscriptItem[]): (TranscriptItem | ToolTranscriptBlock)[] {
+  const blocks: (TranscriptItem | ToolTranscriptBlock)[] = [];
+  for (const item of items) {
+    if (item.type === "event" && ["tool_call", "tool_result", "file_changed"].includes(item.event.kind)) {
+      const previous = blocks[blocks.length - 1];
+      if (previous?.type === "tools" && previous.events[0].turn_id === item.event.turn_id) previous.events.push(item.event);
+      else blocks.push({ type: "tools", id: item.event.id, events: [item.event] });
+    } else blocks.push(item);
+  }
+  return blocks;
+}
+
 export function reconcilePendingMessages(input: {
   pending: PendingTranscriptMessage[];
   selectedStatus: AgentThread["status"] | null | undefined;

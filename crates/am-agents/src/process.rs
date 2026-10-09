@@ -60,6 +60,7 @@ impl ManagedChild {
         pipe_stdin: bool,
     ) -> std::io::Result<Self> {
         let mut cmd = Command::new(program);
+        am_proto::hide_console(cmd.as_std_mut());
         cmd.args(args)
             .current_dir(cwd)
             .stdin(if pipe_stdin {

@@ -65,6 +65,23 @@ pub async fn upsert(pool: &SqlitePool, ev: &AgentThreadEvent) -> Result<(), DbEr
     Ok(())
 }
 
+/// The current request for continuity across provider/account sessions, without
+/// loading the entire transcript just to recover its most recent user turn.
+pub async fn latest_user_message(
+    pool: &SqlitePool,
+    thread_id: &str,
+) -> Result<Option<AgentThreadEvent>, DbError> {
+    let row = sqlx::query_as::<_, MessageRow>(
+        "SELECT id, thread_id, turn_id, role, type, content_json, ts \
+         FROM agent_thread_messages WHERE thread_id = ? AND role = 'user' \
+         ORDER BY ts DESC, rowid DESC LIMIT 1",
+    )
+    .bind(thread_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(row_to_event))
+}
+
 pub async fn list_for_thread(
     pool: &SqlitePool,
     thread_id: &str,

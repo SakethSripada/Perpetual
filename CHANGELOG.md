@@ -2,6 +2,173 @@
 
 ## Unreleased
 
+## 0.7.15
+
+- Animate the reasoning thumb and purple fill together over 180ms when changing
+  levels, while keeping direct dragging immediate and respecting reduced motion.
+
+## 0.7.14
+
+- Give the reasoning rail a muted purple track and lavender progress fill.
+- Capitalize raw GPT and Claude model labels in selectors and settings while
+  preserving the provider IDs used for requests and saved preferences.
+
+## 0.7.13
+
+- Use Medium when a model supports it but has no valid reasoning default; retain
+  saved choices and reported defaults, and select only supported levels.
+- Align slider stops with the thumb centres and extend the rail beneath the
+  endpoints so the first dot no longer protrudes beyond the rounded track.
+
+## 0.7.12
+
+- Simplify the model and reasoning selector with neutral colours, a smaller panel,
+  centred effort/model typography, and a quieter composer pill.
+- Move provider switching into a compact menu and use plain model rows with one
+  checkmark. Remove repeated reasoning labels and oversized provider tabs.
+- Preserve keyboard controls, actual model defaults, provider preferences and
+  failed-save recovery; keep model names readable in narrow sidebars.
+
+## 0.7.11
+
+- Redesign model selection as a compact pill and focused popover, with a separate
+  model list and a stepped reasoning slider for both Codex and Claude Code.
+- Show each model's actual reasoning levels, reset to its reported default, and
+  preserve saved choices across providers. Commit slider changes on release.
+- Support keyboard navigation, search for long lists, nested Escape navigation,
+  missing defaults, single-level models, and models without adjustable reasoning.
+- Keep model names readable in the smallest sidebars and respect light/dark themes
+  and reduced motion.
+
+## 0.7.10
+
+- Remove GitHub browsing, sign-in and cloning from the extension, including
+  the command, settings entry and unused host requests. Select local projects
+  through the folder picker; existing local clones remain available.
+
+## 0.7.9
+
+- Combine provider, actual model and supported reasoning choices in a searchable
+  composer menu. Remove the Default model option; remember choices per provider,
+  restore them across panels, and recover cleanly from failed saves.
+- Remove the redundant session status/account subtitle from the chat header.
+- Review visible repositories against current HEAD so committed edits clear.
+  Include staged, unstaged and untracked edits without modifying the Git index;
+  retain committed task changes in isolated worktrees until applied.
+- Refresh open repository reviews on Git changes with debounced, coalesced reads.
+  Label review scopes explicitly and retain readable narrow repository controls.
+
+## 0.7.8
+
+- Replace the ambiguous repository button with a labeled, searchable picker.
+  Separate chat selection from connection actions and confirm disconnections inline.
+- Share structured usage allowances and reset times across Accounts and Session
+  Status, including partial reports and available fallback-provider allowances.
+- Use themed choice menus in account forms, model settings and reasoning controls.
+  Add model search and explicit provider/model loading states.
+- Keep repository and status dialogs stable across content changes; preserve parent
+  surfaces and keyboard focus when nested menus are selected or dismissed.
+
+## 0.7.7
+
+- Unify Status, repository search, composer menus, approvals and shared-workspace
+  surfaces with the compact settings design. Show the selected account in Status.
+- Open GitHub search immediately with a spinner, recoverable inline errors and
+  retry. Keep cached results visible and respect closing during a pending fetch.
+- Publish account and model changes without rereading the workspace or sending
+  conversation history. Recheck entitlements immediately after account switching
+  and discard probes invalidated by a switch or settings change.
+- Reuse GitHub lists briefly per signed-in session, serve loaded workspaces on
+  reopening, and skip unchanged webview storage writes.
+- Preserve native input keyboard handling inside menus and restore focus on Escape.
+- Update event-listener, chacha20 and spin to compatible patched releases.
+
+## 0.7.6
+
+- Keep settings at the same size across sections, loading and error states.
+  Scroll content inside the dialog and keep its footer visible in short windows.
+- Give conversation search, change review and other dialogs stable dimensions
+  so filtering and expanding content do not move the surrounding surface.
+
+## 0.7.5
+
+- Replace general loading tiles and elapsed timers with a compact Radix spinner;
+  keep the tile animation for streaming messages. Show enabled toggles in green.
+- Coalesce concurrent workspace refreshes and publish accounts and policy before
+  slow model probes finish. Keep existing data visible during background checks.
+- Reuse detection for 60 seconds and pause readiness polling while unfocused.
+  Explicit refresh, account activation and completed sign-in trigger fresh discovery.
+- Deliver streaming tokens directly without full workspace reads and batch token
+  bursts once per animation frame. Flush live updates before merging history.
+- Refresh account states after automatic switching, limits and recovery without
+  forcing model probes. Reject attempts to switch to a limited or signed-out account.
+
+## 0.7.4
+
+- Keep chats, repositories and accounts visible through connection failures;
+  show tile loaders and skeleton rows until checks finish, with retry on errors.
+- Delay settings until saved values arrive instead of flashing defaults.
+- Use compact single-line chat rows without status dots or repeated completion
+  dates; tighten search dialogs, menus and settings, and shorten their labels.
+- Adapt Beautiful UI file chips and unified diffs into expandable change previews,
+  with actual line numbers and additions/deletions. Require a loaded diff to apply.
+- Preserve keyboard navigation, focus restoration and Escape dismissal during loading.
+
+## 0.7.3
+
+- Show one account row per authenticated provider/email in both account management
+  and the run picker; preserve stored profiles and credentials when reordering.
+- Temporarily pause local models and Docker execution, hide their controls and
+  settings, stop readiness probes, and disable automatic local fallback.
+- Replace the old history popup with a searchable conversation dialog and shared
+  sidebar rows. Search titles and original requests, clear filters, navigate with
+  arrows/Enter, and open search with Ctrl/Cmd+K.
+- Use desktop-style right-click and overflow menus for conversation actions;
+  retain edit forms on failures and await deletion acknowledgements.
+- Refine conversation spacing, file chips, search fields, empty states and icons.
+
+## 0.7.2
+
+- Replace toast popups with quiet status updates, persistent dismissible errors,
+  and a recent-activity menu. Preserve unresolved errors through successful actions.
+- Replace tall account cards with compact rows and desktop-style action menus;
+  remove green outlines and usage bars, and display readable plans such as Pro Lite.
+- Standardize button sizes, field spacing, menu surfaces and close controls across
+  settings and the composer. Use the desktop's menu primitive for keyboard navigation,
+  placement, outside-click dismissal and focus restoration.
+- Keep Settings open when dismissing nested menus and recover cleanly from a failed
+  extension message transport.
+
+## 0.7.1
+
+- Keep accounts and models visible during readiness refresh and transient probe
+  errors; prevent older background results from overwriting recent account edits.
+- Collapse multiple authenticated profiles for the same provider/email into one
+  run-picker choice while retaining their individual profiles in account management.
+- Render the account picker in a fixed overlay with reliable outside-click and
+  keyboard behavior, larger labels, and real provider logos.
+- Adapt the desktop's tile loader, shimmer labels, elapsed time, expandable tool
+  traces and changed-file chips, including smooth completion disclosures.
+- Use the desktop font stack and clearer text sizes, remove blur transitions,
+  and keep multiline drafts sized correctly after programmatic edits and resizing.
+
+## 0.7.0
+
+- Bring desktop provider account behavior into the extension: shared CLI sign-ins,
+  isolated profiles, active account selection, email/plan identity, session affinity,
+  and more reliable authentication and usage-limit recovery.
+- Discover the current Claude lineup from the installed CLI and refresh account
+  and model readiness while the workbench is open and when VS Code regains focus.
+- Redesign the workbench with a responsive session sidebar, search, rename and
+  ordering actions, a composer account switcher, clearer states, and theme-native
+  account management with provider usage windows.
+- Make account changes and settings saves await host acknowledgements; preserve
+  concurrent account edits and restore messages after failed submissions.
+- Preserve completed replies and streaming text when delayed history arrives,
+  and add a jump-to-latest control, accessible dialogs, and reduced-motion styles.
+- Port desktop runtime fixes for queues, fallback, budgets, sessions, and worktree
+  application while retaining the extension's Docker support.
+
 ## 0.6.2
 
 - Make isolated Codex and Claude account sign-in update in place as soon as

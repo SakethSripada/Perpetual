@@ -19,6 +19,14 @@ export function activate(context: vscode.ExtensionContext): void {
     daemon,
     controller,
     provider,
+    vscode.window.registerUriHandler({
+      handleUri(uri) {
+        if (uri.path === "/open") {
+          provider.openPanel();
+          void controller.refresh();
+        }
+      },
+    }),
     vscode.window.registerWebviewViewProvider(VIEW_ID, provider, {
       webviewOptions: { retainContextWhenHidden: true },
     }),
@@ -35,9 +43,6 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("perpetual.refresh", () => controller.refresh()),
     vscode.commands.registerCommand("perpetual.connectLocalRepo", () =>
       controller.connectLocalRepoInteractive()
-    ),
-    vscode.commands.registerCommand("perpetual.connectGithubRepo", () =>
-      controller.connectGithubRepoInteractive()
     ),
     vscode.commands.registerCommand("perpetual.openSettings", () =>
       vscode.commands.executeCommand("workbench.action.openSettings", "@ext:SakethSripada.perpetual-for-vscode")

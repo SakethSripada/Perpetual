@@ -25,6 +25,7 @@ use crate::local_models::{
     legacy_run_target_hash, normalize_model_target, run_target_hash, target_hash_matches,
 };
 use crate::policy::PolicyPreflightInput;
+use crate::provider_accounts::AccountSelection;
 use crate::sandbox::SandboxLease;
 use crate::{AppCore, ApprovalScope, CoreError};
 
@@ -36,10 +37,16 @@ impl AppCore {
     /// adding a second row for it.
     pub async fn connect_local_repo(&self, input: NewLocalRepo) -> Result<Repo, CoreError> {
         let path = input.path.clone();
-        let info = tokio::task::spawn_blocking(move || am_vcs::validate_repo(&path))
-            .await
-            .map_err(|e| CoreError::Other(e.to_string()))?
-            .map_err(|e| CoreError::Other(e.to_string()))?;
+        let initialize = input.initialize;
+        let info = tokio::task::spawn_blocking(move || {
+            if initialize {
+                am_vcs::initialize_repo(&path)?;
+            }
+            am_vcs::validate_repo(&path)
+        })
+        .await
+        .map_err(|e| CoreError::Other(e.to_string()))?
+        .map_err(|e| CoreError::Other(e.to_string()))?;
 
         let toplevel = info.toplevel.to_string_lossy().to_string();
         let connected =
@@ -150,11 +157,22 @@ impl AppCore {
 
     /// Detect installed/authenticated agents for the settings view.
     pub async fn detect_agents(&self) -> Result<Vec<AgentStatus>, CoreError> {
+        crate::provider_accounts::invalidate_account_probes();
         let mut out = Vec::new();
 
-        for adapter in self.agents.implemented() {
-            let status = self.record_agent_probe(adapter.detect().await).await?;
-            out.push(status);
+        let probes: Vec<_> = self
+            .agents
+            .implemented()
+            .into_iter()
+            .map(|adapter| tokio::spawn(async move { adapter.detect().await }))
+            .collect();
+        // Independent provider CLIs can probe concurrently. Preserve settings
+        // order while avoiding the sum of their cold-start latencies.
+        for probe in probes {
+            let detected = probe
+                .await
+                .map_err(|err| CoreError::Other(err.to_string()))?;
+            out.push(self.record_agent_probe(detected).await?);
         }
 
         Ok(out)
@@ -256,6 +274,26 @@ impl AppCore {
         } else {
             None
         };
+        let account = match self.select_provider_account(agent).await? {
+            AccountSelection::Unmanaged => None,
+            AccountSelection::Ready(account) => Some(account),
+            AccountSelection::SignedOut => {
+                return Err(CoreError::Other(format!(
+                    "No {} account is signed in. Sign in from Accounts to continue.",
+                    agent.label()
+                )));
+            }
+            AccountSelection::Limited { reset_at } => {
+                return Err(CoreError::Other(match reset_at {
+                    Some(at) => format!(
+                        "Every {} account is at its usage limit until {}.",
+                        agent.label(),
+                        at.with_timezone(&chrono::Local).format("%-I:%M %p")
+                    ),
+                    None => format!("Every {} account is at its usage limit.", agent.label()),
+                }));
+            }
+        };
 
         if backend == ExecutionBackend::Host {
             let status = match self.fresh_ready_agent_status(agent).await? {
@@ -268,9 +306,9 @@ impl AppCore {
                     agent.label()
                 )));
             }
-            if !status.authenticated && local_model.is_none() {
+            if !status.authenticated && local_model.is_none() && account.is_none() {
                 return Err(CoreError::Other(format!(
-                    "{} is installed but not authenticated",
+                    "{} is installed but not signed in. Sign in from Accounts to continue.",
                     agent.label()
                 )));
             }
@@ -295,6 +333,18 @@ impl AppCore {
             task.compute_lease_id.as_deref(),
         );
         let legacy_target_hash = legacy_run_target_hash(agent, model.as_deref(), None, None, None);
+        // Provider sessions live inside one account profile, so a session is
+        // only resumed by the profile that created it.
+        let (target_hash, legacy_target_hash) =
+            match account.as_ref().and_then(|a| a.profile.as_deref()) {
+                Some(profile) => {
+                    let hash = crate::context_index::stable_hex_hash(
+                        format!("{target_hash}|account={profile}").as_bytes(),
+                    );
+                    (hash.clone(), hash)
+                }
+                None => (target_hash, legacy_target_hash),
+            };
         let prior = self
             .latest_resumable_session_ref(task_id, agent, &target_hash, &legacy_target_hash)
             .await?;
@@ -349,7 +399,6 @@ impl AppCore {
         )
         .await?;
 
-        let account = self.select_provider_account(agent).await?;
         let provider_account_id = account.as_ref().map(|account| account.id.clone());
         let mut runtime_policy = policy.runtime_policy.clone();
         if let Some(account) = account {
@@ -773,10 +822,18 @@ impl AppCore {
                 return;
             }
             if self.provider_accounts_configured().await {
-                if let Ok(Some(next)) = self
-                    .next_ready_provider_account(provider_account_id.as_deref())
+                let auto_switch = self
+                    .get_limit_policy()
                     .await
-                {
+                    .map(|p| p.auto_switch)
+                    .unwrap_or(true);
+                let next = if auto_switch {
+                    self.next_ready_provider_account(provider_account_id.as_deref())
+                        .await
+                } else {
+                    Ok(None)
+                };
+                if let Ok(Some(next)) = next {
                     if let Ok(task) = am_db::repos::task::update(
                         &self.db.pool,
                         &task_id,
@@ -1296,7 +1353,11 @@ impl AppCore {
     ) -> Result<(PathBuf, String, String), CoreError> {
         if let Some(link) = am_db::repos::task_repo::get_for_task(&self.db.pool, &task.id).await? {
             if let (Some(wt), Some(base)) = (link.worktree_path.clone(), link.base_ref.clone()) {
-                if link.workspace_backend == backend && Path::new(&wt).exists() {
+                if (link.workspace_backend == backend
+                    || (backend == ExecutionBackend::Host
+                        && link.workspace_backend == ExecutionBackend::DockerSandbox))
+                    && Path::new(&wt).exists()
+                {
                     return Ok((PathBuf::from(wt), link.branch.unwrap_or_default(), base));
                 }
             }
@@ -1384,7 +1445,7 @@ fn local_path_key(path: &str) -> String {
     }
 }
 
-fn normalize_limit_policy(mut policy: am_proto::LimitPolicy) -> am_proto::LimitPolicy {
+pub(crate) fn normalize_limit_policy(mut policy: am_proto::LimitPolicy) -> am_proto::LimitPolicy {
     policy.unknown_reset_retry_secs = policy.unknown_reset_retry_secs.min(7 * 24 * 60 * 60);
     let mut priority = Vec::new();
     for agent in policy.agent_priority {
@@ -1428,16 +1489,30 @@ fn normalize_limit_policy(mut policy: am_proto::LimitPolicy) -> am_proto::LimitP
             continue;
         }
         if account.agent == AgentKind::Codex {
-            account.auth_mode = am_proto::ProviderAccountAuthMode::IsolatedCli;
+            if account.auth_mode == am_proto::ProviderAccountAuthMode::OauthToken {
+                account.auth_mode = am_proto::ProviderAccountAuthMode::IsolatedCli;
+            }
         } else {
             account.use_credits = false;
         }
-        if let Some(existing) = accounts.iter_mut().find(|item| item.id == account.id) {
+        let system = account.auth_mode == am_proto::ProviderAccountAuthMode::System;
+        if let Some(existing) = accounts.iter_mut().find(|item| {
+            item.id == account.id
+                || (system
+                    && item.agent == account.agent
+                    && item.auth_mode == am_proto::ProviderAccountAuthMode::System)
+        }) {
             *existing = account;
         } else {
             accounts.push(account);
         }
     }
+    policy.dismissed_system_accounts.dedup();
+    policy.dismissed_system_accounts.retain(|agent| {
+        !accounts
+            .iter()
+            .any(|a| a.agent == *agent && a.auth_mode == am_proto::ProviderAccountAuthMode::System)
+    });
     policy.accounts = accounts;
     policy
 }
@@ -1458,14 +1533,14 @@ fn build_prompt(task: &Task) -> String {
         }
     }
     prompt.push_str(
-        "\n\nBefore making changes, read TASK_CONTEXT.md and the agent-specific context file in this worktree for the current objective, progress, and next actions.",
+        "\n\nBefore making changes, read TASK_CONTEXT.md and the agent-specific context file in this worktree for the current objective, progress, and next actions. These Perpetual context files are routine session setup, so there is no need to announce that you are checking them. Share any findings, blockers, or decisions from them when relevant to the user.",
     );
     prompt
 }
 
 fn build_resume_prompt(task: &Task) -> String {
     format!(
-        "Continue the Perpetual task \"{}\" in this worktree. Read TASK_CONTEXT.md and the agent-specific context file first, then proceed from the recorded progress and next actions.",
+        "Continue the Perpetual task \"{}\" in this worktree. Read TASK_CONTEXT.md and the agent-specific context file first, then proceed from the recorded progress and next actions. Checking these Perpetual context files is routine session setup; focus user-facing updates on relevant progress, findings, and blockers.",
         task.title
     )
 }
@@ -1565,10 +1640,12 @@ fn curated_claude_models(cli_levels: Option<&[String]>) -> Vec<AgentModelOption>
     ];
     entries
         .iter()
-        .map(|(id, label, aliases, efforts)| AgentModelOption {
+        .map(|(id, label, _aliases, efforts)| AgentModelOption {
             id: id.to_string(),
             label: label.to_string(),
-            aliases: aliases.iter().map(|alias| alias.to_string()).collect(),
+            // Aliases always mean the CLI's newest model of a family, so no
+            // pinned version may claim them.
+            aliases: Vec::new(),
             family: model_family(id),
             default: false,
             available: true,
@@ -1593,6 +1670,41 @@ fn curated_claude_models(cli_levels: Option<&[String]>) -> Vec<AgentModelOption>
         .collect()
 }
 
+/// Model families Claude Code offers: those its help names as aliases, plus
+/// the long-standing opus, sonnet, and haiku.
+fn claude_families(help: &str) -> Vec<&'static str> {
+    let lower = help.to_lowercase();
+    ["fable", "opus", "sonnet", "haiku"]
+        .into_iter()
+        .filter(|family| {
+            matches!(*family, "opus" | "sonnet" | "haiku") || lower.contains(&format!("'{family}'"))
+        })
+        .collect()
+}
+
+/// Effort levels a Claude model accepts: none for Haiku, no `xhigh` before
+/// the 4.7 generation, and otherwise whatever the CLI advertises.
+fn claude_efforts(id: &str, cli_levels: Option<&[String]>) -> Vec<String> {
+    if id.contains("haiku") {
+        return Vec::new();
+    }
+    let numbers: Vec<u32> = id.split('-').filter_map(|p| p.parse().ok()).collect();
+    let base = match numbers.as_slice() {
+        [4] => CLAUDE_EFFORT_46,
+        [4, minor, ..] if *minor <= 6 => CLAUDE_EFFORT_46,
+        _ => CLAUDE_EFFORT_FULL,
+    };
+    match cli_levels {
+        Some(levels) if numbers.first().is_some_and(|major| *major >= 5) => levels.to_vec(),
+        Some(levels) => base
+            .iter()
+            .filter(|e| levels.iter().any(|l| l.eq_ignore_ascii_case(e)))
+            .map(|e| e.to_string())
+            .collect(),
+        None => base.iter().map(|e| e.to_string()).collect(),
+    }
+}
+
 fn claude_model_catalog(defaults: AgentRunDefaults) -> AgentModelCatalog {
     let binary = find_binary("claude");
     let binary_path = binary
@@ -1603,13 +1715,19 @@ fn claude_model_catalog(defaults: AgentRunDefaults) -> AgentModelCatalog {
     let mut error = None;
     let mut cli_levels: Option<Vec<String>> = None;
     let mut help_models = Vec::new();
+    let mut help_text = String::new();
 
     if let Some(binary) = binary.as_ref() {
         match command_output_timeout(binary, &["--help"], Duration::from_secs(6)) {
             Ok(help) => {
                 source = "claude_help".to_string();
                 cli_levels = parse_claude_effort_levels(&help);
-                help_models = parse_claude_help_models(&help);
+                // Family aliases are represented by the versioned entries below.
+                help_models = parse_claude_help_models(&help)
+                    .into_iter()
+                    .filter(|m| m.id.starts_with("claude-"))
+                    .collect();
+                help_text = help;
             }
             Err(err) => error = Some(err),
         }
@@ -1617,7 +1735,34 @@ fn claude_model_catalog(defaults: AgentRunDefaults) -> AgentModelCatalog {
         error = Some("claude binary was not found".to_string());
     }
 
-    let mut models = curated_claude_models(cli_levels.as_deref());
+    // The installed CLI's own lineup keeps new models visible without an app
+    // release; the curated list only covers CLIs that can't be read.
+    let families = claude_families(&help_text);
+    let discovered = binary
+        .as_ref()
+        .map(|binary| crate::claude_models::discover(binary, &families))
+        .unwrap_or_default();
+    let mut models = if discovered.is_empty() {
+        curated_claude_models(cli_levels.as_deref())
+    } else {
+        source = "claude_cli".to_string();
+        discovered
+            .into_iter()
+            .map(|model| AgentModelOption {
+                reasoning: claude_efforts(&model.id, cli_levels.as_deref()),
+                family: Some(model.family),
+                id: model.id,
+                label: model.label,
+                aliases: Vec::new(),
+                default: false,
+                available: true,
+                source: "claude_cli".to_string(),
+                default_reasoning: None,
+                local_provider: None,
+                local_base_url: None,
+            })
+            .collect()
+    };
     let mut reasoning =
         cli_levels.unwrap_or_else(|| CLAUDE_EFFORT_FULL.iter().map(|s| s.to_string()).collect());
     // Anything the CLI itself mentions (new aliases, new full ids) merges in;
@@ -1893,7 +2038,7 @@ fn codex_app_server_models(
 ) -> Result<(Vec<AgentModelOption>, Vec<String>), String> {
     use std::io::{BufRead, BufReader, Write};
 
-    let mut child = Command::new(binary)
+    let mut child = am_proto::hide_console(&mut Command::new(binary))
         .arg("app-server")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1943,8 +2088,11 @@ fn codex_app_server_models(
         }
     });
 
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(20);
     let mut outcome = Err(format!("{} app-server timed out", binary.display()));
+    let mut page_id = 2u64;
+    let mut all_models = Vec::new();
+    let mut seen_cursors = std::collections::HashSet::new();
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
@@ -1957,19 +2105,47 @@ fn codex_app_server_models(
         let Ok(value) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
             continue;
         };
-        if value.get("id").and_then(serde_json::Value::as_u64) != Some(2) {
+        if value.get("id").and_then(serde_json::Value::as_u64) != Some(page_id) {
             continue;
         }
-        outcome = if let Some(err) = value.get("error") {
-            Err(err
+        if let Some(err) = value.get("error") {
+            outcome = Err(err
                 .get("message")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("codex app-server model/list failed")
-                .to_string())
-        } else {
-            Ok(value.pointer("/result/data").cloned().unwrap_or_default())
+                .to_string());
+            break;
+        }
+        let Some(page) = value
+            .pointer("/result/data")
+            .and_then(serde_json::Value::as_array)
+        else {
+            outcome = Err("codex app-server model/list returned invalid data".to_string());
+            break;
         };
-        break;
+        all_models.extend(page.iter().cloned());
+        let cursor = value
+            .pointer("/result/nextCursor")
+            .and_then(serde_json::Value::as_str)
+            .filter(|cursor| !cursor.is_empty());
+        let Some(cursor) = cursor else {
+            outcome = Ok(json!(all_models));
+            break;
+        };
+        if !seen_cursors.insert(cursor.to_string()) || seen_cursors.len() > 50 {
+            outcome = Err("codex app-server model/list repeated a page cursor".to_string());
+            break;
+        }
+        page_id += 1;
+        let next = request(
+            Some(page_id),
+            "model/list",
+            json!({ "includeHidden": false, "cursor": cursor }),
+        );
+        if let Err(err) = stdin.write_all(next.as_bytes()).and_then(|_| stdin.flush()) {
+            outcome = Err(format!("failed to request codex model page: {err}"));
+            break;
+        }
     }
 
     // Close stdin first: the app-server exits on stdin EOF, which also covers
@@ -2243,7 +2419,7 @@ fn command_output_timeout(
     args: &[&str],
     timeout: Duration,
 ) -> Result<String, String> {
-    let mut child = Command::new(binary)
+    let mut child = am_proto::hide_console(&mut Command::new(binary))
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -2544,17 +2720,25 @@ fn map_event(session_id: &str, task_id: &str, ev: &NormalizedEvent) -> SessionEv
             Some(delta.clone()),
             json!({ "streaming": true }),
         ),
-        NormalizedEvent::ToolUse { name, input } => (
+        NormalizedEvent::ToolUse {
+            call_id,
+            name,
+            input,
+        } => (
             "tool",
             "tool_use",
             Some(name.clone()),
-            json!({ "input": input }),
+            json!({ "input": input, "call_id": call_id }),
         ),
-        NormalizedEvent::ToolResult { ok, summary } => (
+        NormalizedEvent::ToolResult {
+            call_id,
+            ok,
+            summary,
+        } => (
             "tool",
             "tool_result",
             Some(compact_event_detail(summary)),
-            json!({ "ok": ok, "summary": capped_event_detail(summary) }),
+            json!({ "ok": ok, "summary": capped_event_detail(summary), "call_id": call_id }),
         ),
         NormalizedEvent::FileChanged { path, change } => (
             "app",
@@ -2755,11 +2939,11 @@ mod model_catalog_tests {
         let models = curated_claude_models(None);
         let fable = models.iter().find(|m| m.id == "claude-fable-5-1").unwrap();
         assert_eq!(fable.label, "Claude Fable 5.1");
-        assert!(fable.aliases.iter().any(|alias| alias == "fable"));
+        // Aliases track the CLI's newest model, so no pinned entry claims one.
+        assert!(models.iter().all(|m| m.aliases.is_empty()));
         assert_eq!(fable.reasoning, ["low", "medium", "high", "xhigh", "max"]);
         let opus = models.iter().find(|m| m.id == "claude-opus-5").unwrap();
         assert_eq!(opus.label, "Claude Opus 5");
-        assert!(opus.aliases.iter().any(|alias| alias == "opus"));
         let opus46 = models.iter().find(|m| m.id == "claude-opus-4-6").unwrap();
         assert!(!opus46.reasoning.iter().any(|level| level == "xhigh"));
         let haiku = models.iter().find(|m| m.id == "claude-haiku-4-5").unwrap();
@@ -2812,15 +2996,33 @@ mod model_catalog_tests {
     }
 
     #[test]
-    fn help_aliases_fold_into_curated_versioned_entries() {
-        let mut models = curated_claude_models(None);
-        let before = models.len();
-        for option in parse_claude_help_models(
-            "Provide an alias for the latest model (e.g. 'fable', 'opus', or 'sonnet')",
-        ) {
-            push_model_option(&mut models, option);
-        }
-        assert_eq!(models.len(), before, "aliases must not create duplicates");
+    fn claude_families_follow_the_cli_help() {
+        assert_eq!(
+            claude_families(
+                "Provide an alias for the latest model (e.g. 'fable', 'opus', or 'sonnet')"
+            ),
+            ["fable", "opus", "sonnet", "haiku"]
+        );
+        assert_eq!(claude_families(""), ["opus", "sonnet", "haiku"]);
+    }
+
+    #[test]
+    fn claude_efforts_depend_on_the_model_generation() {
+        let cli: Vec<String> = ["low", "medium", "high", "xhigh", "max", "ultra"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(claude_efforts("claude-haiku-4-5", Some(&cli)).is_empty());
+        assert!(!claude_efforts("claude-sonnet-4", Some(&cli)).contains(&"xhigh".to_string()));
+        assert_eq!(
+            claude_efforts("claude-opus-4-6", Some(&cli)),
+            ["low", "medium", "high", "max"]
+        );
+        assert_eq!(claude_efforts("claude-opus-5-5", Some(&cli)), cli);
+        assert_eq!(
+            claude_efforts("claude-opus-5-5", None),
+            ["low", "medium", "high", "xhigh", "max"]
+        );
     }
 
     #[test]
@@ -2924,6 +3126,7 @@ mod repo_connection_tests {
             .connect_local_repo(NewLocalRepo {
                 project_id: project.id.clone(),
                 path: path.clone(),
+                initialize: false,
             })
             .await
             .unwrap();
@@ -2931,6 +3134,7 @@ mod repo_connection_tests {
             .connect_local_repo(NewLocalRepo {
                 project_id: project.id.clone(),
                 path,
+                initialize: false,
             })
             .await
             .unwrap();
@@ -2947,6 +3151,7 @@ mod repo_connection_tests {
             .connect_local_repo(NewLocalRepo {
                 project_id: project.id.clone(),
                 path: workspace_root(),
+                initialize: false,
             })
             .await
             .unwrap();
@@ -2963,6 +3168,7 @@ mod repo_connection_tests {
         core.connect_local_repo(NewLocalRepo {
             project_id: project.id.clone(),
             path: workspace_root(),
+            initialize: false,
         })
         .await
         .unwrap();

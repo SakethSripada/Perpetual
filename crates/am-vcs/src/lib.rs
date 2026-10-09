@@ -52,7 +52,7 @@ pub struct RepoInfo {
 /// Uses an argument array — never a shell — so user-supplied values cannot be
 /// interpreted as commands.
 fn git(cwd: &Path, args: &[&str]) -> Result<String, VcsError> {
-    let output = Command::new("git")
+    let output = am_proto::hide_console(&mut Command::new("git"))
         .arg("-C")
         .arg(cwd)
         .args(args)
@@ -76,7 +76,7 @@ fn git_owned_raw(cwd: &Path, args: &[String]) -> Result<String, VcsError> {
 }
 
 fn git_owned_output(cwd: &Path, args: &[String]) -> Result<Vec<u8>, VcsError> {
-    let output = Command::new("git")
+    let output = am_proto::hide_console(&mut Command::new("git"))
         .arg("-C")
         .arg(cwd)
         .args(args)
@@ -125,6 +125,7 @@ pub fn clone_repo(
     }
 
     let mut command = Command::new("git");
+    am_proto::hide_console(&mut command);
     command
         .env("GIT_TERMINAL_PROMPT", "0")
         .arg("clone")
@@ -172,6 +173,50 @@ fn ensure_origin_matches(repo: &Path, remote_url: &str) -> Result<(), VcsError> 
 }
 
 /// Validate that `path` is a local git repository and gather metadata. Read-only.
+/// Makes `path` usable as a project: runs `git init` when it isn't in a
+/// repository, and records the folder's current files as a first commit when
+/// the repository has none. Callers must only do this with the user's consent.
+/// The home folder and filesystem roots are refused, so a mistaken pick can't
+/// sweep a whole disk into a repository.
+pub fn initialize_repo(path: &str) -> Result<(), VcsError> {
+    let p = Path::new(path);
+    if !p.is_dir() {
+        return Err(VcsError::MissingPath(path.to_string()));
+    }
+    let canonical = std::fs::canonicalize(p).map_err(|e| VcsError::Io(e.to_string()))?;
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .and_then(|h| std::fs::canonicalize(h).ok());
+    if canonical.parent().is_none() || home.as_deref() == Some(canonical.as_path()) {
+        return Err(VcsError::InvalidPath(
+            "choose a project folder rather than your home folder or a drive".into(),
+        ));
+    }
+    let inside = git(p, &["rev-parse", "--is-inside-work-tree"]).is_ok_and(|v| v == "true");
+    if !inside {
+        git(p, &["-c", "init.defaultBranch=main", "init"])?;
+    }
+    if git(p, &["rev-parse", "--verify", "HEAD"]).is_ok() {
+        return Ok(());
+    }
+    git(p, &["add", "-A"])?;
+    // Commit as the user when Git knows who they are.
+    let identity: &[&str] = if git(p, &["config", "user.email"]).is_ok_and(|v| !v.is_empty()) {
+        &[]
+    } else {
+        &[
+            "-c",
+            "user.name=Perpetual",
+            "-c",
+            "user.email=perpetual@localhost",
+        ]
+    };
+    let mut args: Vec<&str> = identity.to_vec();
+    args.extend(["commit", "--allow-empty", "-m", "Initial commit"]);
+    git(p, &args)?;
+    Ok(())
+}
+
 pub fn validate_repo(path: &str) -> Result<RepoInfo, VcsError> {
     let p = Path::new(path);
     if !p.exists() {
@@ -229,7 +274,7 @@ pub fn create_clone_workspace(
         std::fs::create_dir_all(parent).map_err(|e| VcsError::Io(e.to_string()))?;
     }
 
-    let output = Command::new("git")
+    let output = am_proto::hide_console(&mut Command::new("git"))
         .arg("clone")
         .arg("--no-hardlinks")
         .arg("--")
@@ -260,6 +305,26 @@ pub fn commit_all_with_excludes(
     message: &str,
     exclude_paths: &[&str],
 ) -> Result<Option<String>, VcsError> {
+    commit_all_with_excludes_impl(repo, message, exclude_paths, false)
+}
+
+/// Snapshot an app-owned worktree after its patch is applied to the visible
+/// checkout. This is internal bookkeeping, so user commit hooks and signing
+/// settings must not prevent the task from continuing.
+pub fn checkpoint_worktree_with_excludes(
+    repo: &Path,
+    message: &str,
+    exclude_paths: &[&str],
+) -> Result<Option<String>, VcsError> {
+    commit_all_with_excludes_impl(repo, message, exclude_paths, true)
+}
+
+fn commit_all_with_excludes_impl(
+    repo: &Path,
+    message: &str,
+    exclude_paths: &[&str],
+    internal_checkpoint: bool,
+) -> Result<Option<String>, VcsError> {
     let _ = git(repo, &["reset", "--mixed"]);
 
     let mut add_args = vec![
@@ -283,14 +348,28 @@ pub fn commit_all_with_excludes(
         return Ok(None);
     }
 
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo)
+    let mut command = Command::new("git");
+    am_proto::hide_console(&mut command);
+    command.arg("-C").arg(repo);
+    if internal_checkpoint {
+        command.arg("-c").arg("commit.gpgsign=false");
+        command.arg("-c").arg(if cfg!(windows) {
+            "core.hooksPath=NUL"
+        } else {
+            "core.hooksPath=/dev/null"
+        });
+    }
+    let output = command
         .arg("-c")
         .arg("user.name=Perpetual")
         .arg("-c")
         .arg("user.email=perpetual@local")
         .arg("commit")
+        .args(if internal_checkpoint {
+            &["--no-verify"][..]
+        } else {
+            &[]
+        })
         .arg("-m")
         .arg(message)
         .output()
@@ -312,7 +391,7 @@ pub fn dirty_paths(repo: &Path, paths: &[String]) -> Result<Vec<String>, VcsErro
     }
     let mut dirty = Vec::new();
     for path in paths {
-        let output = Command::new("git")
+        let output = am_proto::hide_console(&mut Command::new("git"))
             .arg("-C")
             .arg(repo)
             .arg("status")
@@ -400,7 +479,7 @@ pub fn overwrite_patch_paths(
     }
     std::fs::create_dir_all(backup_dir).map_err(|err| VcsError::Io(err.to_string()))?;
 
-    let output = Command::new("git")
+    let output = am_proto::hide_console(&mut Command::new("git"))
         .arg("-C")
         .arg(repo)
         .arg("worktree")
@@ -450,7 +529,7 @@ pub fn overwrite_patch_paths(
         Ok(())
     })();
 
-    let cleanup = Command::new("git")
+    let cleanup = am_proto::hide_console(&mut Command::new("git"))
         .arg("-C")
         .arg(repo)
         .arg("worktree")
@@ -541,7 +620,7 @@ fn run_apply_patch(repo: &Path, patch: &str, check_only: bool) -> Result<(), Vcs
     if patch.trim().is_empty() {
         return Ok(());
     }
-    let mut child = Command::new("git")
+    let mut child = am_proto::hide_console(&mut Command::new("git"))
         .arg("-C")
         .arg(repo)
         .arg("apply")
@@ -573,6 +652,7 @@ fn run_apply_patch(repo: &Path, patch: &str, check_only: bool) -> Result<(), Vcs
 pub fn push_branch(repo: &Path, branch: &str, auth_header: Option<&str>) -> Result<(), VcsError> {
     let refspec = format!("HEAD:refs/heads/{branch}");
     let mut command = Command::new("git");
+    am_proto::hide_console(&mut command);
     command
         .arg("-C")
         .arg(repo)
@@ -606,6 +686,7 @@ pub fn remote_branch_sha(
 ) -> Result<Option<String>, VcsError> {
     let refspec = format!("refs/heads/{branch}");
     let mut command = Command::new("git");
+    am_proto::hide_console(&mut command);
     command
         .arg("-C")
         .arg(repo)
@@ -630,6 +711,7 @@ pub fn remote_branch_sha(
 /// Fetch `origin/<branch>` into the repo.
 pub fn fetch_branch(repo: &Path, branch: &str, auth_header: Option<&str>) -> Result<(), VcsError> {
     let mut command = Command::new("git");
+    am_proto::hide_console(&mut command);
     command
         .arg("-C")
         .arg(repo)
@@ -751,7 +833,7 @@ mod apply_tests {
     }
 
     fn run(repo: &Path, args: &[&str]) {
-        let output = Command::new("git")
+        let output = am_proto::hide_console(&mut Command::new("git"))
             .arg("-C")
             .arg(repo)
             .args(args)
@@ -772,6 +854,24 @@ mod apply_tests {
         std::fs::write(repo.join("file.txt"), "base\n").unwrap();
         run(repo, &["add", "."]);
         run(repo, &["commit", "-m", "base"]);
+    }
+
+    #[test]
+    fn internal_checkpoint_ignores_user_signing_requirement() {
+        let repo = temp_repo("checkpoint-signing");
+        init_repo(&repo);
+        run(&repo, &["config", "commit.gpgsign", "true"]);
+        std::fs::write(repo.join("applied.txt"), "applied\n").unwrap();
+
+        let head = checkpoint_worktree_with_excludes(&repo, "checkpoint", &[])
+            .unwrap()
+            .expect("checkpoint should create a commit");
+        assert_eq!(head, head_sha(&repo).unwrap());
+        assert!(worktree_patch_with_excludes(&repo, &head, &[])
+            .unwrap()
+            .is_empty());
+
+        let _ = std::fs::remove_dir_all(repo);
     }
 
     #[test]

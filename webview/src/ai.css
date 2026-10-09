@@ -1,0 +1,51 @@
+/* Desktop agent primitives, adapted from Beautiful UI (MIT; see licenses). */
+.ai-loader { display: grid; flex-shrink: 0; }
+.ai-pixel { display: block; background: var(--vscode-foreground); }
+.ai-square { border-radius: 1px; }
+.ai-round { border-radius: 50%; }
+.ai-shimmer { background-clip: text; -webkit-background-clip: text; color: transparent; white-space: nowrap; }
+.ai-loading { display: flex; align-items: center; gap: 10px; width: fit-content; padding: 6px 0; }
+.ai-loading-label { font-size: 13px; font-weight: 500; }
+.ai-elapsed { font-family: var(--am-mono); font-size: 12px; font-variant-numeric: tabular-nums; color: var(--am-faint); }
+.ai-collapse { display: grid; transition: grid-template-rows 300ms, opacity 300ms; }
+.ai-collapse-inner { min-height: 0; overflow: hidden; }
+.ai-tool-run { margin: 4px 0; width: 100%; max-width: 560px; }
+.ai-run-heading { display: flex; align-items: center; gap: 8px; width: fit-content; padding: 5px 6px; margin-left: -6px; background: transparent; border: 0; border-radius: 6px; cursor: pointer; }
+.ai-run-heading:hover, .ai-tool-row:enabled:hover { background: var(--am-hover); }
+.ai-run-label, .ai-run-summary { font-size: 13px; font-weight: 500; }
+.ai-run-summary, .ai-muted { color: var(--am-muted); }
+.ai-faint { color: var(--am-faint); }
+.ai-danger, .ai-tool-failure { color: var(--vscode-errorForeground, #ec8b80); }
+.ai-success { color: var(--am-ok); }
+.ai-tool-failure { font-size: 11px; flex-shrink: 0; }
+.ai-tool-tree { position: relative; margin: 4px 0 0 5px; padding-left: 16px; }
+.ai-tree-line { position: absolute; top: 0; bottom: 4px; left: 3px; width: 1px; background: var(--am-border); }
+.ai-tool-steps { display: flex; flex-direction: column; gap: 3px; padding: 4px 0; }
+.ai-tool-row { display: flex; align-items: center; gap: 8px; width: calc(100% + 6px); min-width: 0; min-height: 30px; padding: 3px; margin: 0 -3px; border: 0; border-radius: 6px; text-align: left; background: transparent; cursor: pointer; transition: background 100ms; }
+.ai-tool-row:disabled { opacity: 1; cursor: default; }
+.ai-tool-icon { position: relative; display: flex; align-items: center; justify-content: center; width: 16px; height: 16px; flex-shrink: 0; }
+.ai-icon-glyph { transition: opacity 100ms; }
+.ai-tool-chevron { position: absolute; transition: opacity 150ms; }
+.ai-hidden, .ai-tool-chevron.ai-hidden { opacity: 0; }
+.ai-visible, .ai-tool-row:hover .ai-tool-chevron { opacity: 1; }
+.ai-tool-row:hover .ai-expandable-glyph { opacity: 0; }
+.ai-tool-label { font-size: 13px; font-weight: 500; flex-shrink: 0; }
+.ai-tool-target { display: inline-flex; align-items: center; height: 23px; min-width: 0; padding: 0 6px; border-radius: 6px; font-size: 12px; color: var(--am-muted); background: var(--am-hover); border: 1px solid var(--am-border-soft); }
+.ai-mono { font-family: var(--am-mono); }
+.ai-truncate { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ai-tool-output { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 4px 8px; padding: 2px 0 2px 14px; border-left: 1px solid var(--am-border); }
+.ai-output-line { font-family: var(--am-mono); font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.ai-file-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.ai-file-chip { display: inline-flex; align-items: center; gap: 8px; height: 28px; max-width: 100%; padding: 0 8px; border: 1px solid var(--am-border); border-radius: 6px; background: var(--am-elevated); font-family: var(--am-mono); font-size: 12px; cursor: pointer; transition: background 100ms; }
+.ai-file-chip:hover { background: var(--am-hover); }
+.ai-file-change { flex-shrink: 0; font-family: var(--am-sans); font-size: 11px; }
+@keyframes pixel-on { 0%, to { opacity: .15; } 18%, 42% { opacity: 1; } 62% { opacity: .15; } }
+@keyframes shimmer-text { from { background-position: 150%; } to { background-position: -50%; } }
+@keyframes fade-up { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes bui-pop-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .ai-shimmer { background: none !important; color: var(--am-muted); }
+  .ai-pixel { animation: none !important; opacity: .75 !important; }
+  .ai-collapse { transition: none; }
+}

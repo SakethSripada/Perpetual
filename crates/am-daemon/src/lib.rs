@@ -15,6 +15,7 @@ pub mod protocol;
 mod server;
 
 pub use client::{ClientError, DaemonClient};
+pub use server::dispatch;
 pub use server::Server;
 
 use tokio::io::AsyncWriteExt;

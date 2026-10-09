@@ -221,7 +221,7 @@ async fn handle_conn(stream: TcpStream, core: AppCore, token: String) -> io::Res
 }
 
 /// Route a request to the corresponding `am-core` service method.
-async fn dispatch(core: &AppCore, req: DaemonRequest) -> Result<DaemonResponse, String> {
+pub async fn dispatch(core: &AppCore, req: DaemonRequest) -> Result<DaemonResponse, String> {
     use DaemonRequest as Q;
     use DaemonResponse as A;
     let s = |e: CoreError| e.to_string();
@@ -370,6 +370,15 @@ async fn dispatch(core: &AppCore, req: DaemonRequest) -> Result<DaemonResponse, 
             core.delete_provider_account(&account_id).await.map_err(s)?;
             A::Unit
         }
+        Q::ActivateProviderAccount { account_id } => {
+            core.activate_provider_account(&account_id)
+                .await
+                .map_err(s)?;
+            A::Unit
+        }
+        Q::AddSystemProviderAccount { agent } => {
+            A::ProviderAccountId(core.add_system_provider_account(agent).await.map_err(s)?)
+        }
         Q::DetectSandboxRuntime => {
             A::SandboxRuntimeStatus(core.detect_sandbox_runtime().await.map_err(s)?)
         }
@@ -482,6 +491,10 @@ async fn dispatch(core: &AppCore, req: DaemonRequest) -> Result<DaemonResponse, 
         }
         Q::DeleteAgentThread { id, force } => {
             core.delete_agent_thread(&id, force).await.map_err(s)?;
+            A::Unit
+        }
+        Q::ReorderAgentThreads { ordered_ids } => {
+            core.reorder_agent_threads(ordered_ids).await.map_err(s)?;
             A::Unit
         }
         Q::AssignThreadRepos {

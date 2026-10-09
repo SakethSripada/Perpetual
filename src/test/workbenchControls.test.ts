@@ -397,7 +397,10 @@ test("repo assignment UI retains the serialized write and lock guidance", () => 
   assert.match(controller, /drainRepoAssignments/);
   assert.match(controller, /repoAssignmentFailed/);
   assert.match(app, /pendingRepoAssignmentRef/);
-  assert.match(app, /Start a new session to use a different set/);
+  assert.match(app, /locked=\{repoSelectionLocked\}/);
+  const picker = readFileSync(path.resolve(__dirname, "../../webview/src/repositories.tsx"), "utf8");
+  assert.match(picker, /Attached to this chat/);
+  assert.match(picker, /disabled=\{props.locked\}/);
 });
 
 type SignInModule = {
@@ -507,8 +510,9 @@ test("new provider accounts persist before authentication", () => {
     path.resolve(__dirname, "../../webview/src/App.tsx"),
     "utf8",
   );
-  assert.match(app, /const saveAccounts = \(nextAccounts: ProviderAccount\[\]\)/);
-  assert.match(app, /props\.onSaveLimitPolicy\(next\)/);
+  const accounts = readFileSync(path.resolve(__dirname, "../../webview/src/accounts.tsx"), "utf8");
+  assert.match(accounts, /await request\(action\)/);
+  assert.match(accounts, /type: "addProviderAccount"/);
   assert.doesNotMatch(app, /Apply settings before authenticating/);
   assert.doesNotMatch(app, /disabled=\{!saved\} onClick=\{\(\) => props\.onSignInProviderAccount/);
 });
@@ -553,8 +557,8 @@ test("provider integrations do not add a separate settings surface", () => {
   assert.doesNotMatch(app, /settings-panel-integrations/);
   assert.doesNotMatch(app, /Provider app only/);
   assert.doesNotMatch(controller, /openProviderAccountSetup/);
-  assert.match(app, /Manage plugins and MCP for this account/);
-  assert.match(app, /<span>Open CLI<\/span>/);
+  const accounts = readFileSync(path.resolve(__dirname, "../../webview/src/accounts.tsx"), "utf8");
+  assert.match(accounts, /type: "openProviderAccountCli"/);
   assert.match(controller, /client\.providerAccountToolingLaunch\(accountId\)/);
   assert.doesNotMatch(app, /How plugins work|Integration setup|Computer use setup/);
 });
@@ -622,8 +626,9 @@ test("provider authentication refreshes in place without starting model work", (
   assert.match(controller, /client\.providerAccountStatuses\(\)/);
   assert.match(controller, /authPendingAccountIds: \[\.\.\.this\.authPendingAccounts\]/);
   assert.doesNotMatch(controller, /watchProviderAuthentication[\s\S]{0,2500}submitAgentThread/);
-  assert.match(app, /authPendingAccountIds\?\.includes\(account\.id\)/);
-  assert.match(app, /<summary>Account settings<\/summary>/);
+  const accounts = readFileSync(path.resolve(__dirname, "../../webview/src/accounts.tsx"), "utf8");
+  assert.match(accounts, /authPendingAccountIds\?\.includes\(account\.id\)/);
+  assert.match(accounts, /account-details/);
   assert.doesNotMatch(app, /New isolated profile|Token or isolated profile/);
 });
 

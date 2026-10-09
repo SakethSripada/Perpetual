@@ -68,7 +68,7 @@ draining your quota.
 - Read-only, workspace-write, autonomous, and Codex approval modes.
 - Local model fallback through Ollama or LM Studio.
 - Optional Docker Sandbox execution for Codex.
-- GitHub repository sign-in, selection, cloning, diffs, and change review.
+- Local project selection, diffs, and change review.
 
 ## Get started
 
@@ -78,9 +78,8 @@ Code. Install and authenticate at least one supported provider:
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview)
 - [Codex](https://github.com/openai/codex)
 
-To use provider switching, install and authenticate both. Docker Sandbox,
-GitHub repositories, and local models require their respective accounts or
-local services.
+To use provider switching, install and authenticate both. Select a local project
+folder to get started.
 
 Perpetual is designed for trusted workspaces. Review the permission settings
 before enabling autonomous execution.

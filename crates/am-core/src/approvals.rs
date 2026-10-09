@@ -47,7 +47,8 @@ pub(crate) fn new_registry() -> ApprovalRegistry {
 }
 
 impl AppCore {
-    /// Build the per-run approval callback for an adapter-driven agent (Codex).
+    /// Build the per-run approval callback for a provider with a bidirectional
+    /// permission channel (Codex app-server or Claude stream-json).
     /// Both `Ask` (prompt for everything) and
     /// `WorkspaceWrite`/Edit (auto-approve edits, prompt on escalation) want live
     /// approval; `ReadOnly` and `Autonomous` never prompt.
@@ -57,7 +58,7 @@ impl AppCore {
         agent: AgentKind,
         scope: ApprovalScope,
     ) -> Option<ApprovalResponder> {
-        if agent != AgentKind::Codex
+        if !matches!(agent, AgentKind::Codex | AgentKind::ClaudeCode)
             || !matches!(
                 permission,
                 PermissionPolicy::Ask | PermissionPolicy::WorkspaceWrite

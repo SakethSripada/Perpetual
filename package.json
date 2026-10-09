@@ -2,7 +2,7 @@
   "name": "perpetual-for-vscode",
   "displayName": "Perpetual for VS Code",
   "description": "Run Codex and Claude Code with persistent sessions, account rotation, safe Git worktrees, and review.",
-  "version": "0.6.2",
+  "version": "0.7.15",
   "publisher": "SakethSripada",
   "license": "MIT",
   "author": {
@@ -26,7 +26,6 @@
     "claude",
     "claude code",
     "ai",
-    "github",
     "docker",
     "handoff",
     "account rotation"
@@ -44,6 +43,9 @@
     "workspace"
   ],
   "main": "./dist/extension.js",
+  "activationEvents": [
+    "onUri"
+  ],
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
@@ -114,15 +116,9 @@
       },
       {
         "command": "perpetual.connectLocalRepo",
-        "title": "Connect Local Repository",
+        "title": "Select Local Project",
         "category": "Perpetual",
-        "icon": "$(repo)"
-      },
-      {
-        "command": "perpetual.connectGithubRepo",
-        "title": "Connect GitHub Repository",
-        "category": "Perpetual",
-        "icon": "$(github)"
+        "icon": "$(folder)"
       },
       {
         "command": "perpetual.openSettings",
@@ -151,9 +147,6 @@
         },
         {
           "command": "perpetual.connectLocalRepo"
-        },
-        {
-          "command": "perpetual.connectGithubRepo"
         },
         {
           "command": "perpetual.openSettings"
@@ -335,7 +328,15 @@
           "description": "Optional path to an am-daemon binary. Empty uses the binary bundled with this extension."
         }
       }
-    }
+    },
+    "keybindings": [
+      {
+        "command": "perpetual.newSession",
+        "key": "ctrl+alt+n",
+        "mac": "cmd+alt+n",
+        "when": "activeWebviewPanelId == perpetual.workbench || focusedView == perpetual.workbench || focusedView == perpetual.workbench.panel"
+      }
+    ]
   },
   "scripts": {
     "clean": "node scripts/clean.mjs",
@@ -363,7 +364,8 @@
     "package:win32-arm64": "node scripts/package-target.mjs win32-arm64",
     "test:unit": "npm run compile && node scripts/run-unit-tests.mjs",
     "test:vscode": "vscode-test --config vscode-test.mjs",
-    "test": "npm run test:unit && npm run typecheck:webview"
+    "test": "npm run test:unit && npm run typecheck:webview",
+    "preview:webview": "vite --config webview/vite.config.ts --host 127.0.0.1 --port 5178 --open /preview.html"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
@@ -385,5 +387,10 @@
   "overrides": {
     "diff": "^9.0.0",
     "serialize-javascript": "^7.1.1"
+  },
+  "dependencies": {
+    "@radix-ui/react-context-menu": "^2.3.7",
+    "@radix-ui/react-dropdown-menu": "^2.1.16",
+    "@radix-ui/react-popover": "^1.2.0"
   }
 }

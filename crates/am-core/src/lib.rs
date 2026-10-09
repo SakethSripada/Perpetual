@@ -38,6 +38,7 @@ mod availability;
 mod budget;
 mod bus;
 mod capacity;
+mod claude_models;
 mod cloud_handoff;
 mod collaboration;
 mod context_index;
@@ -121,6 +122,11 @@ pub struct AppCore {
 const CANCEL_SETTLE: std::time::Duration = std::time::Duration::from_secs(10);
 
 impl AppCore {
+    /// The directory holding the database, worktrees, and account profiles.
+    pub fn data_dir(&self) -> &Path {
+        &self.data_dir
+    }
+
     /// Initialize the core: open the database under `data_dir` and set up the
     /// agent registry and session manager. Worktrees live under `data_dir`.
     pub async fn new(data_dir: &Path) -> Result<Self, CoreError> {

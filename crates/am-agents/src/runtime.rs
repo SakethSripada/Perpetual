@@ -172,7 +172,7 @@ fn ensure_sandbox(input: DockerSandboxEnsure) -> Result<(), AgentError> {
         &input.sandbox_agent,
         &input.cwd,
     );
-    let output = Command::new(&input.sbx_binary)
+    let output = am_proto::hide_console(&mut Command::new(&input.sbx_binary))
         .args(&args)
         .current_dir(&input.cwd)
         .stdin(Stdio::null())
@@ -226,7 +226,7 @@ fn remember_sandbox(name: &str) {
 }
 
 fn sandbox_exists(sbx_binary: &Path, name: &str) -> bool {
-    let output = Command::new(sbx_binary)
+    let output = am_proto::hide_console(&mut Command::new(sbx_binary))
         .args(["ls", "--quiet"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -280,7 +280,7 @@ fn configure_network_policy(sbx_binary: &Path, network_preset: &str) {
     if network_policy_known_recent(preset) {
         return;
     }
-    let output = Command::new(sbx_binary)
+    let output = am_proto::hide_console(&mut Command::new(sbx_binary))
         .args(["policy", "set-default", preset])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -335,7 +335,7 @@ pub async fn cleanup_sandbox(cleanup: Option<SandboxCleanup>) {
     };
     let commands: &[&[&str]] = &[&["rm", "--force"], &["rm", "-f"], &["rm"], &["stop"]];
     for prefix in commands {
-        let status = Command::new(&cleanup.sbx_binary)
+        let status = am_proto::hide_console(&mut Command::new(&cleanup.sbx_binary))
             .args(*prefix)
             .arg(&cleanup.name)
             .stdin(Stdio::null())

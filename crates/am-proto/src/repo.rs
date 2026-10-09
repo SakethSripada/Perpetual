@@ -23,6 +23,10 @@ pub struct Repo {
 pub struct NewLocalRepo {
     pub project_id: String,
     pub path: String,
+    /// Set up Git in the folder first if it isn't a repository with a commit.
+    /// Only sent after the user agrees.
+    #[serde(default)]
+    pub initialize: bool,
 }
 
 /// Input for connecting a GitHub repository into an app-managed clone.

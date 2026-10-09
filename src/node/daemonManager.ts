@@ -13,7 +13,7 @@ import {
 import { CollaborationWorker } from "./collaborationWorker";
 import { DaemonClient } from "./daemonClient";
 import type { AgentStatus, AppEvent, RegisterCollaborationDevice } from "./types";
-import { CLOUD_CONTINUITY_ENABLED, LAN_COLLABORATION_ENABLED } from "./featureFlags";
+import { CLOUD_CONTINUITY_ENABLED, LAN_COLLABORATION_ENABLED, LOCAL_MODELS_ENABLED, DOCKER_SANDBOX_ENABLED } from "./featureFlags";
 
 type Endpoint = {
   port: number;
@@ -305,6 +305,14 @@ export class DaemonManager implements vscode.Disposable {
         if (policy.enabled) {
           await client.setCloudPolicy({ ...policy, enabled: false });
         }
+      }
+      if (!LOCAL_MODELS_ENABLED) {
+        const policy = await client.getLocalModelPolicy();
+        if (policy.use_local_fallback) await client.setLocalModelPolicy({ ...policy, use_local_fallback: false });
+      }
+      if (!DOCKER_SANDBOX_ENABLED) {
+        const policy = await client.getSandboxPolicy();
+        if (policy.default_backend !== "host") await client.setSandboxPolicy({ ...policy, default_backend: "host" });
       }
       this.client = client;
       return client;

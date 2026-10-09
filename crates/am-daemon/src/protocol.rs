@@ -187,6 +187,14 @@ pub enum DaemonRequest {
     DeleteProviderAccount {
         account_id: String,
     },
+    /// Make this account the one its provider uses next.
+    ActivateProviderAccount {
+        account_id: String,
+    },
+    /// Add the provider CLI's own sign-in on this computer to the pool.
+    AddSystemProviderAccount {
+        agent: AgentKind,
+    },
     DetectSandboxRuntime,
     SandboxLogin,
     CodexSandboxLogin,
@@ -282,6 +290,10 @@ pub enum DaemonRequest {
     DeleteAgentThread {
         id: String,
         force: bool,
+    },
+    /// Arrange threads in this order (first = top).
+    ReorderAgentThreads {
+        ordered_ids: Vec<String>,
     },
     AssignThreadRepos {
         thread_id: String,
@@ -429,6 +441,7 @@ pub enum DaemonResponse {
     LocalModelPolicy(LocalModelPolicy),
     LimitPolicy(LimitPolicy),
     ProviderAccountStatuses(Vec<ProviderAccountStatus>),
+    ProviderAccountId(String),
     ProviderAccountAuthLaunch(ProviderAccountAuthLaunch),
     ProviderAccountToolingLaunch(ProviderAccountAuthLaunch),
     SandboxRuntimeStatus(SandboxRuntimeStatus),

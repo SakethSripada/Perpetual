@@ -1,4 +1,4 @@
 export default {
-  files: "out/test/**/*.test.js",
+  files: "out/test/vscode/**/*.test.js",
   workspaceFolder: ".",
 };

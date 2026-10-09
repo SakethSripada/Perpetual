@@ -43,6 +43,7 @@ struct AgentThreadRow {
     limit_reset_at: Option<DateTime<Utc>>,
     switch_back: bool,
     handoff_state: String,
+    provider_account_id: Option<String>,
     objective: String,
     decisions: String,
     progress: String,
@@ -136,6 +137,7 @@ impl TryFrom<AgentThreadRow> for AgentThread {
             limit_reset_at: r.limit_reset_at,
             switch_back: r.switch_back,
             handoff_state: r.handoff_state,
+            provider_account_id: r.provider_account_id,
             objective: r.objective,
             decisions: r.decisions,
             progress: r.progress,
@@ -178,7 +180,7 @@ const SELECT: &str = "SELECT id, project_id, group_id, title, status, active_age
     model_target, compute_lease_id, compute_provider, estimated_compute_cost_usd, fallback_model_target, \
     original_agent, fallback_agent, original_model, fallback_model, original_reasoning, fallback_reasoning, original_local_provider, \
     fallback_local_provider, original_local_base_url, fallback_local_base_url, \
-    switch_back_pending, limit_reset_at, switch_back, handoff_state, objective, decisions, \
+    switch_back_pending, limit_reset_at, switch_back, handoff_state, provider_account_id, objective, decisions, \
     progress, open_questions, next_actions, task_budget, sort_order, created_at, updated_at FROM agent_threads";
 
 pub async fn create(pool: &SqlitePool, input: NewAgentThread) -> Result<AgentThread, DbError> {
@@ -228,6 +230,7 @@ pub async fn create(pool: &SqlitePool, input: NewAgentThread) -> Result<AgentThr
         limit_reset_at: None,
         switch_back: true,
         handoff_state: "none".to_string(),
+        provider_account_id: None,
         objective: input.objective.unwrap_or_default(),
         decisions: String::new(),
         progress: String::new(),
@@ -447,7 +450,7 @@ pub async fn save(pool: &SqlitePool, thread: &AgentThread) -> Result<AgentThread
          original_agent = ?, fallback_agent = ?, original_model = ?, \
          fallback_model = ?, original_reasoning = ?, fallback_reasoning = ?, original_local_provider = ?, fallback_local_provider = ?, \
          original_local_base_url = ?, fallback_local_base_url = ?, switch_back_pending = ?, \
-         limit_reset_at = ?, switch_back = ?, handoff_state = ?, objective = ?, decisions = ?, \
+         limit_reset_at = ?, switch_back = ?, handoff_state = ?, provider_account_id = ?, objective = ?, decisions = ?, \
          progress = ?, open_questions = ?, next_actions = ?, task_budget = ?, sort_order = ?, updated_at = ? WHERE id = ?",
     )
     .bind(&thread.title)
@@ -488,6 +491,7 @@ pub async fn save(pool: &SqlitePool, thread: &AgentThread) -> Result<AgentThread
     .bind(thread.limit_reset_at)
     .bind(thread.switch_back)
     .bind(&thread.handoff_state)
+    .bind(&thread.provider_account_id)
     .bind(&thread.objective)
     .bind(&thread.decisions)
     .bind(&thread.progress)
@@ -634,6 +638,21 @@ pub async fn delete_group(pool: &SqlitePool, id: &str) -> Result<(), DbError> {
     Ok(())
 }
 
+/// Stores a user-chosen order: each listed thread gets its position (1-based).
+/// Threads not listed keep order 0, so new threads stay at the top.
+pub async fn set_order(pool: &SqlitePool, ordered_ids: &[String]) -> Result<(), DbError> {
+    let mut tx = pool.begin().await?;
+    for (index, id) in ordered_ids.iter().enumerate() {
+        sqlx::query("UPDATE agent_threads SET sort_order = ? WHERE id = ?")
+            .bind(index as i64 + 1)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
 pub async fn delete(pool: &SqlitePool, id: &str) -> Result<(), DbError> {
     sqlx::query("DELETE FROM agent_threads WHERE id = ?")
         .bind(id)
@@ -645,7 +664,7 @@ pub async fn delete(pool: &SqlitePool, id: &str) -> Result<(), DbError> {
 pub async fn pause_orphaned_running(pool: &SqlitePool) -> Result<u64, DbError> {
     let res =
         sqlx::query(
-            "UPDATE agent_threads SET status = ?, handoff_state = ?, updated_at = ? WHERE status = 'running'",
+            "UPDATE agent_threads SET status = CASE WHEN status = 'awaiting_approval' THEN 'paused' ELSE ? END, handoff_state = ?, updated_at = ? WHERE status IN ('running', 'awaiting_approval')",
         )
             .bind(TaskStatus::Queued.as_str())
             .bind("process_restarted")

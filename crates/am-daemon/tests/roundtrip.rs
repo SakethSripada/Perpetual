@@ -162,8 +162,14 @@ async fn rpc_roundtrip_and_events() {
     let DaemonResponse::ProviderAccountStatuses(statuses) = statuses else {
         panic!("expected provider account statuses");
     };
-    assert_eq!(statuses.len(), 2);
-    assert!(statuses.iter().all(|status| !status.authenticated));
+    // A signed-in CLI on the test machine is registered as its default
+    // profile account; the isolated dummy slots must stay signed out.
+    let dummies: Vec<_> = statuses
+        .iter()
+        .filter(|status| status.account.auth_mode != ProviderAccountAuthMode::System)
+        .collect();
+    assert_eq!(dummies.len(), 2);
+    assert!(dummies.iter().all(|status| !status.authenticated));
     assert!(statuses.iter().all(|status| !status.account.use_credits));
 
     handle.abort();

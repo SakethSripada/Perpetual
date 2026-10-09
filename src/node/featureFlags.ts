@@ -2,3 +2,5 @@
 // implementations and persisted settings stay intact for a later re-enable.
 export const CLOUD_CONTINUITY_ENABLED = false;
 export const LAN_COLLABORATION_ENABLED = false;
+export const LOCAL_MODELS_ENABLED = false;
+export const DOCKER_SANDBOX_ENABLED = false;

@@ -3,6 +3,10 @@ webview/src/**
 webview/index.html
 webview/tsconfig.json
 webview/vite.config.ts
+webview/preview.html
+webview/preview.ts
+*.log
+.final-*
 scripts/**
 crates/**
 landing/**
@@ -19,6 +23,9 @@ dist/**/*.map
 .gitignore
 .claude/**
 .vscode/**
+.vscode-test/**
+.codex/**
+.agents/**
 .github/**
 azure-pipelines.yml
 CONTRIBUTING.md

@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 import * as vscode from "vscode";
-import { CLOUD_CONTINUITY_ENABLED, LAN_COLLABORATION_ENABLED } from "./featureFlags";
+import { CLOUD_CONTINUITY_ENABLED, LAN_COLLABORATION_ENABLED, LOCAL_MODELS_ENABLED, DOCKER_SANDBOX_ENABLED } from "./featureFlags";
 import type { DaemonApi } from "./protocol";
 import type { DaemonManager } from "./daemonManager";
 import type {
@@ -20,13 +20,10 @@ import type {
   CloudPolicy,
   CollaborationAssignment,
   ExecutionBackend,
-  GithubAuthStatus,
-  GithubRepository,
   LimitPolicy,
   LocalModelPolicy,
   LocalModelStatus,
   LocalModelProvider,
-  NewGithubRepo,
   PermissionPolicy,
   ProviderUsage,
   ProviderAccountStatus,
@@ -60,7 +57,7 @@ type SubmitMessage = {
   deviceId?: string | null;
 };
 
-type WebviewMessage =
+type WebviewMessage = (
   | {
       type:
         | "ready"
@@ -73,14 +70,21 @@ type WebviewMessage =
   | SubmitMessage
   | { type: "stopThread"; threadId: string }
   | { type: "deleteThread"; threadId: string; force?: boolean }
+  | { type: "renameThread"; threadId: string; title: string }
   | { type: "assignRepos"; threadId: string; repoIds: string[] }
   | { type: "loadDiff"; threadId: string }
+  | { type: "reviewVisibility"; threadId: string; visible: boolean }
+  | { type: "setModelSelection"; agent: AgentKind; model: string; reasoning: string }
   | { type: "applyThreadChanges"; threadId: string }
-  | { type: "githubList" }
-  | { type: "connectGithubRepo"; repo: GithubRepository }
   | { type: "deleteRepo"; repoId: string }
   | { type: "clearRepos" }
-  | { type: "setLimitPolicy"; policy: LimitPolicy }
+  | { type: "setLimitPolicy"; policy: LimitPolicy; preserveAccounts?: boolean }
+  | { type: "activateProviderAccount"; accountId: string }
+  | { type: "addSystemProviderAccount"; agent: AgentKind }
+  | { type: "addProviderAccount"; account: import("./types").ProviderAccount }
+  | { type: "updateProviderAccount"; accountId: string; patch: Partial<import("./types").ProviderAccount> }
+  | { type: "reorderProviderAccounts"; orderedIds: string[] }
+  | { type: "reorderThreads"; orderedIds: string[] }
   | { type: "setSandboxPolicy"; policy: SandboxPolicy }
   | { type: "setCloudPolicy"; policy: CloudPolicy }
   | { type: "setLocalModelPolicy"; policy: LocalModelPolicy }
@@ -90,7 +94,7 @@ type WebviewMessage =
   | { type: "openProviderAccountCli"; accountId: string }
   | { type: "setProviderAccountToken"; accountId: string; token: string }
   | { type: "deleteProviderAccount"; accountId: string }
-  | { type: "githubSignIn" | "refreshReadiness" }
+  | { type: "refreshReadiness" }
   | { type: "launchCloudHandoff"; threadId: string; agent?: AgentKind | null }
   | { type: "reclaimCloudRun"; threadId: string }
   | { type: "openPath"; path: string }
@@ -109,7 +113,7 @@ type WebviewMessage =
   | { type: "retryCollaborationAssignment"; assignmentId: string }
   | { type: "addCollaborationRepoAndRetry"; assignmentId: string }
   | { type: "applyCollaborationChangeSet"; changeSetId: string; overwrite?: boolean }
-  | { type: "rejectCollaborationChangeSet"; changeSetId: string };
+  | { type: "rejectCollaborationChangeSet"; changeSetId: string }) & { requestId?: string };
 
 const CLOUD_MESSAGE_TYPES = new Set<string>([
   "setCloudPolicy",
@@ -133,7 +137,7 @@ const COLLABORATION_MESSAGE_TYPES = new Set<string>([
 
 // Agent/sandbox detection shells out to CLIs, so we cache it briefly to keep the
 // frequent event-driven refreshes from re-probing on every tick.
-const DETECTION_TTL_MS = 15_000;
+const DETECTION_TTL_MS = 60_000;
 
 type DetectionCache = {
   at: number;
@@ -149,6 +153,8 @@ type DetectionCache = {
   localModels: LocalModelStatus[];
   localModelPolicy: LocalModelPolicy | null;
   state: "loading" | "ready" | "error";
+  accountState?: "loading" | "ready" | "error";
+  modelState?: "loading" | "ready" | "error";
 };
 
 type DiffCacheEntry = {
@@ -156,17 +162,34 @@ type DiffCacheEntry = {
   diff: AgentThreadDiff | null;
 };
 
+function detectionFields(cache: DetectionCache): Partial<WorkbenchSnapshot> {
+  const { at, state, accountState, modelState, ...fields } = cache;
+  return { ...fields, detectionState: state, accountDetectionState: accountState, modelDetectionState: modelState };
+}
+
 export class WorkbenchController implements vscode.Disposable {
   private readonly snapshots = new vscode.EventEmitter<WorkbenchSnapshot>();
   private readonly threadEvents = new vscode.EventEmitter<AgentThreadEvent>();
+  private readonly detectionUpdates = new vscode.EventEmitter<Partial<WorkbenchSnapshot>>();
+  private readonly submissionFailures = new vscode.EventEmitter<{ type: "submitFailed"; threadId: string | null; clientMessageId: string | null; text: string; message: string }>();
   private refreshTimer: NodeJS.Timeout | null = null;
-  private refreshSequence = 0;
+  private readinessTimer: NodeJS.Timeout | null = null;
+  private refreshInflight: Promise<void> | null = null;
+  private refreshQueued = false;
+  private refreshError: string | null = null;
+  private windowFocused = vscode.window.state?.focused ?? true;
+  private lastSnapshot: WorkbenchSnapshot | null = null;
   private messageQueue: Promise<void> = Promise.resolve();
   private lastSyncedSettings = "";
   private disposed = false;
   private detectionCache: DetectionCache | null = null;
   private readonly authPendingAccounts = new Set<string>();
   private readonly authWatchTimers = new Map<string, NodeJS.Timeout>();
+  private activeReviewThreadId: string | null = null;
+  private gitSubscriptions: vscode.Disposable[] = [];
+  private gitDiffTimer: NodeJS.Timeout | null = null;
+  private diffRequests = new Map<string, Promise<void>>();
+  private diffRefreshPending = new Set<string>();
   private diffCache = new Map<string, DiffCacheEntry>();
   private applyResults = new Map<string, AgentThreadApplyResult>();
   private autoApplyInFlight = new Set<string>();
@@ -178,6 +201,8 @@ export class WorkbenchController implements vscode.Disposable {
 
   readonly onSnapshot = this.snapshots.event;
   readonly onThreadEvent = this.threadEvents.event;
+  readonly onDetectionUpdate = this.detectionUpdates.event;
+  readonly onSubmissionFailure = this.submissionFailures.event;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -186,6 +211,7 @@ export class WorkbenchController implements vscode.Disposable {
   ) {
     context.subscriptions.push(
       daemon.onEvent((event) => this.onDaemonEvent(event)),
+      vscode.window.onDidChangeWindowState((state) => { this.windowFocused = state.focused; if (state.focused && vscode.workspace.isTrusted) void this.refresh(); }),
       vscode.workspace.onDidGrantWorkspaceTrust(() => void this.refresh()),
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
         this.workspaceReposReady = null;
@@ -195,20 +221,28 @@ export class WorkbenchController implements vscode.Disposable {
       vscode.workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration("perpetual")) {
           this.lastSyncedSettings = "";
-          this.detectionCache = null;
+          this.invalidateDetection();
           void this.refresh();
         }
       }),
     );
+    this.watchGitChanges();
+    this.readinessTimer = setInterval(() => { if (!this.disposed && this.windowFocused && vscode.workspace.isTrusted) void this.refresh(); }, 30_000);
+    this.readinessTimer.unref();
   }
 
   dispose(): void {
     this.disposed = true;
+    if (this.gitDiffTimer) clearTimeout(this.gitDiffTimer);
+    for (const subscription of this.gitSubscriptions) subscription.dispose();
+    if (this.readinessTimer) clearInterval(this.readinessTimer);
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
     for (const timer of this.authWatchTimers.values()) clearTimeout(timer);
     this.authWatchTimers.clear();
     this.snapshots.dispose();
     this.threadEvents.dispose();
+    this.detectionUpdates.dispose();
+    this.submissionFailures.dispose();
   }
 
   async handleMessage(
@@ -226,6 +260,7 @@ export class WorkbenchController implements vscode.Disposable {
     message: WebviewMessage,
     reply?: WebviewReply,
   ): Promise<void> {
+    let operationError: string | null = null;
     try {
       if (!LAN_COLLABORATION_ENABLED && COLLABORATION_MESSAGE_TYPES.has(message.type)) {
         throw new Error("Shared workspaces are temporarily unavailable.");
@@ -233,14 +268,29 @@ export class WorkbenchController implements vscode.Disposable {
       if (!CLOUD_CONTINUITY_ENABLED && CLOUD_MESSAGE_TYPES.has(message.type)) {
         throw new Error("Cloud Continuity is temporarily unavailable.");
       }
+      if (!LOCAL_MODELS_ENABLED && message.type === "setLocalModelPolicy") throw new Error("Local models are temporarily unavailable.");
+      if (!DOCKER_SANDBOX_ENABLED && ["setSandboxPolicy", "sandboxLogin"].includes(message.type)) throw new Error("Docker Sandbox is temporarily unavailable.");
       switch (message.type) {
+        case "reviewVisibility":
+          this.activeReviewThreadId = message.visible ? message.threadId : (this.activeReviewThreadId === message.threadId ? null : this.activeReviewThreadId);
+          return;
+        case "setModelSelection": {
+          if (!["codex", "claude_code"].includes(message.agent) || typeof message.model !== "string" || typeof message.reasoning !== "string") throw new Error("Invalid model selection.");
+          const current = this.context.workspaceState.get<WorkbenchSnapshot["modelSelections"]>("perpetual.modelSelections") ?? {};
+          const selected = { ...current, [message.agent]: { model: message.model.trim(), reasoning: message.reasoning.trim() } };
+          await this.context.workspaceState.update("perpetual.modelSelections", selected);
+          if (this.lastSnapshot) this.lastSnapshot = { ...this.lastSnapshot, modelSelections: selected };
+          this.detectionUpdates.fire({ modelSelections: selected });
+          return;
+        }
         case "refresh":
           // Manual refresh should re-probe agents/sandbox, not serve the cache.
-          this.detectionCache = null;
+          this.invalidateDetection();
           this.workspaceReposReady = null;
           await this.refresh();
           return;
         case "ready":
+          if (this.lastSnapshot?.trusted === vscode.workspace.isTrusted) reply?.({ type: "snapshot", snapshot: this.lastSnapshot });
           await this.refresh();
           return;
         case "newSession":
@@ -269,6 +319,13 @@ export class WorkbenchController implements vscode.Disposable {
           this.notice(reply, "Stopped the active run.");
           await this.refresh();
           return;
+        case "renameThread": {
+          const title = message.title.trim();
+          if (!title || title.length > 200) throw new Error("Use a session name between 1 and 200 characters.");
+          await this.withClient((client) => client.updateAgentThread(message.threadId, { title }));
+          await this.refresh();
+          return;
+        }
         case "deleteThread": {
           await this.withClient((client) =>
             client.deleteAgentThread(message.threadId, !!message.force),
@@ -312,13 +369,6 @@ export class WorkbenchController implements vscode.Disposable {
         case "connectLocalRepo":
           await this.connectLocalRepoInteractive(reply);
           return;
-        case "githubList":
-          await this.postGithubRepos(reply);
-          return;
-        case "connectGithubRepo":
-          await this.connectGithubRepo(message.repo, reply);
-          await this.refresh();
-          return;
         case "deleteRepo":
           await this.deleteRepo(message.repoId);
           return;
@@ -327,12 +377,13 @@ export class WorkbenchController implements vscode.Disposable {
           return;
         case "setLimitPolicy":
           {
-            const policy = normalizeLimitPolicy(message.policy);
+            const current = await this.withLocalClient((client) => client.getLimitPolicy());
+            const policy = normalizeLimitPolicy(message.preserveAccounts ? { ...message.policy, accounts: current.accounts, dismissed_system_accounts: current.dismissed_system_accounts } : message.policy);
             const applied = await this.withLocalClient((client) =>
               client.setLimitPolicy(policy),
             );
             await this.mirrorLimitPolicyToConfig(applied);
-            await this.refreshProviderAccounts(applied);
+            await this.refreshProviderAccounts();
           }
           return;
         case "setSandboxPolicy":
@@ -343,7 +394,7 @@ export class WorkbenchController implements vscode.Disposable {
             await this.mirrorSandboxPolicyToConfig(applied);
           }
           this.lastSyncedSettings = "";
-          this.detectionCache = null;
+          this.invalidateDetection();
           await this.refresh();
           return;
         case "setCloudPolicy":
@@ -359,7 +410,7 @@ export class WorkbenchController implements vscode.Disposable {
             await this.mirrorCloudPolicyToConfig(applied);
           }
           this.lastSyncedSettings = "";
-          this.detectionCache = null;
+          this.invalidateDetection();
           await this.refresh();
           return;
         case "setLocalModelPolicy":
@@ -376,7 +427,7 @@ export class WorkbenchController implements vscode.Disposable {
             await this.mirrorLocalModelPolicyToConfig(applied);
           }
           this.lastSyncedSettings = "";
-          this.detectionCache = null;
+          this.invalidateDetection();
           await this.refresh();
           return;
         case "sandboxLogin":
@@ -384,6 +435,50 @@ export class WorkbenchController implements vscode.Disposable {
           return;
         case "signInAgent":
           await this.startAgentSignIn(message.agent, reply);
+          return;
+        case "activateProviderAccount":
+          await this.withLocalClient(async (client) => {
+            const account = (await client.providerAccountStatuses()).find((item) => item.id === message.accountId);
+            if (!account?.installed || !account.authenticated) throw new Error("Sign in to an installed provider before switching accounts.");
+            if (account.availability === "limited") throw new Error("This account is at its usage limit. Choose a ready account or wait for its reset.");
+            await client.activateProviderAccount(message.accountId);
+          });
+          // Plans can expose different models; retain visible options while
+          // refreshing the selected account's entitlements in the background.
+          this.invalidateDetection();
+          await this.refreshProviderAccounts();
+          return;
+        case "addSystemProviderAccount": {
+          const id = await this.withLocalClient((client) => client.addSystemProviderAccount(message.agent));
+          await this.refreshProviderAccounts();
+          await this.startProviderAccountSignIn(id, reply);
+          return;
+        }
+        case "addProviderAccount":
+        case "updateProviderAccount":
+        case "reorderProviderAccounts": {
+          await this.withLocalClient(async (client) => {
+            const policy = await client.getLimitPolicy();
+            let accounts = [...(policy.accounts ?? [])];
+            if (message.type === "addProviderAccount") {
+              if (accounts.some((account) => account.id === message.account.id)) throw new Error("Account already exists.");
+              accounts.push(message.account);
+            } else if (message.type === "updateProviderAccount") {
+              if (!accounts.some((account) => account.id === message.accountId)) throw new Error("Account was removed. Refresh and try again.");
+              accounts = accounts.map((account) => account.id === message.accountId ? { ...account, label: message.patch.label ?? account.label, enabled: message.patch.enabled ?? account.enabled, use_credits: message.patch.use_credits ?? account.use_credits } : account);
+            } else {
+              const ids = new Set(message.orderedIds);
+              if (ids.size !== accounts.length || accounts.some((account) => !ids.has(account.id))) throw new Error("Accounts changed. Refresh before reordering.");
+              accounts.sort((a, b) => message.orderedIds.indexOf(a.id) - message.orderedIds.indexOf(b.id));
+            }
+            await client.setLimitPolicy(normalizeLimitPolicy({ ...policy, accounts }));
+          });
+          await this.refreshProviderAccounts();
+          return;
+        }
+        case "reorderThreads":
+          await this.withClient((client) => client.reorderAgentThreads(message.orderedIds));
+          await this.refresh();
           return;
         case "signInProviderAccount":
           await this.startProviderAccountSignIn(message.accountId, reply);
@@ -406,14 +501,8 @@ export class WorkbenchController implements vscode.Disposable {
           );
           await this.refreshProviderAccounts();
           return;
-        case "githubSignIn":
-          await this.githubToken();
-          this.notice(reply, "GitHub sign-in is ready.");
-          this.detectionCache = null;
-          await this.refresh();
-          return;
         case "refreshReadiness":
-          this.detectionCache = null;
+          this.invalidateDetection();
           await this.refresh();
           return;
         case "launchCloudHandoff": {
@@ -492,7 +581,7 @@ export class WorkbenchController implements vscode.Disposable {
           this.assertTrusted();
           await this.daemon.joinCollaboration(message.invite.trim());
           this.workspaceReposReady = null;
-          this.detectionCache = null;
+          this.invalidateDetection();
           this.notice(reply, "Connected to the shared workspace.");
           await this.refresh();
           return;
@@ -576,6 +665,8 @@ export class WorkbenchController implements vscode.Disposable {
       }
     } catch (err) {
       const text = friendlyError(err);
+      operationError = text;
+      if (message.type === "submit") this.submissionFailures.fire({ type: "submitFailed", threadId: message.threadId ?? null, clientMessageId: message.clientMessageId ?? null, text: message.message, message: text });
       this.output.appendLine(`[workbench] ${text}`);
       reply?.(
         message.type === "assignRepos"
@@ -589,6 +680,8 @@ export class WorkbenchController implements vscode.Disposable {
       // Action failures are transient UI feedback, not a fatal snapshot state.
       // Keeping them out of the snapshot avoids duplicate/sticky error banners.
       await this.refresh();
+    } finally {
+      if (message.requestId) reply?.({ type: "operationResult", requestId: message.requestId, error: operationError });
     }
   }
 
@@ -631,12 +724,21 @@ export class WorkbenchController implements vscode.Disposable {
     }
   }
 
-  async refresh(error: string | null = null): Promise<void> {
-    const sequence = ++this.refreshSequence;
-    const snapshot = await this.snapshot(error);
-    if (!this.disposed && sequence === this.refreshSequence) {
-      this.snapshots.fire(snapshot);
-    }
+  refresh(error: string | null = null): Promise<void> {
+    if (this.disposed) return Promise.resolve();
+    if (error) this.refreshError = error;
+    this.refreshQueued = true;
+    if (this.refreshInflight) return this.refreshInflight;
+    this.refreshInflight = (async () => {
+      do {
+        this.refreshQueued = false;
+        const nextError = this.refreshError;
+        this.refreshError = null;
+        const snapshot = await this.snapshot(nextError);
+        if (!this.disposed) { this.lastSnapshot = snapshot; this.snapshots.fire(snapshot); }
+      } while (this.refreshQueued && !this.disposed);
+    })().finally(() => { this.refreshInflight = null; });
+    return this.refreshInflight;
   }
 
   async connectLocalRepoInteractive(reply?: WebviewReply): Promise<void> {
@@ -650,8 +752,8 @@ export class WorkbenchController implements vscode.Disposable {
       canSelectFiles: false,
       canSelectFolders: true,
       canSelectMany: false,
-      openLabel: "Connect Repository",
-      title: "Connect Local Repository",
+      openLabel: "Select Project",
+      title: "Select Local Project",
     });
     const folder = picked?.[0]?.fsPath;
     if (!folder) return;
@@ -709,24 +811,6 @@ export class WorkbenchController implements vscode.Disposable {
     }
     await client.retryCollaborationAssignment(assignmentId);
     this.notice(reply, `${path.basename(root)} added. Device work queued again.`);
-    await this.refresh();
-  }
-
-  async connectGithubRepoInteractive(): Promise<void> {
-    this.assertTrusted();
-    const { repos } = await this.githubRepos();
-    const items: Array<vscode.QuickPickItem & { repo: GithubRepository }> =
-      repos.map((repo: GithubRepository) => ({
-        label: repo.full_name,
-        description: repo.private ? "Private" : "Public",
-        detail: repo.html_url,
-        repo,
-      }));
-    const picked = await vscode.window.showQuickPick(items, {
-      placeHolder: "Select a GitHub repository to connect",
-    });
-    if (!picked) return;
-    await this.connectGithubRepo(picked.repo);
     await this.refresh();
   }
 
@@ -815,6 +899,7 @@ export class WorkbenchController implements vscode.Disposable {
 
       const defaultRepoIds = pickDefaultRepoIds(repos);
       return {
+        loadState: "ready",
         trusted: true,
         defaults,
         project,
@@ -823,10 +908,13 @@ export class WorkbenchController implements vscode.Disposable {
         repos,
         agents,
         runDefaults,
+        modelSelections: this.context.workspaceState?.get<WorkbenchSnapshot["modelSelections"]>("perpetual.modelSelections"),
         modelCatalog,
         localModels,
         localModelPolicy,
         detectionState,
+        accountDetectionState: detection.accountState,
+        modelDetectionState: detection.modelState,
         defaultRepoIds,
         limitPolicy,
         providerAccounts,
@@ -836,7 +924,6 @@ export class WorkbenchController implements vscode.Disposable {
         cloudPolicy,
         cloudAvailability,
         details,
-        github: null,
         collaboration: {
           ...collaborationSnapshot,
           role: collaborationStatus.role,
@@ -846,8 +933,12 @@ export class WorkbenchController implements vscode.Disposable {
           device_name: collaborationStatus.deviceName,
         },
         error,
+        // Probes can finish while thread details are loading; use their newest values.
+        ...detectionFields(this.detectionCache ?? detection),
       };
     } catch (err) {
+      // A transient connection failure must not erase already loaded conversations or accounts.
+      if (this.lastSnapshot?.trusted) return { ...this.lastSnapshot, loadState: "error", error: formatError(err) };
       return emptySnapshot(true, defaults, formatError(err));
     }
   }
@@ -867,6 +958,8 @@ export class WorkbenchController implements vscode.Disposable {
       await this.ensureWorkspaceRepos(client, project.id);
     }
     const defaults = getDefaults();
+    if (!LOCAL_MODELS_ENABLED && message.localProvider) throw new Error("Local models are temporarily unavailable. Choose a provider model to continue.");
+    if (!DOCKER_SANDBOX_ENABLED && message.executionBackend === "docker_sandbox") throw new Error("Docker Sandbox is temporarily unavailable. Choose host execution to continue.");
     const agent = message.agent ?? defaults.agent;
     const permission = message.permission ?? defaults.permission;
     const executionBackend = sanitizeBackend(
@@ -874,7 +967,7 @@ export class WorkbenchController implements vscode.Disposable {
       message.executionBackend ?? defaults.execution_backend,
     );
     const localProvider =
-      agent === "codex"
+      LOCAL_MODELS_ENABLED && agent === "codex"
         ? sanitizeLocalProvider(
             message.localProvider ?? defaults.local_provider,
           )
@@ -1012,6 +1105,7 @@ export class WorkbenchController implements vscode.Disposable {
     } catch (err) {
       const message = formatError(err);
       this.output.appendLine(`[workbench] ${message}`);
+      this.submissionFailures.fire({ type: "submitFailed", threadId, clientMessageId, text, message: friendlyError(err) });
       await this.refresh(message);
     }
   }
@@ -1038,6 +1132,7 @@ export class WorkbenchController implements vscode.Disposable {
     } catch (err) {
       const message = formatError(err);
       this.output.appendLine(`[workbench] ${message}`);
+      this.submissionFailures.fire({ type: "submitFailed", threadId, clientMessageId, text, message: friendlyError(err) });
       await this.refresh(message);
     }
   }
@@ -1066,6 +1161,7 @@ export class WorkbenchController implements vscode.Disposable {
     } catch (err) {
       const message = formatError(err);
       this.output.appendLine(`[workbench] remote assignment failed: ${message}`);
+      this.submissionFailures.fire({ type: "submitFailed", threadId, clientMessageId, text, message: friendlyError(err) });
       await this.refresh(message);
     }
   }
@@ -1167,52 +1263,6 @@ export class WorkbenchController implements vscode.Disposable {
     }
   }
 
-  private async postGithubRepos(reply?: WebviewReply): Promise<void> {
-    const { status, repos } = await this.githubRepos();
-    reply?.({ type: "githubRepos", status, repos });
-  }
-
-  private async githubRepos(): Promise<{
-    status: GithubAuthStatus;
-    repos: GithubRepository[];
-  }> {
-    this.assertTrusted();
-    const token = await this.githubToken();
-    const client = await this.daemon.getClient();
-    const [status, repos] = await Promise.all([
-      client.githubAuthStatus(token),
-      client.githubListRepositories(token),
-    ]);
-    return { status, repos };
-  }
-
-  private async connectGithubRepo(
-    repo: GithubRepository,
-    reply?: WebviewReply,
-  ): Promise<void> {
-    this.assertTrusted();
-    const token = await this.githubToken();
-    const client = await this.daemon.getClient();
-    const project = await client.ensureWorkbenchProject();
-    const input: NewGithubRepo = {
-      project_id: project.id,
-      name: repo.name,
-      full_name: repo.full_name,
-      clone_url: repo.clone_url,
-      ssh_url: repo.ssh_url,
-      default_branch: repo.default_branch,
-    };
-    const connected = await client.connectGithubRepo(token, input);
-    reply?.({ type: "repoConnected", repo: connected });
-  }
-
-  private async githubToken(): Promise<string> {
-    const session = await vscode.authentication.getSession("github", ["repo"], {
-      createIfNone: true,
-    });
-    return session.accessToken;
-  }
-
   private async startSandboxLogin(
     codex: boolean,
     reply?: WebviewReply,
@@ -1259,6 +1309,7 @@ export class WorkbenchController implements vscode.Disposable {
     reply?: WebviewReply,
   ): Promise<void> {
     this.assertTrusted();
+    if (this.authPendingAccounts.has(accountId)) return;
     const launch = await this.withLocalClient((client) =>
       client.providerAccountAuthLaunch(accountId),
     );
@@ -1295,6 +1346,7 @@ export class WorkbenchController implements vscode.Disposable {
         }
         if (status.authenticated) {
           this.stopAuthenticationWatch(accountId);
+          this.invalidateDetection();
           this.notice(reply, `${label} connected.`);
           await this.refresh();
           return;
@@ -1323,23 +1375,23 @@ export class WorkbenchController implements vscode.Disposable {
     if (clearPending) this.authPendingAccounts.delete(accountId);
   }
 
-  private async refreshProviderAccounts(
-    limitPolicy?: LimitPolicy,
-  ): Promise<ProviderAccountStatus[]> {
+  private async refreshProviderAccounts(): Promise<ProviderAccountStatus[]> {
     const client = await this.daemon.getLocalClient();
-    const [providerAccounts, currentPolicy] = await Promise.all([
-      client.providerAccountStatuses(),
-      limitPolicy ? Promise.resolve(limitPolicy) : client.getLimitPolicy(),
-    ]);
-    if (this.detectionCache) {
+    const revision = ++this.accountRevision;
+    const providerAccounts = await client.providerAccountStatuses();
+    // Status discovery may register a shared sign-in. Read its resulting policy.
+    const currentPolicy = await client.getLimitPolicy();
+    if (this.detectionCache && revision === this.accountRevision) {
       this.detectionCache = {
         ...this.detectionCache,
-        at: Date.now(),
         limitPolicy: normalizeLimitPolicy(currentPolicy),
         providerAccounts,
+        accountState: "ready",
       };
     }
-    await this.refresh();
+    if (this.detectionCache?.at === 0) this.detect(client);
+    if (this.lastSnapshot?.trusted) this.publishDetection();
+    else await this.refresh();
     return providerAccounts;
   }
 
@@ -1362,7 +1414,43 @@ export class WorkbenchController implements vscode.Disposable {
     this.notice(reply, `Opened ${launch.label} CLI.`);
   }
 
+  private watchGitChanges(): void {
+    type Repository = { rootUri: vscode.Uri; state: { onDidChange: vscode.Event<void> } };
+    const extension = vscode.extensions?.getExtension<{ getAPI(version: number): { repositories: Repository[]; onDidOpenRepository: vscode.Event<Repository> } }>("vscode.git");
+    if (!extension) return;
+    void Promise.resolve(extension.activate()).then((git) => {
+      if (this.disposed) return;
+      const attach = (repo: Repository) => this.gitSubscriptions.push(repo.state.onDidChange(() => {
+        if (!this.activeReviewThreadId || !vscode.workspace.isTrusted || this.disposed) return;
+        const root = path.resolve(repo.rootUri.fsPath).toLowerCase();
+        const direct = this.lastSnapshot?.details?.repos.some((link) => link.worktree_path && path.resolve(link.worktree_path).toLowerCase() === root && this.lastSnapshot?.repos.some((item) => item.id === link.repo_id && item.local_path && path.resolve(item.local_path).toLowerCase() === root));
+        if (!direct) return;
+        if (this.gitDiffTimer) clearTimeout(this.gitDiffTimer);
+        this.gitDiffTimer = setTimeout(() => {
+          this.gitDiffTimer = null;
+          if (this.activeReviewThreadId && !this.disposed) void this.loadDiff(this.activeReviewThreadId);
+        }, 250);
+      }));
+      const api = git.getAPI(1);
+      api.repositories.forEach(attach);
+      this.gitSubscriptions.push(api.onDidOpenRepository(attach));
+    }).catch((error) => this.output.appendLine(`[workbench] Git change tracking unavailable: ${formatError(error)}`));
+  }
+
   private async loadDiff(threadId: string): Promise<void> {
+    const existing = this.diffRequests.get(threadId);
+    if (existing) { this.diffRefreshPending.add(threadId); return existing; }
+    const task = (async () => {
+      do {
+        this.diffRefreshPending.delete(threadId);
+        await this.readDiff(threadId);
+      } while (!this.disposed && this.diffRefreshPending.has(threadId));
+    })().finally(() => this.diffRequests.delete(threadId));
+    this.diffRequests.set(threadId, task);
+    return task;
+  }
+
+  private async readDiff(threadId: string): Promise<void> {
     this.diffCache.set(threadId, { state: "loading", diff: null });
     await this.refresh();
     try {
@@ -1395,29 +1483,63 @@ export class WorkbenchController implements vscode.Disposable {
   }
 
   private detectInflight: Promise<DetectionCache> | null = null;
+  private detectionRevision = 0;
+  private accountRevision = 0;
+  private accountEventRefresh: Promise<void> | null = null;
+  private accountEventRefreshQueued = false;
+
+  private refreshAccountsAfterTransition(): void {
+    if (this.disposed) return;
+    this.accountEventRefreshQueued = true;
+    if (this.accountEventRefresh) return;
+    this.accountEventRefresh = (async () => {
+      do {
+        this.accountEventRefreshQueued = false;
+        try { await this.refreshProviderAccounts(); }
+        catch (err) { this.output.appendLine(`[workbench] account transition refresh failed: ${formatError(err)}`); }
+      } while (this.accountEventRefreshQueued && !this.disposed);
+    })()
+      .finally(() => { this.accountEventRefresh = null; });
+  }
+
+  private invalidateDetection(): void {
+    this.detectionRevision++;
+    // Keep the last successful values on screen while probes run.
+    if (this.detectionCache) this.detectionCache = { ...this.detectionCache, at: 0 };
+  }
 
   /**
    * Agent/sandbox detection shells out to CLIs and can take seconds, so it must
    * never block a snapshot. Serve the last-known values immediately; when stale,
-   * kick off a background re-probe that fires its own refresh when it lands.
+   * kick off a background re-probe that patches its fields as they arrive.
    */
   private detect(client: DaemonApi): DetectionCache {
     const cached = this.detectionCache;
     if (cached) {
       if (Date.now() - cached.at >= DETECTION_TTL_MS && !this.detectInflight) {
-        void this.runDetection(client).then(() => void this.refresh());
+        void this.runDetection(client).then(() => this.finishDetection(client));
       }
       return cached;
     }
     const loading = emptyDetectionCache("loading");
     this.detectionCache = loading;
-    void this.runDetection(client).then(() => void this.refresh());
+    void this.runDetection(client).then(() => this.finishDetection(client));
     return loading;
   }
 
   private runDetection(client: DaemonApi): Promise<DetectionCache> {
     if (this.detectInflight) return this.detectInflight;
+    const accountRevision = this.accountRevision;
+    const detectionRevision = this.detectionRevision;
+    if (!this.detectionCache) this.detectionCache = emptyDetectionCache("loading");
+    const publish = (patch: Partial<DetectionCache>, accounts = false) => {
+      if (this.disposed || detectionRevision !== this.detectionRevision || (accounts && accountRevision !== this.accountRevision)) return;
+      this.detectionCache = { ...this.detectionCache!, ...patch };
+      // Publish only detection fields; no database reads or transcript transfer.
+      this.publishDetection();
+    };
     this.detectInflight = (async () => {
+      let probeFailed = false;
       const [
         agents,
         runDefaults,
@@ -1434,36 +1556,57 @@ export class WorkbenchController implements vscode.Disposable {
         client
           .detectAgents()
           .then(filterAgentStatuses)
+          .then((agents) => { publish({ agents }); return agents; })
           .catch((err) => {
+            probeFailed = true;
             this.output.appendLine(
               `[workbench] agent detection failed: ${formatError(err)}`,
             );
-            return [];
+            return this.detectionCache?.agents ?? [];
           }),
         client
           .agentRunDefaults()
           .then(filterRunDefaults)
-          .catch(() => []),
+          .then((runDefaults) => { publish({ runDefaults }); return runDefaults; })
+          .catch(() => this.detectionCache?.runDefaults ?? []),
         client
           .agentModelCatalog()
           .then(filterModelCatalog)
-          .catch(() => []),
-        client.detectLocalModels().catch(() => []),
+          .then((modelCatalog) => { publish({ modelCatalog, modelState: "ready" }); return modelCatalog; })
+          .catch((err) => {
+            probeFailed = true;
+            this.output.appendLine(`[workbench] model detection failed: ${formatError(err)}`);
+            publish({ modelState: "error" });
+            return this.detectionCache?.modelCatalog ?? [];
+          }),
+        LOCAL_MODELS_ENABLED ? client.detectLocalModels().catch(() => []) : Promise.resolve([]),
         client
           .getLimitPolicy()
           .then(normalizeLimitPolicy)
-          .catch(() => null),
-        client.providerAccountStatuses().catch(() => []),
+          .then((limitPolicy) => { publish({ limitPolicy }, true); return limitPolicy; })
+          .catch(() => { probeFailed = true; return this.detectionCache?.limitPolicy ?? null; }),
+        client.providerAccountStatuses().then(async (providerAccounts) => {
+          publish({ providerAccounts, accountState: "ready" }, true);
+          // Discovery may have registered a shared CLI sign-in while probing.
+          const limitPolicy = normalizeLimitPolicy(await client.getLimitPolicy());
+          publish({ limitPolicy }, true);
+          return providerAccounts;
+        }).catch((err) => {
+          probeFailed = true;
+          this.output.appendLine(`[workbench] account detection failed: ${formatError(err)}`);
+          publish({ accountState: "error" }, true);
+          return this.detectionCache?.providerAccounts ?? [];
+        }),
         client.getSandboxPolicy().catch(() => null),
-        client.detectSandboxRuntime().catch(() => null),
+        DOCKER_SANDBOX_ENABLED ? client.detectSandboxRuntime().catch(() => null) : Promise.resolve(null),
         client
           .getCloudPolicy()
           .then(normalizeCloudPolicy)
           .catch(() => null),
-        client
+        CLOUD_CONTINUITY_ENABLED ? client
           .cloudAvailability()
           .then(filterCloudAvailability)
-          .catch(() => []),
+          .catch(() => []) : Promise.resolve([]),
         client
           .getLocalModelPolicy()
           .then(normalizeLocalModelPolicy)
@@ -1473,7 +1616,7 @@ export class WorkbenchController implements vscode.Disposable {
         at: Date.now(),
         agents,
         runDefaults,
-        limitPolicy,
+        limitPolicy: this.detectionCache?.limitPolicy ?? limitPolicy,
         providerAccounts,
         sandboxPolicy,
         sandboxRuntime,
@@ -1482,16 +1625,26 @@ export class WorkbenchController implements vscode.Disposable {
         modelCatalog,
         localModels,
         localModelPolicy,
-        state: "ready",
+        state: probeFailed ? "error" : "ready",
+        accountState: this.detectionCache?.accountState,
+        modelState: this.detectionCache?.modelState,
       };
-      this.detectionCache = next;
-      return next;
+      if (accountRevision !== this.accountRevision && this.detectionCache) {
+        next.providerAccounts = this.detectionCache.providerAccounts;
+        next.limitPolicy = this.detectionCache.limitPolicy;
+      }
+      if (detectionRevision !== this.detectionRevision) {
+        // An account switch or settings edit invalidated this probe. Keep it stale
+        // so the changed entitlement gets its own probe as soon as this one ends.
+        this.detectionCache = { ...this.detectionCache!, at: 0 };
+      } else this.detectionCache = next;
+      return this.detectionCache;
     })()
       .catch((err) => {
         this.output.appendLine(
           `[workbench] detection failed: ${formatError(err)}`,
         );
-        const failed = emptyDetectionCache("error");
+        const failed = { ...(this.detectionCache ?? emptyDetectionCache("error")), at: detectionRevision === this.detectionRevision ? Date.now() : 0, state: "error" as const };
         this.detectionCache = failed;
         return failed;
       })
@@ -1499,6 +1652,18 @@ export class WorkbenchController implements vscode.Disposable {
         this.detectInflight = null;
       });
     return this.detectInflight;
+  }
+
+  private publishDetection(): void {
+    if (this.disposed || !this.detectionCache || !this.lastSnapshot?.trusted) return;
+    const patch = { ...detectionFields(this.detectionCache), authPendingAccountIds: [...this.authPendingAccounts] };
+    this.lastSnapshot = { ...this.lastSnapshot, ...patch };
+    this.detectionUpdates.fire(patch);
+  }
+
+  private finishDetection(client: DaemonApi): void {
+    this.publishDetection();
+    if (!this.disposed && this.detectionCache?.at === 0) this.detect(client);
   }
 
   private async syncSettings(client: DaemonApi): Promise<void> {
@@ -1547,7 +1712,7 @@ export class WorkbenchController implements vscode.Disposable {
         normalizeLocalModelPolicy({
           ...localModelPolicy,
           auto_resume_cloud: CLOUD_CONTINUITY_ENABLED && settings.localAutoResumeCloud,
-          use_local_fallback: settings.localUseFallback,
+          use_local_fallback: LOCAL_MODELS_ENABLED && settings.localUseFallback,
           switch_back_to_cloud: CLOUD_CONTINUITY_ENABLED && settings.localSwitchBackToCloud,
           probe_interval_secs: settings.localProbeIntervalSeconds,
           ollama_base_url:
@@ -1562,7 +1727,7 @@ export class WorkbenchController implements vscode.Disposable {
     if (sandboxPolicy) {
       await client.setSandboxPolicy({
         ...sandboxPolicy,
-        default_backend: settings.defaultExecutionBackend,
+        default_backend: DOCKER_SANDBOX_ENABLED ? settings.defaultExecutionBackend : "host",
         max_concurrent_sandboxes: settings.sandboxMaxConcurrent,
         cpus: settings.sandboxCpus,
         memory: settings.sandboxMemory,
@@ -1684,17 +1849,25 @@ export class WorkbenchController implements vscode.Disposable {
 
   private onDaemonEvent(event: AppEvent): void {
     if (event.type === "event_gap") {
-      this.detectionCache = null;
+      this.invalidateDetection();
       void this.refresh();
       return;
     }
     if (event.type === "agent_thread_event") {
       const data = event.data as AgentThreadEvent;
       this.threadEvents.fire(data);
+      // Cumulative streaming updates already reach the webview directly. Only
+      // durable events/completion need a workspace snapshot; gaps recover below.
+      if ((data.data as { streaming?: boolean } | null)?.streaming === true) return;
       if (data.thread_id) this.diffCache.delete(data.thread_id);
     }
     if (event.type === "agent_thread_updated") {
       const data = event.data as Partial<AgentThread>;
+      const previous = this.lastSnapshot?.threads.find((thread) => thread.id === data.id);
+      if ((data.provider_account_id && data.provider_account_id !== previous?.provider_account_id) ||
+          (data.status === "waiting_for_limit" && previous?.status !== data.status) ||
+          (data.handoff_state === "budget_paused_provider_limit" && previous?.handoff_state !== data.handoff_state) ||
+          (previous?.status === "waiting_for_limit" && data.status === "running")) this.refreshAccountsAfterTransition();
       if (data.id && data.status === "running") {
         this.diffCache.delete(data.id);
         this.applyResults.delete(data.id);
@@ -1734,7 +1907,7 @@ export class WorkbenchController implements vscode.Disposable {
     // Transcript events already travel directly to the webview; this slower
     // snapshot cadence reconciles durable state without turning each token into
     // a bundle of database RPCs.
-    const delay = event.type === "agent_thread_event" ? 120 : 80;
+    const delay = event.type === "agent_thread_event" ? 500 : 80;
     this.refreshTimer = setTimeout(() => {
       this.refreshTimer = null;
       void this.refresh();
@@ -1883,6 +2056,7 @@ function emptySnapshot(
   error: string,
 ): WorkbenchSnapshot {
   return {
+    loadState: "error",
     trusted,
     defaults,
     project: null,
@@ -1903,7 +2077,6 @@ function emptySnapshot(
     cloudPolicy: null,
     cloudAvailability: [],
     details: null,
-      github: null,
       collaboration: {
         role: "standalone",
         connected: false,
@@ -2025,15 +2198,15 @@ function getDefaults(): WorkbenchDefaults {
       "defaultPermission",
       "workspace_write",
     ),
-    execution_backend: config.get<ExecutionBackend>(
+    execution_backend: DOCKER_SANDBOX_ENABLED ? config.get<ExecutionBackend>(
       "defaultExecutionBackend",
       "host",
-    ),
+    ) : "host",
     model: profile.model,
     reasoning: profile.reasoning,
-    local_provider: sanitizeLocalProvider(
+    local_provider: LOCAL_MODELS_ENABLED ? sanitizeLocalProvider(
       config.get<string>("defaultLocalProvider", ""),
-    ),
+    ) : null,
     local_base_url: blankToNull(config.get<string>("defaultLocalBaseUrl", "")),
   };
 }
@@ -2140,6 +2313,7 @@ function sanitizeBackend(
   agent: AgentKind,
   backend: ExecutionBackend,
 ): ExecutionBackend {
+  if (!DOCKER_SANDBOX_ENABLED) return "host";
   if (backend === "docker_sandbox" && agent !== "codex") {
     return "host";
   }
@@ -2200,7 +2374,7 @@ function filterAgentThreads(items: AgentThread[]): AgentThread[] {
   });
 }
 
-function normalizeLimitPolicy(policy: LimitPolicy): LimitPolicy {
+export function normalizeLimitPolicy(policy: LimitPolicy): LimitPolicy {
   const profiles = (["claude_code", "codex"] as const).map((agent) => {
     const profile = policy.agent_profiles?.find((item) => item.agent === agent);
     return {
@@ -2221,7 +2395,7 @@ function normalizeLimitPolicy(policy: LimitPolicy): LimitPolicy {
       id,
       label: label || (account.agent === "codex" ? "Codex account" : "Claude account"),
       use_credits: account.agent === "codex" && account.use_credits === true,
-      auth_mode: account.agent === "codex" ? "isolated_cli" as const : account.auth_mode,
+      auth_mode: account.auth_mode === "system" ? "system" as const : account.agent === "codex" ? "isolated_cli" as const : account.auth_mode,
     }];
   });
   return {

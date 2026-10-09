@@ -8,6 +8,9 @@ pub enum ProviderAccountAuthMode {
     #[default]
     IsolatedCli,
     OauthToken,
+    /// The provider CLI's own default sign-in on this computer (for example
+    /// `~/.codex` or `~/.claude`). Perpetual never signs this profile out.
+    System,
 }
 
 /// Non-secret account metadata. Array order is the global failover order and
@@ -34,9 +37,19 @@ pub struct ProviderAccountStatus {
     /// Display-only identity reported by this isolated provider profile.
     #[serde(default)]
     pub email: Option<String>,
+    /// Display-only subscription plan reported by the provider (e.g. `pro`).
+    #[serde(default)]
+    pub plan: Option<String>,
     pub availability: crate::AvailabilityState,
     pub reset_at: Option<chrono::DateTime<chrono::Utc>>,
     pub detail: Option<String>,
+    /// Whether the provider CLI is installed on this computer.
+    #[serde(default = "default_true")]
+    pub installed: bool,
+    /// True for the account the next run of this provider will use: the first
+    /// enabled, signed-in, unlimited account of that provider in pool order.
+    #[serde(default)]
+    pub active: bool,
 }
 
 /// Description of a provider-owned interactive process. Environment values are
@@ -91,6 +104,10 @@ pub struct LimitPolicy {
     /// Ordered account pool. Empty retains legacy single-login behavior.
     #[serde(default)]
     pub accounts: Vec<ProviderAccount>,
+    /// Providers whose default CLI sign-in the user removed from the pool, so
+    /// it is not registered again automatically.
+    #[serde(default)]
+    pub dismissed_system_accounts: Vec<AgentKind>,
     /// When every agent is limited, resume with whichever agent's limit resets
     /// first instead of always waiting for the agent that was running.
     #[serde(default = "default_true")]
@@ -126,6 +143,7 @@ impl Default for LimitPolicy {
             agent_priority: default_priority(),
             agent_profiles: Vec::new(),
             accounts: Vec::new(),
+            dismissed_system_accounts: Vec::new(),
             resume_with_earliest: true,
             unknown_reset_retry_secs: default_unknown_retry(),
             keep_awake: true,
