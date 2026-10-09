@@ -23,8 +23,12 @@ async fn main() {
         .init();
 
     let data_dir = data_dir();
-    if let Err(e) = std::fs::create_dir_all(&data_dir) {
-        tracing::error!(?data_dir, error = %e, "failed to create data dir");
+    // The data directory is security-sensitive: it will hold the bearer token
+    // that gates every RPC on this socket. Prepare it (create if missing,
+    // reject symlinks/untrusted ownership, enforce 0700) and fail closed before
+    // doing anything else.
+    if let Err(e) = am_daemon::endpoint::prepare_private_data_dir(&data_dir) {
+        tracing::error!(?data_dir, error = %e, "failed to secure daemon data directory");
         std::process::exit(1);
     }
     let port: u16 = std::env::var("PERPETUAL_DAEMON_PORT")
@@ -49,14 +53,13 @@ async fn main() {
     };
     let addr = server.addr();
 
-    let endpoint = data_dir.join("daemon.json");
-    let body = serde_json::json!({
-        "port": addr.port(),
-        "token": token,
-    })
-    .to_string();
-    if let Err(e) = std::fs::write(&endpoint, body) {
-        tracing::warn!(?endpoint, error = %e, "failed to write endpoint file");
+    let endpoint = am_daemon::endpoint::endpoint_path(&data_dir);
+    // Publish the endpoint atomically with owner-only permissions. If this
+    // fails, terminate startup before the accept loop can run: a running daemon
+    // without a discoverable, safely published credential must not happen.
+    if let Err(e) = am_daemon::endpoint::publish_private_endpoint(&data_dir, addr.port(), &token) {
+        tracing::error!(?data_dir, error = %e, "failed to publish daemon endpoint");
+        std::process::exit(1);
     }
     tracing::info!(%addr, ?endpoint, "Perpetual daemon listening");
 
@@ -76,7 +79,7 @@ async fn main() {
     power.shutdown().await;
     serve.abort();
     core.shutdown().await;
-    let _ = std::fs::remove_file(&endpoint);
+    let _ = am_daemon::endpoint::remove_endpoint(&data_dir);
     tracing::info!("daemon stopped");
 }
 

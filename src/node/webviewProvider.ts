@@ -1,4 +1,5 @@
 import * as fs from "fs";
+import { randomBytes } from "node:crypto";
 import * as vscode from "vscode";
 import type { WorkbenchController, WebviewReply } from "./workbenchController";
 
@@ -128,10 +129,7 @@ function assetVersion(uri: vscode.Uri): string {
 }
 
 function getNonce(): string {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let out = "";
-  for (let i = 0; i < 32; i++) {
-    out += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return out;
+  // A CSP nonce must be unpredictable; derive it from the OS CSPRNG rather
+  // than `Math.random()`, whose output is not cryptographic.
+  return randomBytes(24).toString("base64");
 }
