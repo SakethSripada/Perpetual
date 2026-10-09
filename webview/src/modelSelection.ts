@@ -24,8 +24,9 @@ export function resolveModelSelection(snapshot: WorkbenchSnapshot | null, agent:
   const selected = catalog?.models.find((item) => same(item.id, effectiveModel) || item.aliases?.some((alias) => same(alias, effectiveModel)));
   const efforts = selected ? selected.reasoning : catalog?.reasoning ?? [];
   const defaultEffort = selected?.default_reasoning ?? catalog?.default_reasoning ?? profile?.reasoning ?? cli?.reasoning ?? "";
-  const requestedEffort = reasoning.trim() || defaultEffort;
-  const effectiveEffort = efforts.find((effort) => same(effort, requestedEffort)) ?? (selected ? (efforts.find((effort) => same(effort, defaultEffort)) ?? "") : requestedEffort);
+  const fallbackEffort = efforts.find((effort) => same(effort, defaultEffort)) ?? efforts.find((effort) => same(effort, "medium")) ?? efforts[0] ?? "";
+  const requestedEffort = reasoning.trim() || fallbackEffort;
+  const effectiveEffort = efforts.find((effort) => same(effort, requestedEffort)) ?? (selected ? fallbackEffort : requestedEffort);
   return {model: effectiveModel, reasoning: effectiveEffort, modelLabel: selected?.label || effectiveModel || "Choose model", reasoningLabel: effectiveEffort ? effortLabel(effectiveEffort) : "No reasoning levels", efforts, knownModel: !!selected, unavailable: selected?.available === false};
 }
 export function effortLabel(value: string) {

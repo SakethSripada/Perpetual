@@ -473,6 +473,12 @@ test("model selection resolves real provider defaults and only supported reasoni
   assert.equal(resolveModelSelection(snapshot, "codex", "configured", "HIGH").reasoning, "high");
   assert.equal(resolveModelSelection(snapshot, "codex", "quiet", "high").reasoning, "");
   assert.equal(resolveModelSelection(snapshot, "claude_code").model, "");
+  const missingDefault = {runDefaults: [], modelCatalog: [{agent: "claude_code", default_model: "current", default_reasoning: null, reasoning: ["low", "medium", "high"], models: [{id: "current", reasoning: ["low", "medium", "high"], default_reasoning: null}]}]};
+  assert.equal(resolveModelSelection(missingDefault, "claude_code").reasoning, "medium");
+  assert.equal(resolveModelSelection(missingDefault, "claude_code", "current", "high").reasoning, "high");
+  assert.equal(resolveModelSelection(missingDefault, "claude_code", "current", "unsupported").reasoning, "medium");
+  missingDefault.modelCatalog[0].models[0].reasoning = ["high"];
+  assert.equal(resolveModelSelection(missingDefault, "claude_code").reasoning, "high");
   assert.equal(resolveModelSelection(snapshot, "codex", "future-custom", "low").model, "future-custom");
   assert.deepEqual(readModelSelections({lastAgent: "codex", lastModel: "config-model", lastReasoning: "high"}), {codex: {model: "config-model", reasoning: "high"}});
   assert.deepEqual(readModelSelections({modelSelections: {}, lastAgent: "codex", lastModel: "config-model"}), {});
