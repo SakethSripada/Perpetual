@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.7.13
+
+- Use Medium when a model supports it but has no valid reasoning default; retain
+  saved choices and reported defaults, and select only supported levels.
+- Align slider stops with the thumb centres and extend the rail beneath the
+  endpoints so the first dot no longer protrudes beyond the rounded track.
+
 ## 0.7.12
 
 - Simplify the model and reasoning selector with neutral colours, a smaller panel,
