@@ -71,6 +71,8 @@ pub enum CloudPollStatus {
     Unknown,
 }
 
+// async_trait adds must_use to its boxed Future; newer Clippy flags that generated attribute.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait CloudTaskClient: Send + Sync {
     fn agent(&self) -> AgentKind;

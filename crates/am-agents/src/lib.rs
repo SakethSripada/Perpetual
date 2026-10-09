@@ -365,6 +365,8 @@ pub struct SessionHandle {
 }
 
 /// The contract every coding agent implements.
+// async_trait adds must_use to its boxed Future; newer Clippy flags that generated attribute.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait AgentAdapter: Send + Sync {
     fn kind(&self) -> AgentKind;
