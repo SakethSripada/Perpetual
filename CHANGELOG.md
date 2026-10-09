@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.7.14
+
+- Give the reasoning rail a muted purple track and lavender progress fill.
+- Capitalize raw GPT and Claude model labels in selectors and settings while
+  preserving the provider IDs used for requests and saved preferences.
+
 ## 0.7.13
 
 - Use Medium when a model supports it but has no valid reasoning default; retain
