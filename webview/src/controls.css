@@ -380,15 +380,17 @@ body.vscode-high-contrast .action-menu, body.vscode-high-contrast .account-list 
 .effort-control { padding: 2px 6px 7px; }
 .effort-rail { --effort-accent: #a78bda; position: relative; height: 32px; }
 .effort-rail-track { position: absolute; top: 6px; left: 0; right: 0; height: 20px; background: color-mix(in srgb, var(--effort-accent) 24%, transparent); border-radius: 20px; pointer-events: none; }
-.effort-rail-track > span { display: block; height: 100%; width: calc(var(--effort-fill) + var(--effort-offset)); background: color-mix(in srgb, var(--effort-accent) 65%, transparent); border-radius: inherit; }
+.effort-rail-track > span { display: block; height: 100%; width: calc(var(--effort-fill) + var(--effort-offset)); background: color-mix(in srgb, var(--effort-accent) 65%, transparent); border-radius: inherit; transition: width 180ms cubic-bezier(.2,.8,.2,1); }
 .effort-rail-track > i { position: absolute; top: 8px; width: 4px; height: 4px; border-radius: 50%; transform: translateX(-50%); background: color-mix(in srgb, var(--vscode-foreground) 45%, transparent); }
 .effort-rail input { appearance: none; -webkit-appearance: none; position: relative; display: block; width: 100%; height: 32px; min-height: 0; padding: 0; margin: 0; border: 0; border-radius: 0; outline: none; background: transparent; cursor: pointer; }
 .effort-rail input::-webkit-slider-runnable-track { height: 4px; background: transparent; }
-.effort-rail input::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: 22px; height: 22px; margin-top: -9px; border-radius: 50%; background: var(--vscode-foreground); border: 0; box-shadow: 0 1px 3px #0003; }
-.effort-rail input:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px color-mix(in srgb, var(--vscode-foreground) 20%, transparent); }
+.effort-rail input::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: 22px; height: 22px; margin-top: -9px; border-radius: 50%; background: transparent; border: 0; box-shadow: none; }
+.effort-rail input:focus-visible + .effort-rail-thumb { box-shadow: 0 0 0 3px color-mix(in srgb, var(--vscode-foreground) 20%, transparent); }
 .effort-rail input::-moz-range-track { height: 4px; background: transparent; }
-.effort-rail input::-moz-range-thumb { width: 22px; height: 22px; border-radius: 50%; background: var(--vscode-foreground); border: 0; }
-.effort-rail[data-unselected=true] input::-webkit-slider-thumb, .effort-rail[data-unselected=true] input::-moz-range-thumb { opacity: 0; }
+.effort-rail input::-moz-range-thumb { width: 22px; height: 22px; border-radius: 50%; background: transparent; border: 0; }
+.effort-rail-thumb { position: absolute; top: 5px; left: calc(var(--effort-fill) + var(--effort-offset) - 11px); width: 22px; height: 22px; border-radius: 50%; background: var(--vscode-foreground); box-shadow: 0 1px 3px #0003; pointer-events: none; transition: left 180ms cubic-bezier(.2,.8,.2,1); }
+.effort-rail[data-dragging=true] .effort-rail-thumb, .effort-rail[data-dragging=true] .effort-rail-track > span { transition: none; }
+.effort-rail[data-unselected=true] .effort-rail-thumb { opacity: 0; }
 .effort-single { display: block; margin: 3px auto; padding: 5px 10px; border: 0; border-radius: 5px; background: var(--am-hover); color: inherit; font-size: 12px; cursor: pointer; }
 .model-studio-pending-header { padding: 3px; }
 .model-studio-heading { display: flex; align-items: center; gap: 5px; padding: 3px 2px 7px; }
@@ -410,4 +412,4 @@ body.vscode-high-contrast .action-menu, body.vscode-high-contrast .account-list 
 .model-studio-list::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--vscode-foreground) 20%, transparent); border-radius: 4px; }
 .model-studio-list::-webkit-scrollbar-track { background: transparent; }
 @container (max-width: 340px) { .model-choice-trigger > small { display: none; } }
-@media (prefers-reduced-motion: reduce) { .model-studio { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .model-studio { animation: none; } .effort-rail-thumb, .effort-rail-track > span { transition: none; } }

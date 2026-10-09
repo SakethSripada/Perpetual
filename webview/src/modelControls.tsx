@@ -102,20 +102,22 @@ function EffortControl(props: SummaryProps & { efforts: string[]; value: string;
   const { efforts, value, defaultValue, onChange } = props;
   const [draft, setDraft] = useState(value);
   const dragging = useRef(false);
+  const [pointerMoving, setPointerMoving] = useState(false);
   const committed = useRef(value);
   useEffect(() => { if (!dragging.current) setDraft(value); committed.current = value; }, [value]);
   const index = Math.max(0, efforts.indexOf(draft));
   const last = efforts.length - 1;
   const commit = (next: string) => { if (next !== committed.current) { committed.current = next; onChange(next); } };
   const setLevel = (next: string) => { setDraft(next); commit(next); };
-  const finish = () => { dragging.current = false; if (efforts.includes(draft)) commit(draft); };
-  const finishRange = (index: number) => { dragging.current = false; setLevel(efforts[index]); };
+  const finish = () => { setPointerMoving(false); dragging.current = false; if (efforts.includes(draft)) commit(draft); };
+  const finishRange = (index: number) => { setPointerMoving(false); dragging.current = false; setLevel(efforts[index]); };
   return <>
     <ModelSummary {...props} title={draft ? effortLabel(draft) : "Choose effort"} subtitle={props.model} onReset={() => setLevel(defaultValue)} resetDisabled={!defaultValue || draft === defaultValue} resetTitle={`Reset to ${effortLabel(defaultValue)}`} />
     <div className="effort-control">
-      {last > 0 ? <div className="effort-rail" data-unselected={!efforts.includes(draft)} style={{ "--effort-fill": `${index / last * 100}%`, "--effort-offset": `${11 - 22 * index / last}px` } as CSSProperties}>
+      {last > 0 ? <div className="effort-rail" data-dragging={pointerMoving} data-unselected={!efforts.includes(draft)} style={{ "--effort-fill": `${index / last * 100}%`, "--effort-offset": `${11 - 22 * index / last}px` } as CSSProperties}>
         <div className="effort-rail-track" aria-hidden="true"><span />{efforts.map((effort, position) => <i key={effort} style={{ left: `calc(${position / last * 100}% + ${11 - 22 * position / last}px)` }} />)}</div>
-        <input type="range" aria-label="Reasoning level" title={draft ? effortLabel(draft) : "Choose effort"} aria-valuetext={draft ? effortLabel(draft) : "Not selected"} min={0} max={last} step={1} value={index} onChange={(event) => setDraft(efforts[Number(event.target.value)])} onPointerDown={() => { dragging.current = true; }} onPointerUp={(event) => finishRange(Number(event.currentTarget.value))} onPointerCancel={() => { dragging.current = false; setDraft(value); }} onKeyUp={(event) => { if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) finishRange(Number(event.currentTarget.value)); }} onBlur={finish} />
+        <input type="range" aria-label="Reasoning level" title={draft ? effortLabel(draft) : "Choose effort"} aria-valuetext={draft ? effortLabel(draft) : "Not selected"} min={0} max={last} step={1} value={index} onChange={(event) => setDraft(efforts[Number(event.target.value)])} onPointerDown={() => { dragging.current = true; }} onPointerMove={(event) => { if (event.buttons === 1 && dragging.current) setPointerMoving(true); }} onPointerUp={(event) => finishRange(Number(event.currentTarget.value))} onPointerCancel={() => { setPointerMoving(false); dragging.current = false; setDraft(value); }} onKeyUp={(event) => { if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) finishRange(Number(event.currentTarget.value)); }} onBlur={finish} />
+        <span className="effort-rail-thumb" aria-hidden="true" />
 
       </div> : <button type="button" className="effort-single" aria-pressed={draft === efforts[0]} onClick={() => setLevel(efforts[0])}>{effortLabel(efforts[0])}</button>}
     </div>
