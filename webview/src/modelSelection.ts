@@ -27,9 +27,18 @@ export function resolveModelSelection(snapshot: WorkbenchSnapshot | null, agent:
   const fallbackEffort = efforts.find((effort) => same(effort, defaultEffort)) ?? efforts.find((effort) => same(effort, "medium")) ?? efforts[0] ?? "";
   const requestedEffort = reasoning.trim() || fallbackEffort;
   const effectiveEffort = efforts.find((effort) => same(effort, requestedEffort)) ?? (selected ? fallbackEffort : requestedEffort);
-  return {model: effectiveModel, reasoning: effectiveEffort, modelLabel: selected?.label || effectiveModel || "Choose model", reasoningLabel: effectiveEffort ? effortLabel(effectiveEffort) : "No reasoning levels", efforts, knownModel: !!selected, unavailable: selected?.available === false};
+  return {model: effectiveModel, reasoning: effectiveEffort, modelLabel: formatModelLabel(selected?.label || effectiveModel) || "Choose model", reasoningLabel: effectiveEffort ? effortLabel(effectiveEffort) : "No reasoning levels", efforts, knownModel: !!selected, unavailable: selected?.available === false};
 }
 export function effortLabel(value: string) {
   if (value.toLowerCase() === "xhigh") return "Extra high";
   return value.replace(/[_-]+/g, " ").replace(/^\w/, (letter) => letter.toUpperCase());
+}
+
+// Presentation only: retain separators and leave the provider ID untouched.
+export function formatModelLabel(value: string) {
+  const label = value.trim();
+  if (!/^(gpt|claude)(?=[\s-])/i.test(label)) return label;
+  return label.replace(/[a-z]+/gi, (word, offset: number) =>
+    offset === 0 && word.toLowerCase() === "gpt" ? "GPT" :
+    word === word.toLowerCase() ? word[0].toUpperCase() + word.slice(1) : word);
 }

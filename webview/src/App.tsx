@@ -45,7 +45,7 @@ import { UsageLimits } from "./usage";
 import { usageWindows } from "./usageData";
 import { ChoiceSelect } from "./controls";
 import { ModelControls } from "./modelControls";
-import { readModelSelections, resolveModelSelection, type ModelSelections } from "./modelSelection";
+import { readModelSelections, resolveModelSelection, formatModelLabel, type ModelSelections } from "./modelSelection";
 import { RepositoryPicker } from "./repositories";
 import { configureTransport, request } from "./bridge";
 import { useSheetAccessibility } from "./dialogs";
@@ -5197,7 +5197,7 @@ function fallbackModelOptions(agent: AgentKind): PickerModelOption[] {
 function catalogOption(option: AgentModelOption): PickerModelOption {
   return {
     value: option.id,
-    label: option.label || prettyModel(option.id),
+    label: formatModelLabel(option.label || prettyModel(option.id)),
     source: option.default
       ? `${sourceLabel(option.source)} default`
       : sourceLabel(option.source),
@@ -5360,6 +5360,7 @@ function sanitizeModelForAgent(
 function prettyModel(value: string): string {
   const v = baseModelId(value);
   if (!v) return "";
+  if (/^gpt(?=[\s-])/i.test(v)) return formatModelLabel(v);
   const known: Record<string, string> = {
     opus: "Opus (latest)",
     sonnet: "Sonnet (latest)",

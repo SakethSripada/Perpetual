@@ -464,8 +464,13 @@ test("usage windows preserve partial reports and reject invalid values without i
 });
 
 test("model selection resolves real provider defaults and only supported reasoning levels", async () => {
-  const {resolveModelSelection, readModelSelections} = await bundle("webview/src/modelSelection.ts");
+  const {resolveModelSelection, readModelSelections, formatModelLabel} = await bundle("webview/src/modelSelection.ts");
   const snapshot = { runDefaults: [{kind: "codex", model: "config-model", reasoning: "low"}], limitPolicy: {agent_profiles: [{agent: "codex", model: null, reasoning: null}]}, modelCatalog: [{agent: "codex", default_model: "catalog-model", default_reasoning: "medium", reasoning: ["low", "medium"], models: [{id: "config-model", label: "Configured model", aliases: ["configured"], available: true, reasoning: ["low", "high"], default_reasoning: "high"}, {id: "quiet", label: "Quiet model", available: true, aliases: [], reasoning: [], default_reasoning: null}]}] };
+  assert.equal(formatModelLabel("gpt-6.1-sol"), "GPT-6.1-Sol");
+  assert.equal(formatModelLabel("gpt-6-astra"), "GPT-6-Astra");
+  assert.equal(formatModelLabel("GPT-6.1 Sol"), "GPT-6.1 Sol");
+  assert.equal(formatModelLabel("claude-sonnet-5"), "Claude-Sonnet-5");
+  assert.equal(formatModelLabel("my-custom-model"), "my-custom-model");
   const resolved = resolveModelSelection(snapshot, "codex");
   assert.equal(resolved.model, "config-model");
   assert.equal(resolved.modelLabel, "Configured model");
