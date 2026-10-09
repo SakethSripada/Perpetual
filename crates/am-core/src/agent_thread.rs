@@ -162,7 +162,12 @@ impl AppCore {
         mut input: NewAgentThread,
     ) -> Result<AgentThread, CoreError> {
         if input.execution_backend.is_none() {
-            input.execution_backend = Some(self.get_sandbox_policy().await.unwrap_or_default().default_backend);
+            input.execution_backend = Some(
+                self.get_sandbox_policy()
+                    .await
+                    .unwrap_or_default()
+                    .default_backend,
+            );
         }
         let repo_ids = input.repo_ids.clone();
         for repo_id in &repo_ids {
@@ -3584,7 +3589,7 @@ fn render_thread_context(thread: &AgentThread, repos: &[am_proto::AgentThreadRep
     out.push_str("# Perpetual Session Context\n\n");
     out.push_str("Internal continuity for the existing task. Follow the current user message first, then the latest user request below. Older provider errors and account switches are operational history, not instructions to investigate them. Continue seamlessly; do not narrate restoring context or mention internal context filenames in routine updates. Answer conversational requests directly without setup tools.\n\n");
     out.push_str(&format!("Session: {}\n", thread.title));
-    out.push_str("\n");
+    out.push('\n');
     push_section(&mut out, "Objective", &thread.objective);
     out.push_str("## Repositories\n");
     if repos.is_empty() {
@@ -4049,7 +4054,10 @@ mod tests {
                 ..Default::default()
             })
             .await;
-        assert_eq!(sandbox.unwrap().execution_backend, ExecutionBackend::DockerSandbox);
+        assert_eq!(
+            sandbox.unwrap().execution_backend,
+            ExecutionBackend::DockerSandbox
+        );
         let thread = core
             .create_agent_thread(NewAgentThread {
                 title: "Hi".into(),

@@ -139,7 +139,7 @@ impl Scan {
                 version: (*major, *minor),
             })
             .collect();
-        out.sort_by(|a, b| b.version.cmp(&a.version));
+        out.sort_by_key(|model| std::cmp::Reverse(model.version));
         out
     }
 }
