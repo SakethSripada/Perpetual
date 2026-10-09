@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.7.15
+
+- Animate the reasoning thumb and purple fill together over 180ms when changing
+  levels, while keeping direct dragging immediate and respecting reduced motion.
+
 ## 0.7.14
 
 - Give the reasoning rail a muted purple track and lavender progress fill.
