@@ -31,6 +31,7 @@ mod network;
 mod process;
 mod runtime;
 
+pub mod attachments;
 pub mod claude;
 pub mod cloud;
 pub mod codex;
@@ -63,7 +64,7 @@ pub enum AgentError {
 
 /// Permission posture for a run. The conservative default ([`Self::WorkspaceWrite`])
 /// lets the agent edit files but aborts on risky shell/network; [`Self::Autonomous`]
-/// is an explicit opt-in for full automation inside the isolated worktree.
+/// is an explicit opt-in for full host access without provider sandboxing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionPolicy {

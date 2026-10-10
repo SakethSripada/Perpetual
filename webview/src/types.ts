@@ -530,6 +530,7 @@ export interface WorkbenchSnapshot {
 
 export type ExtensionMessage =
   | { type: "detectionUpdate"; patch: Partial<WorkbenchSnapshot> }
+  | { type: "transcriptReset"; threadId: string }
   | { type: "operationResult"; requestId: string; error: string | null }
   | { type: "submitFailed"; threadId: string | null; clientMessageId: string | null; text: string; message: string }
   | { type: "snapshot"; snapshot: WorkbenchSnapshot }

@@ -108,13 +108,9 @@
 .empty-mark { width: auto; height: auto; opacity: .7; }
 .empty-mark svg { width: 52px; height: 52px; }
 .welcome-copy { text-align: center; }
-.welcome-suggestions { pointer-events: auto; }
-.empty.welcome.is-leaving .welcome-suggestions { pointer-events: none; }
 .empty.welcome:not(.is-leaving) .empty-mark { animation: none; }
 .welcome-copy h1 { font-size: clamp(22px, 3vw, 30px); letter-spacing: -.8px; font-weight: 500; margin: 0 0 9px; color: var(--vscode-foreground); }
 .welcome-copy p { font-size: 13px; color: var(--am-muted); margin: 0; }
-.welcome-suggestions { display: flex; flex-wrap: wrap; justify-content: center; gap: 7px; margin-top: 28px; }
-.welcome-suggestions button { cursor: pointer; font: inherit; border: 1px solid var(--am-border-soft); background: var(--am-surface); border-radius: 8px; padding: 9px 12px; font-size: 11px; color: var(--am-muted); }
 .sheet-backdrop { background: #0006; backdrop-filter: blur(3px); }
 .sheet.settings-sheet { border-radius: 14px; border: 1px solid var(--am-border); box-shadow: 0 20px 80px #0005; background: var(--vscode-editor-background); width: min(900px, calc(100% - 32px)); max-height: calc(100% - 32px); }
 .settings-heading strong { font-size: 15px; }
@@ -202,7 +198,6 @@ button:disabled { opacity: .45; cursor: default; }
   .detection-hint { display: none; }
   .sheet.settings-sheet { width: calc(100% - 16px); max-height: calc(100% - 16px); }
   .settings-content { padding: 14px; }
-  .welcome-suggestions { flex-direction: column; }
   .account-card { padding: 12px; }
   .account-card-main .state-badge { margin-left: 36px; }
 }

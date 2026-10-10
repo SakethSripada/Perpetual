@@ -205,7 +205,11 @@ body.vscode-high-contrast .action-menu, body.vscode-high-contrast .account-list 
 .msg-body .md-h { margin-top: 14px; margin-bottom: 6px; }
 .msg-body .md-list { padding-left: 20px; }
 .ai-file-chip { border: 0; height: 26px; background: var(--am-surface); }
-.welcome-suggestions button { padding: 7px 12px; border: 0; min-height: 30px; background: var(--am-surface); border-radius: 6px; }
+/* Keep welcome copy centered in both the sidebar and editor panel. */
+.empty.welcome { grid-template-columns: minmax(0, 1fr); }
+.welcome-copy { width: min(100%, 560px); }
+.composer .attach-trigger { width: 30px; padding: 0; justify-content: center; flex-shrink: 0; border-radius: 8px; }
+.composer .attach-trigger:disabled { opacity: .4; cursor: default; }
 
 /* Compact, quiet surfaces. Pending resources reserve space instead of flashing empty. */
 .resource-loading { display: flex; align-items: center; gap: 8px; min-height: 22px; animation: resource-reveal 120ms ease-out 120ms backwards; }

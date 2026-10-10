@@ -544,6 +544,25 @@ pub async fn dispatch(core: &AppCore, req: DaemonRequest) -> Result<DaemonRespon
                 .await
                 .map_err(s)?,
         ),
+        Q::EditThreadMessage {
+            thread_id,
+            event_id,
+            agent,
+            permission,
+            message,
+            client_message_id,
+        } => A::TurnIdOpt(
+            core.edit_thread_message(
+                &thread_id,
+                &event_id,
+                agent,
+                permission,
+                message,
+                client_message_id,
+            )
+            .await
+            .map_err(s)?,
+        ),
         Q::StopAgentThread { thread_id } => {
             core.stop_agent_thread(&thread_id).await.map_err(s)?;
             A::Unit

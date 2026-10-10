@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 0.7.16
+
+- Honor Full access for Codex and Claude Code, and preserve permission choices
+  when models, accounts, or budgets refresh.
+- Attach images, PDFs, and files to tasks, including messages that contain only
+  attachments. Keep attachments available across provider switches.
+- Edit a message and replace the later conversation with a new run using the
+  corrected request and attachments.
+- Move the file attachment button into the composer controls and align permission
+  names with desktop: Read only, Workspace, and Full access.
+- Simplify the welcome screen and remove example prompt tiles.
+- Refresh the Marketplace description and screenshots to show the extension
+  inside VS Code and explain how tasks continue across account limits.
+
 ## 0.7.15
 
 - Animate the reasoning thumb and purple fill together over 180ms when changing

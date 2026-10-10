@@ -68,15 +68,13 @@ test("plan commands request structured clarification without exposing their prom
   assert.match(appSource, /ask the user a structured question with concise options/);
   assert.match(appSource, /function publicToolData/);
   assert.match(appSource, /"system_prompt"/);
-  assert.match(appSource, /if \(!props\.onSend\(draft\)\) return/);
+  assert.match(appSource, /if \(!props\.onSend\(packMessage\(draft, attachments\)\)\) return/);
 });
 
-test("editing resends safely without rewriting provider history", () => {
-  // Edit loads the text back into the composer and sends a new turn; it must
-  // never rewrite or drop the events already in the thread. The affordance says
-  // so, so the old "history stays intact" notice was only restating the obvious.
-  assert.match(appSource, /Edit and resend as a new turn/);
-  assert.match(appSource, /setEditDraft/);
+test("editing resends from the selected message and refreshes authoritative history", () => {
+  assert.match(appSource, /Edit and resend message/);
+  assert.match(appSource, /editEventId: editingEventId/);
+  assert.match(appSource, /incoming.type === "transcriptReset"/);
 });
 
 test("the picker completes only the leading command token", () => {

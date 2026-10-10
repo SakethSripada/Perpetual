@@ -325,6 +325,15 @@ pub enum DaemonRequest {
         #[serde(default)]
         client_message_id: Option<String>,
     },
+    EditThreadMessage {
+        thread_id: String,
+        event_id: String,
+        agent: AgentKind,
+        permission: PermissionPolicy,
+        message: String,
+        #[serde(default)]
+        client_message_id: Option<String>,
+    },
     StopAgentThread {
         thread_id: String,
     },

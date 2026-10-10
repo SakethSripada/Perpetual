@@ -76,6 +76,31 @@ raw `src/`, `webview/src/`, `crates/`, `target/`, or any local data or tokens.
 - Badges, if added, must come from a trusted provider.
 - At most 30 keywords.
 
+## Updating the Marketplace screenshots
+
+Build a screenshot-only development extension outside the repository:
+
+```sh
+node scripts/prepare-marketplace-capture.mjs /tmp/perpetual-marketplace-capture/extension
+code --new-window --disable-extensions \
+  --extensionDevelopmentPath=/tmp/perpetual-marketplace-capture/extension \
+  /tmp/perpetual-marketplace-capture/acme-web
+```
+
+Create a small fictional project with `src/orders/export.ts` in `acme-web`
+first. The capture host opens that source file and the extension panel with
+**Add CSV export** selected. Open **Settings → Accounts** for the second image.
+
+The capture host uses the extension's actual webview provider and UI with the
+`preview.ts` fixture. It uses fictional task and account data and runs no daemon
+or provider commands. It is separate from the packaged extension. Capture the
+VS Code window, including its tabs and activity bar; do not use standalone
+browser previews or screenshots of the desktop app for this listing.
+
+Replace `media/marketplace-workbench.png` and `media/marketplace-accounts.png`.
+Keep the example-data captions in `README.marketplace.md` and check a local
+VSIX to confirm the README and both images are included before publishing.
+
 ## References
 
 - Publishing: https://code.visualstudio.com/api/working-with-extensions/publishing-extension

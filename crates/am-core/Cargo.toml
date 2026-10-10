@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 am-proto = { workspace = true }
 am-db = { workspace = true }
+sqlx = { workspace = true }
 am-agents = { workspace = true }
 am-vcs = { workspace = true }
 memchr = "2"

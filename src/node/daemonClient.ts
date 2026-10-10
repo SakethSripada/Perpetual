@@ -442,6 +442,12 @@ export class DaemonClient extends EventEmitter implements DaemonApi {
     );
   }
 
+  async editThreadMessage(threadId: string, eventId: string, agent: Parameters<DaemonApi["sendThreadMessage"]>[1], permission: Parameters<DaemonApi["sendThreadMessage"]>[2], message: string, clientMessageId?: string | null) {
+    return responsePayload(await this.requestRaw(variant("edit_thread_message", {
+      thread_id: threadId, event_id: eventId, agent, permission, message, client_message_id: clientMessageId ?? null,
+    })), "turn_id_opt");
+  }
+
   async stopAgentThread(threadId: string) {
     expectUnit(await this.requestRaw(variant("stop_agent_thread", { thread_id: threadId })));
   }

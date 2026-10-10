@@ -1,8 +1,8 @@
 {
   "name": "perpetual-for-vscode",
   "displayName": "Perpetual for VS Code",
-  "description": "Run Codex and Claude Code with persistent sessions, account rotation, safe Git worktrees, and review.",
-  "version": "0.7.15",
+  "description": "Keep coding through usage limits with automatic account switching across Claude Code and Codex.",
+  "version": "0.7.16",
   "publisher": "SakethSripada",
   "license": "MIT",
   "author": {
@@ -173,7 +173,12 @@
             "autonomous"
           ],
           "default": "workspace_write",
-          "description": "Default permission mode for new turns."
+          "description": "Default permission mode for new turns.",
+          "enumItemLabels": [
+            "Read only",
+            "Workspace",
+            "Full access"
+          ]
         },
         "perpetual.defaultExecutionBackend": {
           "type": "string",

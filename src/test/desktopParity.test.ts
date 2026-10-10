@@ -532,3 +532,34 @@ test("Git review watching refreshes only an open visible-repository review", asy
     change(); await new Promise(resolve => setTimeout(resolve, 300)); assert.equal(reads, 1);
   } finally {controller.dispose(); delete (globalThis as any).__perpetualTestGitExtension;}
 });
+
+test("editing invokes the replacement RPC and resets snapshots only after success", async () => {
+  const { WorkbenchController } = await bundle("src/node/workbenchController.ts", true);
+  const calls: unknown[][] = [];
+  let fail = false;
+  const api = {
+    ensureWorkbenchProject: async () => ({id: "project"}),
+    listRepos: async () => [],
+    updateAgentThread: async () => undefined,
+    editThreadMessage: async (...args: unknown[]) => { calls.push(args); if (fail) throw new Error("Stop the task before editing"); return "new-turn"; },
+    sendThreadMessage: async () => { throw new Error("Edits must not append a followup"); },
+  };
+  const controller = new WorkbenchController({ subscriptions: [] }, {
+    onEvent: () => ({dispose(){}}), getClient: async () => api, getLocalClient: async () => api,
+    collaborationStatus: async () => ({role: "owner", deviceId: null}),
+  }, {appendLine(){}});
+  controller.syncSettings = async () => undefined;
+  controller.ensureWorkspaceRepos = async () => undefined;
+  controller.selectThread = async () => undefined;
+  controller.refresh = async () => undefined;
+  const replies: any[] = [];
+  const input = {type: "submit", threadId: "thread", editEventId: "old-user", message: "Revised request", agent: "codex", permission: "read_only", clientMessageId: "edited-client", requestId: "edit"};
+  await controller.handleMessage(input, (message: any) => replies.push(message));
+  assert.deepEqual(calls[0], ["thread", "old-user", "codex", "read_only", "Revised request", "edited-client"]);
+  assert.ok(replies.some((message) => message.type === "transcriptReset"));
+  fail = true; replies.length = 0;
+  await controller.handleMessage({...input, requestId: "failed-edit"}, (message: any) => replies.push(message));
+  assert.ok(!replies.some((message) => message.type === "transcriptReset"));
+  assert.match(replies.find((message) => message.type === "operationResult").error, /Stop the task/);
+  controller.dispose();
+});

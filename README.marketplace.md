@@ -1,91 +1,73 @@
 # Perpetual for VS Code
 
-Keep coding when your AI agent hits a limit.
+## Keep the task going when your AI hits a limit.
 
-Perpetual is a VS Code workbench for Claude Code and Codex that keeps tasks
-moving across providers, multiple signed-in accounts, limit resets, and
-automatic recovery. Your transcript, repository context, approvals, and worktree
-stay attached to the same task instead of getting lost in a new chat or a copied
-prompt.
+Perpetual brings Claude Code and Codex into one VS Code workbench. When an
+account reaches its usage limit, it automatically continues the task with the
+next ready account, including switching between Claude and Codex.
 
-![Perpetual workbench preview](media/PerpetualDemoImage.png)
+Your task history, project context, and code changes carry over. You can leave
+a task running instead of watching the quota and moving the work by hand.
 
-![Perpetual session budget](media/PerpetualBudgetImage.png)
+![A task continues from Codex to Claude in the Perpetual workbench, with the same conversation and changed files](media/marketplace-workbench.png)
 
-## Why install Perpetual?
+*The VS Code extension with an example task and accounts. Codex reaches its
+limit, Claude continues the work, and the result stays in the same conversation.*
 
-### Switch providers when limits hit
+## Use the accounts you already have
 
-When Claude Code or Codex reaches a usage limit, Perpetual can pause the active
-run and continue the same task on the other ready provider. The task keeps its
-context, repository state, queued turns, and transcript.
+Connect your Claude and Codex accounts once, then put them in the order you
+want Perpetual to use. It tracks each account separately and skips accounts
+that are at their limit.
 
-### Resume automatically when access returns
+- **Continue on another account.** The next ready account picks up the task
+  automatically.
+- **Wait for a reset.** If every account is at its limit, Perpetual waits for
+  the earliest known reset and resumes when access returns.
+- **Return to your preferred provider.** Choose whether to switch back when
+  it becomes available again.
 
-If neither provider is ready, Perpetual can wait for the relevant limit reset
-and resume the task automatically. When the original provider recovers, it can
-switch back according to your settings.
+You control automatic switching and resuming in **Settings → Models & limits**.
+One signed-in provider is enough to get started. Add more accounts or both
+providers to give a task more places to continue.
 
-Save a separate model and reasoning profile for each provider. A switch can,
-for example, move directly to GPT-6 Astra at low effort, GPT-5.6 Sol at medium,
-or Claude Fable 5.1 at high effort without inheriting an incompatible choice.
-Perpetual reads the installed Codex catalog live and keeps Claude's
-latest-tracking aliases alongside exact model versions.
+![Perpetual account settings showing separate Codex and Claude accounts, usage remaining, and active, ready, and limited states](media/marketplace-accounts.png)
 
-### Rotate across your paid accounts
+*Example accounts in the extension’s VS Code settings panel. Each account has its own
+sign-in, usage state, and place in the rotation.*
 
-Sign into multiple Codex and Claude accounts, put them in your preferred order,
-and let Perpetual continue the same task on the next ready account when one
-reaches its limit. Context, repository state, queued turns, and the transcript
-stay attached throughout the switch. If every account is exhausted, Perpetual
-waits for the earliest reset and resumes automatically. Authentication remains
-isolated per account. Earned Codex reset credits are off by default and require
-explicit confirmation for each account; Claude paid extra usage is never
-enabled by Perpetual.
+## One task, from the first request to the final diff
 
-Provider-owned plugins and MCP servers work from the selected account profile.
-Expand a signed-in account and choose **Open CLI** to manage them with the
-provider's own commands.
+Each task keeps its conversation, files, and follow-up requests together.
+The transcript shows where switches happened. When the work is ready, you can
+review the changes in the same workbench.
 
-### Keep transitions reviewable
-
-Every task has durable transcripts, checkpoints, managed worktrees, diffs, and
-approval state. Changes return as a reviewable local result instead of silently
-replacing your checkout.
-
-### Budget each task or session
-
-Set a budget for every task from the composer gauge. Choose no limit, a token
-target, or a percentage of your provider's weekly limit. Perpetual counts
-follow-up turns, wraps up near the target, and pauses cleanly instead of
-draining your quota.
-
-## More than a provider switcher
-
-- One workbench for Claude Code and Codex.
-- Persistent sessions with queued follow-up turns and resumable history.
-- Isolated Git worktrees for safer repository-aware agent runs.
-- Read-only, workspace-write, autonomous, and Codex approval modes.
-- Local model fallback through Ollama or LM Studio.
-- Optional Docker Sandbox execution for Codex.
-- Local project selection, diffs, and change review.
+- **Persistent conversations.** Come back to an existing task or queue another
+  request while the agent is working.
+- **Changes you can review.** Inspect diffs and use managed Git worktrees to
+  keep agent edits separate from your checkout.
+- **Permissions you choose.** Use read-only, workspace write, or full access.
+  Approve actions in the workbench when a run needs your permission.
+- **Separate model choices.** Save a model and reasoning level for each provider
+  so a switch uses the settings you want.
+- **Task budgets.** Set a token target, or a percentage of weekly usage for
+  Codex, to have a task wrap up near your target and pause.
 
 ## Get started
 
-Install Perpetual from the Marketplace, then open the Perpetual view in VS
-Code. Install and authenticate at least one supported provider:
+1. Install **Perpetual for VS Code** and open a trusted workspace.
+2. Install and sign into [Claude Code](https://code.claude.com/docs/en/setup),
+   [Codex CLI](https://developers.openai.com/codex/cli), or both.
+3. Open the Perpetual icon in the Activity Bar, or run
+   **Perpetual: Open Perpetual Panel** from the Command Palette.
+4. Check your accounts and switching preferences in Settings, choose your
+   permissions, and give the agent a task.
 
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview)
-- [Codex](https://github.com/openai/codex)
+Perpetual uses your existing provider access. Accounts you add have separate
+credentials and session history. Codex reset credits are off by default, and
+Perpetual does not enable Claude paid extra usage.
 
-To use provider switching, install and authenticate both. Select a local project
-folder to get started.
-
-Perpetual is designed for trusted workspaces. Review the permission settings
-before enabling autonomous execution.
-
-## Learn more
-
-See the [full documentation and development guide](https://github.com/SakethSripada/Perpetual/blob/main/README.md), or visit the
-[security policy](https://github.com/SakethSripada/Perpetual/blob/main/SECURITY.md)
-and [support guide](https://github.com/SakethSripada/Perpetual/blob/main/SUPPORT.md).
+[Documentation](https://github.com/SakethSripada/Perpetual/blob/main/README.md)
+· [Report an issue](https://github.com/SakethSripada/Perpetual/issues)
+· [Support](https://github.com/SakethSripada/Perpetual/blob/main/SUPPORT.md)
+· [Source code](https://github.com/SakethSripada/Perpetual)
