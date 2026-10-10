@@ -45,9 +45,13 @@ impl ClaudeAdapter {
 
     async fn launch(
         &self,
-        spec: SessionSpec,
+        mut spec: SessionSpec,
         resume: Option<SessionRef>,
     ) -> Result<SessionHandle, AgentError> {
+        crate::attachments::unpack(&spec.prompt)?;
+        if !matches!(spec.runtime, crate::SessionRuntime::Host { .. }) {
+            spec.prompt = crate::attachments::unpack(&spec.prompt)?.0;
+        }
         let args = build_args(&spec, resume.as_ref());
         let envs = policy_env(&spec);
         tracing::debug!(?args, worktree = ?spec.worktree, "launching claude");
@@ -216,7 +220,9 @@ fn budgeted_host_run(spec: &SessionSpec) -> bool {
 }
 
 fn stream_input(spec: &SessionSpec) -> bool {
-    budgeted_host_run(spec)
+    (spec.prompt.contains("<perpetual-attachments>")
+        && matches!(spec.runtime, crate::SessionRuntime::Host { .. }))
+        || budgeted_host_run(spec)
         || (spec.approver.is_some() && matches!(spec.runtime, crate::SessionRuntime::Host { .. }))
 }
 
@@ -225,7 +231,7 @@ fn stream_user_line(text: &str) -> String {
         "type": "user",
         "message": {
             "role": "user",
-            "content": [{ "type": "text", "text": text }]
+            "content": crate::attachments::claude_content(text)
         }
     })
     .to_string()

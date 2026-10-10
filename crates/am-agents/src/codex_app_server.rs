@@ -413,7 +413,7 @@ fn thread_resume_params(spec: &SessionSpec, thread_id: &str) -> Value {
 fn turn_start_params(spec: &SessionSpec, thread_id: &str) -> Value {
     let mut params = json!({
         "threadId": thread_id,
-        "input": [{ "type": "text", "text": spec.prompt }],
+        "input": crate::attachments::codex_input(&spec.prompt),
         "approvalPolicy": approval_policy(spec.permission),
     });
     if let Some(effort) = spec

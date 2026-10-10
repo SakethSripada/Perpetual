@@ -31,6 +31,7 @@ mod network;
 mod process;
 mod runtime;
 
+pub mod attachments;
 pub mod claude;
 pub mod cloud;
 pub mod codex;

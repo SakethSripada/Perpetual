@@ -43,7 +43,7 @@ impl CodexAdapter {
 
     async fn launch(
         &self,
-        spec: SessionSpec,
+        mut spec: SessionSpec,
         resume: Option<SessionRef>,
     ) -> Result<SessionHandle, AgentError> {
         // Host runs use app-server for both approvals and structured user-input
@@ -73,7 +73,19 @@ impl CodexAdapter {
             }
         }
 
-        let args = build_args(&spec, resume.as_ref());
+        let (plain, attachments) = crate::attachments::unpack(&spec.prompt)?;
+        spec.prompt = plain;
+        let mut args = build_args(&spec, resume.as_ref());
+        let prompt_index = args.len().saturating_sub(1);
+        let mut image_args = Vec::new();
+        for file in attachments {
+            if crate::attachments::native_image(&file.mime) {
+                if let Some(path) = file.path {
+                    image_args.extend(["--image".to_string(), path]);
+                }
+            }
+        }
+        args.splice(prompt_index..prompt_index, image_args);
         let envs = session_env(&spec);
         tracing::debug!(?args, worktree = ?spec.worktree, "launching codex");
 
