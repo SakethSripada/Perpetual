@@ -189,7 +189,14 @@ fn build_args(spec: &SessionSpec, resume: Option<&SessionRef>) -> Vec<String> {
             );
         }
         PermissionPolicy::Autonomous => {
+            args.push("--permission-mode".into());
+            args.push("bypassPermissions".into());
             args.push("--dangerously-skip-permissions".into());
+            // Skipping approval prompts does not disable Claude's Bash sandbox.
+            // Full access must override inherited user/project sandbox settings
+            // for this invocation, including when resuming a saved session.
+            args.push("--settings".into());
+            args.push(json!({"sandbox": {"enabled": false}}).to_string());
         }
     }
     if let Some(model) = normalize_model(spec.model.as_deref()) {
@@ -966,6 +973,61 @@ mod tests {
         let args = build_args(&spec, None);
         assert!(!args.iter().any(|arg| arg == "--model" || arg == "gpt-5.5"));
         assert!(args.windows(2).any(|pair| pair == ["--effort", "minimal"]));
+    }
+
+    #[test]
+    fn full_access_disables_inherited_sandbox_for_start_and_resume() {
+        let spec = SessionSpec {
+            worktree: "/tmp/worktree".into(),
+            prompt: "Do it".into(),
+            model: None,
+            reasoning: None,
+            local_model: None,
+            permission: PermissionPolicy::Autonomous,
+            runtime: crate::SessionRuntime::default(),
+            policy: Some(crate::AgentPolicyRuntime {
+                denied_tools: vec!["mcp__private__*".into()],
+                ..Default::default()
+            }),
+            approver: None,
+        };
+        let prior = SessionRef {
+            agent_session_id: "existing".into(),
+        };
+        for resume in [None, Some(&prior)] {
+            let args = build_args(&spec, resume);
+            assert!(args
+                .windows(2)
+                .any(|p| p == ["--permission-mode", "bypassPermissions"]));
+            assert!(args.iter().any(|a| a == "--dangerously-skip-permissions"));
+            let settings = args.windows(2).find(|p| p[0] == "--settings").unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(&settings[1]).unwrap(),
+                json!({"sandbox": {"enabled": false}})
+            );
+            assert!(args
+                .windows(2)
+                .any(|p| p == ["--disallowedTools", "mcp__private__*"]));
+            assert!(!args.iter().any(|a| a == "--permission-prompt-tool"));
+            assert_eq!(
+                args.windows(2).any(|p| p == ["--resume", "existing"]),
+                resume.is_some()
+            );
+        }
+        for permission in [
+            PermissionPolicy::ReadOnly,
+            PermissionPolicy::WorkspaceWrite,
+            PermissionPolicy::Ask,
+        ] {
+            let restricted = SessionSpec {
+                permission,
+                ..spec.clone()
+            };
+            let args = build_args(&restricted, Some(&prior));
+            assert!(!args.iter().any(|a| a == "--settings"
+                || a == "--dangerously-skip-permissions"
+                || a == "bypassPermissions"));
+        }
     }
 
     #[test]

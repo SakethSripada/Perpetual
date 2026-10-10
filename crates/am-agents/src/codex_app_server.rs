@@ -378,8 +378,8 @@ async fn run_turn(
 fn approval_policy(permission: PermissionPolicy) -> &'static str {
     match permission {
         PermissionPolicy::Ask => "untrusted",
-        PermissionPolicy::ReadOnly => "never",
-        _ => "on-request",
+        PermissionPolicy::ReadOnly | PermissionPolicy::Autonomous => "never",
+        PermissionPolicy::WorkspaceWrite => "on-request",
     }
 }
 
@@ -387,10 +387,10 @@ fn thread_start_params(spec: &SessionSpec) -> Value {
     let mut params = json!({
         "cwd": spec.worktree.to_string_lossy(),
         "approvalPolicy": approval_policy(spec.permission),
-        "sandbox": if spec.permission == PermissionPolicy::ReadOnly {
-            "read-only"
-        } else {
-            "workspace-write"
+        "sandbox": match spec.permission {
+            PermissionPolicy::ReadOnly => "read-only",
+            PermissionPolicy::Autonomous => "danger-full-access",
+            PermissionPolicy::WorkspaceWrite | PermissionPolicy::Ask => "workspace-write",
         },
     });
     if let Some(model) = spec
@@ -410,11 +410,26 @@ fn thread_resume_params(spec: &SessionSpec, thread_id: &str) -> Value {
     params
 }
 
+// A resumed thread can retain its previous sandbox. Override it on every turn
+// as well as thread/start and thread/resume, using the v2 wire policy shape.
+fn turn_sandbox_policy(spec: &SessionSpec) -> Value {
+    match spec.permission {
+        PermissionPolicy::ReadOnly => json!({"type": "readOnly"}),
+        PermissionPolicy::Autonomous => json!({"type": "dangerFullAccess"}),
+        PermissionPolicy::WorkspaceWrite | PermissionPolicy::Ask => json!({
+            "type": "workspaceWrite",
+            "writableRoots": [spec.worktree.to_string_lossy()],
+            "networkAccess": false,
+        }),
+    }
+}
+
 fn turn_start_params(spec: &SessionSpec, thread_id: &str) -> Value {
     let mut params = json!({
         "threadId": thread_id,
         "input": crate::attachments::codex_input(&spec.prompt),
         "approvalPolicy": approval_policy(spec.permission),
+        "sandboxPolicy": turn_sandbox_policy(spec),
     });
     if let Some(effort) = spec
         .reasoning
@@ -1276,6 +1291,57 @@ mod tests {
             approval_policy(PermissionPolicy::WorkspaceWrite),
             "on-request"
         );
+    }
+
+    #[test]
+    fn permission_modes_apply_to_new_resumed_and_followup_turns() {
+        for (permission, sandbox, wire_type, approval) in [
+            (PermissionPolicy::ReadOnly, "read-only", "readOnly", "never"),
+            (
+                PermissionPolicy::WorkspaceWrite,
+                "workspace-write",
+                "workspaceWrite",
+                "on-request",
+            ),
+            (
+                PermissionPolicy::Ask,
+                "workspace-write",
+                "workspaceWrite",
+                "untrusted",
+            ),
+            (
+                PermissionPolicy::Autonomous,
+                "danger-full-access",
+                "dangerFullAccess",
+                "never",
+            ),
+        ] {
+            let spec = SessionSpec {
+                worktree: "/tmp/wt".into(),
+                prompt: "go".into(),
+                model: None,
+                reasoning: None,
+                local_model: None,
+                permission,
+                runtime: crate::SessionRuntime::default(),
+                policy: None,
+                approver: None,
+            };
+            for params in [
+                thread_start_params(&spec),
+                thread_resume_params(&spec, "existing"),
+            ] {
+                assert_eq!(params["sandbox"], sandbox);
+                assert_eq!(params["approvalPolicy"], approval);
+            }
+            let turn = turn_start_params(&spec, "existing");
+            assert_eq!(turn["sandboxPolicy"]["type"], wire_type);
+            assert_eq!(turn["approvalPolicy"], approval);
+            if sandbox == "workspace-write" {
+                assert_eq!(turn["sandboxPolicy"]["writableRoots"], json!(["/tmp/wt"]));
+                assert_eq!(turn["sandboxPolicy"]["networkAccess"], false);
+            }
+        }
     }
 
     #[test]

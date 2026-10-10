@@ -405,6 +405,13 @@ export default function App() {
     navThreadId !== undefined &&
     navThreadId !== null &&
     navThreadId !== (snapshot?.selectedThreadId ?? null);
+  // Permission choices must survive unrelated model/provider/budget refreshes.
+  // Only navigation or a changed stored permission should reset this control.
+  useEffect(() => {
+    if (!snapshot) return;
+    setPermission(selectedThread?.permission ?? snapshot.defaults.permission);
+  }, [effectiveSelectedId, selectedThread?.permission, snapshot?.defaults.permission]);
+
   useEffect(() => {
     if (!snapshot) return;
     const nextAgent =
@@ -451,7 +458,6 @@ export default function App() {
     if (runControlsKeyRef.current !== runControlsKey) {
       runControlsKeyRef.current = runControlsKey;
       setAgent(nextAgent);
-      setPermission(nextPermission);
       setBackend(nextBackend);
       setModel(nextModel);
       setReasoning(nextReasoning);
