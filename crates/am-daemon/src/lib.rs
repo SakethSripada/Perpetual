@@ -10,6 +10,7 @@
 //! authenticated with a shared token and bound to `127.0.0.1` only.
 
 mod client;
+pub mod endpoint;
 pub mod power;
 pub mod protocol;
 mod server;
@@ -35,25 +36,39 @@ where
     writer.write_all(&buf).await
 }
 
-/// Generate a random 32-hex-character session token without pulling in a crypto
-/// dependency: seed from the system clock and thread id and expand with a
-/// SplitMix64 PRNG. Sufficient to gate a localhost-only socket.
+/// Generate a fresh 256-bit bearer token as 64 lowercase hex characters.
+///
+/// The token comes exclusively from the operating system's CSPRNG. If the OS
+/// randomness source is unavailable we fail hard rather than falling back to a
+/// predictable seed (wall-clock time, PID, or a non-cryptographic PRNG), since
+/// the token gates every authenticated RPC on the daemon socket.
 pub fn generate_token() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let mut seed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0)
-        ^ (std::process::id() as u64).rotate_left(17);
-    let mut out = String::with_capacity(32);
-    for _ in 0..4 {
-        // SplitMix64 step.
-        seed = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = seed;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^= z >> 31;
-        out.push_str(&format!("{z:016x}"));
+    use std::fmt::Write as _;
+
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes)
+        .expect("secure OS randomness is required for daemon authentication");
+
+    let mut token = String::with_capacity(64);
+    for byte in bytes {
+        write!(&mut token, "{byte:02x}").expect("formatting into a String cannot fail");
     }
-    out
+    token
+}
+
+#[cfg(test)]
+mod security_tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn generated_tokens_have_expected_format_and_no_duplicates() {
+        let tokens: HashSet<_> = (0..1_000).map(|_| generate_token()).collect();
+        assert_eq!(tokens.len(), 1_000);
+        assert!(tokens.iter().all(|s| {
+            s.len() == 64
+                && s.bytes()
+                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        }));
+    }
 }

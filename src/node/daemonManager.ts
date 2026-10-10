@@ -248,7 +248,7 @@ export class DaemonManager implements vscode.Disposable {
     const dataDir = path.join(this.context.globalStorageUri.fsPath, "daemon-data");
     const endpointPath = path.join(dataDir, "daemon.json");
 
-    fs.mkdirSync(dataDir, { recursive: true });
+    prepareDaemonDataDir(dataDir);
     fs.rmSync(endpointPath, { force: true });
     this.daemonErrorTail = [];
 
@@ -575,6 +575,29 @@ function summarizeDaemonLine(line: string): string {
     .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]+/g, "$1[redacted]");
   if (redacted.length <= 500) return redacted;
   return `${redacted.slice(0, 500)} ... [truncated]`;
+}
+
+function prepareDaemonDataDir(dataDir: string): void {
+  // The daemon enforces private directory ownership and permissions at startup
+  // and fails closed if it cannot. Mirror the cheap, portable checks here so the
+  // extension does not spawn the daemon into a pre-existing unsafe location.
+  let stat: fs.Stats | null = null;
+  try {
+    stat = fs.lstatSync(dataDir);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+  if (stat) {
+    if (stat.isSymbolicLink()) {
+      throw new Error(`Refusing to start daemon: data directory is a symbolic link: ${dataDir}`);
+    }
+    if (!stat.isDirectory()) {
+      throw new Error(`Refusing to start daemon: data directory is not a directory: ${dataDir}`);
+    }
+  }
+  // mode: 0o700 restricts newly created directories; the daemon re-validates
+  // and restricts an already-existing directory (after its ownership check).
+  fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
 }
 
 export function currentTarget(platform = process.platform, arch = process.arch): string {

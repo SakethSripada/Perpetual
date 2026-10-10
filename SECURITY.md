@@ -41,6 +41,52 @@ selected Claude child process; token values are redacted from Rust debug output
 and never returned in account-status responses. Removing a saved slot deletes
 its isolated directory, limit state, and vault entry after confirmation.
 
+## Local data storage and privacy
+
+Perpetual stores session transcripts, task metadata, and other workspace
+history **locally** on your machine, in the daemon's data directory under VS
+Code's extension storage (or `~/.perpetual` when the daemon is run directly).
+This data is written as SQLite records and is **not** encrypted at rest by the
+application; do not assume application-level encryption of transcripts,
+search indexes, or backups.
+
+The daemon data directory and its discovery endpoint are created with
+restrictive OS permissions/ACLs (owner-only on macOS/Linux; a current-user
+private ACL on Windows) so that other local users cannot read the bearer token
+or transcripts. These protections do **not** cover:
+
+- backups, snapshots, or full-disk access to the data directory, and
+- other software already running as your OS user, which is outside the daemon's
+  trust boundary.
+
+The localhost loopback authentication on the daemon socket prevents other
+machines and other OS users from driving the agent, but it is **not** a
+boundary against malicious software already running under the same account.
+Review what you run locally, and treat the data directory as sensitive.
+
+## Agent autonomy
+
+`autonomous` permission is an **intentional high-trust option**. When selected,
+it may cause the configured provider to run commands without the usual approval
+or sandbox prompts. It must never silently become the default, and provider
+fallback/switch behavior must not escalate a session to `autonomous` without
+your explicit approval. Prefer `workspace_write` (the default) or `read_only`
+unless you fully trust the repository and the instructions you are giving the
+agent.
+
+Do not paste credentials, API keys, or private source into prompts, issues, or
+logs. An agent with authorized workspace access may read sensitive files in
+that workspace; connect only repositories you trust it to read.
+
+## Release provenance
+
+The extension may download or bundle a native daemon binary. Presence of the
+bundled binary (the `check-daemon` packaging check) verifies that the file is
+present, not that it was built from the published source. Until a
+release-provenance mechanism (build-from-commit in trusted CI, per-artifact
+hashes, and signed attestations) is in place, do not assume binary-to-source
+equivalence for bundled daemon artifacts.
+
 ## Release audit
 
 Run both `npm audit --omit=dev --audit-level=high` and `npm run audit:rust`
