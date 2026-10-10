@@ -3990,3 +3990,18 @@ textarea {
     font-size: 9px;
   }
 }
+
+.composer textarea { font-family: var(--vscode-font-family, sans-serif); font-size: 14px; line-height: 20px; caret-color: var(--vscode-input-foreground, var(--vscode-foreground)); }
+.stream-content.is-streaming > :last-child::after { height: 14px; max-height: 14px; }
+.message-actions { display: flex; gap: 4px; justify-content: flex-end; margin-top: 4px; }
+.message-actions .message-edit-btn { opacity: .75; margin: 0; }
+.attachment-strip { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 16px 0; font-size: 12px; }
+.attachment-strip button { background: transparent; color: var(--am-muted); border: 0; cursor: pointer; }
+.attachment-chip { display: flex; align-items: center; gap: 6px; max-width: 180px; padding: 4px 6px; border-radius: 6px; background: var(--am-surface); }
+.attachment-chip > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.attachment-chip img { width: 32px; height: 32px; object-fit: cover; border-radius: 4px; }
+.session-copy strong { max-width: 36ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.sent-attachment { display: flex; flex-direction: column; gap: 4px; max-width: 220px; font-size: 12px; }
+.sent-attachment img { max-height: 160px; max-width: 220px; border-radius: 8px; object-fit: contain; }
+.sent-attachment > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

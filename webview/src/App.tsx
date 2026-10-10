@@ -1,3 +1,4 @@
+import { packMessage, unpackMessage, displayMessage, readAttachments, attachmentBytes, MAX_BYTES, type Attachment } from './attachments';
 import {
   Fragment,
   memo,
@@ -172,6 +173,7 @@ export default function App() {
   const [submitting, setSubmitting] = useState(false);
   const [recoveryDraft, setRecoveryDraft] = useState<{ text: string; nonce: number } | null>(null);
   const [showLatest, setShowLatest] = useState(false);
+  const [editingEventId, setEditingEventId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<{ text: string; nonce: number } | null>(null);
   const [answeredQuestionEvents, setAnsweredQuestionEvents] = useState<Set<string>>(
     () => new Set(),
@@ -234,6 +236,15 @@ export default function App() {
         setPending((current) => current.filter((item) => item.id !== incoming.clientMessageId));
         const selected = snapshotRef.current?.selectedThreadId;
         if (!incoming.threadId || selected === incoming.threadId) setRecoveryDraft({ text: incoming.text, nonce: Date.now() });
+        return;
+      }
+      if (incoming.type === "transcriptReset") {
+        stream.flush();
+        const current = snapshotRef.current;
+        if (current?.selectedThreadId === incoming.threadId && current.details) {
+          const next = { ...current, details: { ...current.details, events: [] } };
+          snapshotRef.current = next; setSnapshot(next);
+        }
         return;
       }
       if (incoming.type === "threadEvent") {
@@ -378,6 +389,7 @@ export default function App() {
       null,
     [snapshot, effectiveSelectedId],
   );
+  useEffect(() => { setEditingEventId(null); }, [selectedThread?.id]);
   const activeCollaborationAssignment = useMemo(
     () =>
       snapshot?.collaboration.assignments.find(
@@ -823,6 +835,7 @@ export default function App() {
       type: "submit",
       message,
       clientMessageId,
+      editEventId: editingEventId,
       threadId: selectedThread?.id ?? null,
       repoIds: validRepoIds,
       agent,
@@ -834,7 +847,7 @@ export default function App() {
       localBaseUrl: submittedLocalProvider ? localBaseUrl.trim() || null : null,
       taskBudget,
       deviceId: executionDeviceId,
-    }).catch((error) => {
+    }).then(() => setEditingEventId(null)).catch((error) => {
       setNotice(error instanceof Error ? error.message : String(error), true);
       setPending((current) => current.filter((item) => item.id !== clientMessageId));
       setRecoveryDraft({ text, nonce: Date.now() });
@@ -1067,11 +1080,14 @@ export default function App() {
                 }
                 onEdit={
                   item.type === "event" && item.event.role === "user"
-                    ? () =>
+                    ? () => {
+                        if (isRunning) { setNotice("Stop the task before editing a message."); return; }
+                        setEditingEventId(item.event.id);
                         setEditDraft({
                           text: item.event.text ?? "",
                           nonce: Date.now(),
-                        })
+                        });
+                      }
                     : undefined
                 }
                 questionAnswered={
@@ -1149,6 +1165,8 @@ export default function App() {
         activeCollaborationAssignment={activeCollaborationAssignment}
         onSend={send}
         editDraft={editDraft}
+        editing={!!editingEventId}
+        onCancelEdit={() => { setEditingEventId(null); setEditDraft({text: '', nonce: Date.now()}); }}
         onEditDraftConsumed={() => setEditDraft(null)}
         onStop={() =>
           selectedThread &&
@@ -1376,7 +1394,7 @@ function TranscriptItemView({
         </span>
         <div className="activity-main">
           <div className="activity-title">
-            <span>Queued: {item.message}</span>
+            <span>Queued: {displayMessage(item.message)}</span>
           </div>
         </div>
       </article>
@@ -1385,7 +1403,7 @@ function TranscriptItemView({
   if (item.type === "pending") {
     return (
       <article className={`msg user pending${item.firstTurn ? " first-turn" : ""}`}>
-        <div className="msg-body">{item.text}</div>
+        <div className="msg-body">{displayMessage(item.text)}</div>
       </article>
     );
   }
@@ -1508,23 +1526,30 @@ const MessageView = memo(function MessageView({
               active={streaming}
             />
           ) : (
-            <Markdown text={event.text} />
+            <><Markdown text={unpackMessage(event.text).text} />
+              <div className="attachment-strip">{unpackMessage(event.text).attachments.map((file, i) => <span key={i} className="sent-attachment">
+                {file.mime.startsWith('image/') && <img src={`data:${file.mime};base64,${file.data}`} alt={file.name} />}
+                <span title={file.name}>📎 {file.name}</span>
+              </span>)}</div></>
           )
         ) : (
           humanize(event.kind)
         )}
       </div>
+      {event.text && <div className="message-actions">
+        <button type="button" className="message-edit-btn" onClick={() => { void navigator.clipboard.writeText(displayMessage(event.text || '')).catch(() => {}); }}>Copy</button>
       {event.role === "user" && onEdit && (
         <button
           type="button"
           className="message-edit-btn"
-          title="Edit and resend as a new turn"
+          title="Edit and resend message"
           aria-label="Edit and resend message"
           onClick={onEdit}
         >
           Edit
         </button>
       )}
+      </div>}
     </article>
   );
 });
@@ -2267,6 +2292,8 @@ type ComposerProps = {
   executionDeviceId: string | null;
   setExecutionDeviceId(value: string | null): void;
   activeCollaborationAssignment: CollaborationAssignment | null;
+  editing: boolean;
+  onCancelEdit(): void;
   onSend(text: string): boolean;
   editDraft: { text: string; nonce: number } | null;
   onEditDraftConsumed(): void;
@@ -2292,6 +2319,22 @@ function Composer(props: ComposerProps) {
   // The draft lives here, not in App, so each keystroke re-renders only the
   // composer — never the transcript. App receives the text only on submit.
   const [draft, setDraft] = useState("");
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [reading, setReading] = useState(false);
+  const picker = useRef<HTMLInputElement>(null);
+  const beforeEdit = useRef<{text: string; attachments: Attachment[]} | null>(null);
+  const addFiles = async (files: File[]) => {
+    if (!files.length || reading || props.submitting) return;
+    setReading(true);
+    try {
+      const added = await readAttachments(files);
+      setAttachments(old => {
+        if (old.length + added.length > 10 || attachmentBytes([...old, ...added]) > MAX_BYTES) { props.onNotice('Attach up to 10 files totaling 20 MB.'); return old; }
+        return [...old, ...added];
+      });
+    } catch (error) { props.onNotice(String(error)); }
+    finally { setReading(false); }
+  };
   const [selectionStart, setSelectionStart] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   useLayoutEffect(() => { if (textareaRef.current) autoGrow(textareaRef.current); }, [draft]);
@@ -2305,10 +2348,13 @@ function Composer(props: ComposerProps) {
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
-  useEffect(() => { if (props.recoveryDraft && !draft.trim()) { setDraft(props.recoveryDraft.text); props.onRecoveryConsumed(); requestAnimationFrame(() => { if (textareaRef.current) { textareaRef.current.focus(); autoGrow(textareaRef.current); } }); } }, [props.recoveryDraft?.nonce]);
+  useEffect(() => { if (props.recoveryDraft && !draft.trim()) { const restored = unpackMessage(props.recoveryDraft.text); setDraft(restored.text); setAttachments(restored.attachments); props.onRecoveryConsumed(); requestAnimationFrame(() => { if (textareaRef.current) { textareaRef.current.focus(); autoGrow(textareaRef.current); } }); } }, [props.recoveryDraft?.nonce]);
   useEffect(() => {
     if (!props.editDraft) return;
-    setDraft(props.editDraft.text);
+    if (props.editing && !beforeEdit.current) beforeEdit.current = {text: draft, attachments};
+    const restored = unpackMessage(props.editDraft.text);
+    setDraft(restored.text);
+    setAttachments(restored.attachments);
     setSelectionStart(props.editDraft.text.length);
     props.onEditDraftConsumed();
     requestAnimationFrame(() => {
@@ -2319,6 +2365,12 @@ function Composer(props: ComposerProps) {
       autoGrow(el);
     });
   }, [props.editDraft?.nonce]);
+  useEffect(() => {
+    if (!props.editing && beforeEdit.current) {
+      setDraft(beforeEdit.current.text); setAttachments(beforeEdit.current.attachments);
+      beforeEdit.current = null;
+    }
+  }, [props.editing]);
   const localOn = !!props.localProvider;
   const localAllowed = props.agent === "codex";
   const sandboxAllowed = props.agent === "codex";
@@ -2340,7 +2392,7 @@ function Composer(props: ComposerProps) {
     draftCommand !== null && draftCommand.kind !== "run";
   const canSend =
     !props.submitting &&
-    !!draft.trim() &&
+    !reading && (!!draft.trim() || !!attachments.length) &&
     (isAppOnlyCommand ||
       (!!props.snapshot?.trusted &&
         resourceState(props.snapshot, "threads") === "ready" && props.snapshot.loadState !== "error" &&
@@ -2362,11 +2414,12 @@ function Composer(props: ComposerProps) {
   // While the agent is running and the composer is empty, the action button
   // turns into a Stop control (matching Claude Code / Codex). Typing turns it
   // back into a send/queue button.
-  const stopMode = props.isRunning && !draft.trim();
+  const stopMode = props.isRunning && !draft.trim() && !attachments.length;
   const submit = () => {
     if (!canSend || props.submitting) return;
-    if (!props.onSend(draft)) return;
+    if (!props.onSend(packMessage(draft, attachments))) return;
     setDraft("");
+    setAttachments([]);
     const el = textareaRef.current;
     if (el) el.style.height = "auto";
   };
@@ -2438,7 +2491,20 @@ function Composer(props: ComposerProps) {
             ))}
           </div>
         )}
+        {props.editing && <div className="attachment-strip">Editing message · later replies will be replaced<button type="button" disabled={reading || props.submitting} onClick={props.onCancelEdit}>Cancel</button></div>}
+        <input type="file" multiple hidden ref={picker} onChange={e => { void addFiles(Array.from(e.target.files || [])); e.target.value = ''; }} />
+        <div className="attachment-strip">
+          <button type="button" aria-label="Attach files" title="Attach images, PDFs, or files" disabled={reading || props.submitting} onClick={() => picker.current?.click()}>＋ Attach</button>
+          {attachments.map(a => <span className="attachment-chip" key={a.id}>
+            {a.mime.startsWith('image/') && <img src={`data:${a.mime};base64,${a.data}`} alt="" />}
+            <span title={a.name}>{a.name}</span><button type="button" aria-label={`Remove ${a.name}`} onClick={() => setAttachments(old => old.filter(f => f.id !== a.id))}>×</button>
+          </span>)}
+          {reading && <span>Reading files…</span>}
+        </div>
         <textarea
+          onPaste={e => { const files = Array.from(e.clipboardData.files); if (files.length) { e.preventDefault(); void addFiles(files); } }}
+          onDragOver={e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); }}
+          onDrop={e => { if (e.dataTransfer.files.length) { e.preventDefault(); void addFiles(Array.from(e.dataTransfer.files)); } }}
           ref={textareaRef}
           value={draft}
           placeholder={
