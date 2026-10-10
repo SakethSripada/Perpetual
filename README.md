@@ -5,9 +5,9 @@ Claude Code and Codex sessions without leaving your editor. It gives each task
 a persistent workbench, repository context, explicit execution controls,
 reviewable changes, durable transcripts, and automatic account rotation.
 
-![Perpetual workbench preview](media/PerpetualDemoImage.png)
+![Perpetual workbench with a task continuing from Codex to Claude](media/marketplace-workbench.png)
 
-![Perpetual session budget](media/PerpetualBudgetImage.png)
+![Perpetual account settings and usage states](media/marketplace-accounts.png)
 
 ## Keep your work moving
 

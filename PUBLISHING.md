@@ -76,6 +76,19 @@ raw `src/`, `webview/src/`, `crates/`, `target/`, or any local data or tokens.
 - Badges, if added, must come from a trusted provider.
 - At most 30 keywords.
 
+## Updating the Marketplace screenshots
+
+Run `npm run preview:webview`, then open
+`http://127.0.0.1:5178/preview.html?marketplace`. Select **Add CSV export** to
+see the example provider switch, or open **Settings → Accounts** for the
+account view. This fixture uses the current webview components with fictional
+task and account data; it makes no provider calls.
+
+Capture the workbench and account view at a readable size and replace
+`media/marketplace-workbench.png` and `media/marketplace-accounts.png`.
+Keep the example-data captions in `README.marketplace.md` and check a local
+VSIX to confirm the README and both images are included before publishing.
+
 ## References
 
 - Publishing: https://code.visualstudio.com/api/working-with-extensions/publishing-extension

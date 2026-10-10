@@ -1,5 +1,5 @@
 /** Local fixture for visual QA. Never imported by the extension entry point. */
-import type { WorkbenchSnapshot, ProviderAccountStatus, AgentThread, ExtensionMessage } from "./src/types";
+import type { WorkbenchSnapshot, ProviderAccountStatus, AgentThread, AgentThreadEvent, ExtensionMessage } from "./src/types";
 const params = new URLSearchParams(location.search);
 const light = params.get("theme") === "light";
 document.body.className = light ? "vscode-light" : "vscode-dark";
@@ -48,6 +48,26 @@ if (params.has("more-models")) {
 }
 if (params.has("unknown-effort")) { const claude = snapshot.modelCatalog![1]; claude.default_reasoning = null; claude.models[0].default_reasoning = null; }
 if (params.has("single-effort")) { snapshot.modelCatalog![1].models[0].reasoning = ["high"]; }
+// Stable example data for Marketplace screenshots, rendered by the real UI.
+// No provider calls or real account information are used by this fixture.
+if (params.has("marketplace")) {
+  snapshot.providerAccounts = [
+    { ...accounts[0], label: "Personal", email: "alex@example.com", plan: "pro", availability: "limited", reset_at: new Date(Date.now() + 3600000).toISOString() },
+    { ...accounts[2], label: "Claude", email: "alex@example.com", plan: "max" },
+    { ...accounts[1], label: "Work", email: "alex@acme.example", plan: "business", availability: "available", reset_at: null },
+  ];
+  snapshot.threads = [
+    { ...thread("session-one", "Add CSV export", "review"), active_agent: "claude_code", original_agent: "codex", fallback_agent: "claude_code", model: "claude-sonnet-5", reasoning: "high", provider_account_id: "system-claude_code", handoff_state: "fallback_active" },
+    thread("session-two", "Fix sign-in redirect", "waiting_for_limit"),
+    thread("session-three", "Add keyboard shortcuts", "running"),
+  ];
+  snapshot.repos = [{ ...snapshot.repos[0], name: "acme-web", local_path: "/Projects/acme-web" }];
+  snapshot.agents = snapshot.agents.map((agent) => ({ ...agent, usage: {
+    five_hour: { used_percent: agent.kind === "codex" ? 100 : 18, reset_at: new Date(Date.now() + 3600000).toISOString() },
+    weekly: { used_percent: agent.kind === "codex" ? 61 : 27, reset_at: new Date(Date.now() + 86400000 * 3).toISOString() },
+  } }));
+}
+
 const emit = (message: ExtensionMessage) => window.dispatchEvent(new MessageEvent("message", { data: message }));
 function refresh() {
   snapshot.limitPolicy!.accounts = snapshot.providerAccounts;
@@ -92,9 +112,28 @@ window.acquireVsCodeApi = () => ({ getState: () => state, setState: (next) => { 
         snapshot.details.events = snapshot.details.events.filter((event) => !['assistant-one', 'result-test'].includes(event.id));
       }
     }
+    if (params.has("marketplace") && message.type === "selectThread" && snapshot.details) {
+      const at = (seconds: number) => new Date(Date.parse(now) + seconds * 1000).toISOString();
+      const event = (id: string, role: AgentThreadEvent["role"], kind: string, text: string, seconds: number, data = {}): AgentThreadEvent => ({
+        id, thread_id: message.threadId, turn_id: "turn-one", role, kind, text, data, ts: at(seconds),
+      });
+      snapshot.details.events = [
+        event("request", "user", "message", "Add CSV export to the orders page. Include the current filters and add tests.", 0),
+        event("codex-progress", "assistant", "message", "The export action is wired up. I’m adding coverage for filters and empty results.", 2),
+        event("export-edit", "assistant", "tool_call", "Edit", 5, { call_id: "export", input: { file_path: "src/orders/export.ts" } }),
+        event("export-result", "tool", "tool_result", "Updated CSV export", 6, { call_id: "export", ok: true }),
+        event("export-file", "assistant", "file_changed", "Modified src/orders/export.ts", 7),
+        event("test-call", "assistant", "tool_call", "Bash", 8, { call_id: "tests", input: { command: "npm test" } }),
+        event("test-result", "tool", "tool_result", "42 tests passed", 9, { call_id: "tests", ok: true }),
+        event("test-file", "assistant", "file_changed", "Modified src/orders/export.test.ts", 10),
+        event("claude-result", "assistant", "message", "CSV export is ready.\n\n- Uses the selected filters.\n- Handles empty results and quoted values.\n- Added 6 tests. All 42 tests pass.\n\nChanges are ready to review.", 12),
+      ];
+      snapshot.details.activities = [{ id: "provider-switch", project_id: "project-one", task_id: null, kind: "thread.fallback_started", payload: { from: "codex", to: "claude_code" }, ts: at(4) }];
+      snapshot.details.repos = [{ repo_id: "repo-one", repo_name: "acme-web", worktree_path: "/Projects/.perpetual/worktrees/csv-export", branch: "am/csv-export", workspace_backend: "host" }] as any;
+    }
     if (message.type === "loadDiff" && snapshot.details) {
       snapshot.details.diffState = "ready";
-      snapshot.details.diff = { repos: [{ repo_id: "repo-one", repo_name: "Perpetual", remote_url: null, branch: "am/thread-preview", base_ref: "dev", head_ref: "HEAD", worktree_path: "C:/Development/Perpetual", files: [{ path: "src/accounts.tsx", additions: 2, deletions: 1 }], patch: "diff --git a/src/accounts.tsx b/src/accounts.tsx\n--- a/src/accounts.tsx\n+++ b/src/accounts.tsx\n@@ -1,2 +1,3 @@\n export function accounts() {\n-  return profiles;\n+  const identities = uniqueAccountChoices(profiles);\n+  return identities;\n" }] };
+      snapshot.details.diff = { repos: [{ repo_id: "repo-one", repo_name: "Perpetual", remote_url: null, branch: "am/thread-preview", base_ref: "dev", head_ref: "HEAD", worktree_path: "C:/Development/Perpetual", files: [{ path: "src/accounts.tsx", status: "modified", additions: 2, deletions: 1 }], patch: "diff --git a/src/accounts.tsx b/src/accounts.tsx\n--- a/src/accounts.tsx\n+++ b/src/accounts.tsx\n@@ -1,2 +1,3 @@\n export function accounts() {\n-  return profiles;\n+  const identities = uniqueAccountChoices(profiles);\n+  return identities;\n" }] };
     }
     if (message.type === "loadDiff" && snapshot.details?.diff && params.has("managed-review")) snapshot.details.diff.repos[0].worktree_path = "C:/Development/.am/worktrees/preview";
     if (message.type === "loadDiff" && snapshot.details?.diff && params.has("empty-review")) { snapshot.details.diff.repos[0].files = []; snapshot.details.diff.repos[0].patch = ""; }
