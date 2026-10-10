@@ -1064,7 +1064,6 @@ export default function App() {
             ((!selectedThread && pending.length === 0) || welcomeLeaving) && (
             <EmptyState
               exiting={welcomeLeaving}
-              onExample={(text) => setEditDraft({ text, nonce: Date.now() })}
             />
           )}
           {(selectedThread || pending.length > 0) &&
@@ -5115,11 +5114,9 @@ function CloudSetupCard(props: {
 function EmptyState({
   compact = false,
   exiting = false,
-  onExample,
 }: {
   compact?: boolean;
   exiting?: boolean;
-  onExample?(text: string): void;
 }) {
   return (
     <div
@@ -5137,20 +5134,6 @@ function EmptyState({
         <div className="welcome-copy">
           <h1>What are we building?</h1>
           <p>Start a task. Perpetual keeps it moving.</p>
-          <div className="welcome-suggestions">
-            <button type="button" onClick={() => onExample?.("Help me build a new feature in this codebase.")}>
-              <Icon name="plus" />
-              <span><strong>Build something new</strong><small>Turn an idea into working code</small></span>
-            </button>
-            <button type="button" onClick={() => onExample?.("Find a bug in this codebase, explain it, and fix it.")}>
-              <Icon name="alert" />
-              <span><strong>Find and fix a bug</strong><small>Track down the cause and test a fix</small></span>
-            </button>
-            <button type="button" onClick={() => onExample?.("Explore this codebase and explain how its main components work.")}>
-              <Icon name="search" />
-              <span><strong>Explore this codebase</strong><small>See how the pieces fit together</small></span>
-            </button>
-          </div>
         </div>
       )}
     </div>
