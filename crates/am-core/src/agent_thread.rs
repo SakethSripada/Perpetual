@@ -424,8 +424,28 @@ impl AppCore {
         message: Option<PendingThreadMessage>,
         execution_backend: Option<ExecutionBackend>,
     ) -> Result<String, CoreError> {
+        let launch = self.sessions.lock_start(thread_id).await;
+        self.run_agent_thread_inner_locked(
+            thread_id,
+            agent,
+            permission,
+            message,
+            execution_backend,
+            launch,
+        )
+        .await
+    }
+
+    async fn run_agent_thread_inner_locked(
+        &self,
+        thread_id: &str,
+        agent: AgentKind,
+        permission: PermissionPolicy,
+        message: Option<PendingThreadMessage>,
+        execution_backend: Option<ExecutionBackend>,
+        _launch: tokio::sync::OwnedMutexGuard<()>,
+    ) -> Result<String, CoreError> {
         let startup_started = std::time::Instant::now();
-        let _launch = self.sessions.lock_start(thread_id).await;
         if self.has_active_collaboration_assignment(thread_id).await? {
             return Err(CoreError::Other(
                 "This session is assigned to another device. Cancel or finish that assignment before starting a local run."
@@ -849,6 +869,9 @@ impl AppCore {
                 build_thread_initial_prompt(&thread, &thread.objective, context_files_available)
             }
         };
+        if prior.is_none() && !thread.progress.trim().is_empty() {
+            prompt = format!("Conversation history preceding the current request (context only):\n{}\n\nCurrent user request:\n{}", thread.progress, prompt);
+        }
         prompt = am_agents::attachments::prepare(&prompt, &workspace_path)
             .map_err(|e| CoreError::Other(e.to_string()))?;
         append_budget_instruction(
@@ -990,6 +1013,162 @@ impl AppCore {
             )
             .await
             .map(Some)
+        }
+    }
+
+    /// Replace this user turn and discard its replies. Start a fresh provider
+    /// session from retained conversation text, so neither provider can retain
+    /// the superseded message (including after an account/provider switch).
+    /// Files in the workspace and usage accounting are intentionally preserved.
+    pub async fn edit_thread_message(
+        &self,
+        thread_id: &str,
+        event_id: &str,
+        agent: AgentKind,
+        permission: PermissionPolicy,
+        message: String,
+        client_message_id: Option<String>,
+    ) -> Result<Option<String>, CoreError> {
+        let launch = self.sessions.lock_start(thread_id).await;
+        if message.trim().is_empty() {
+            return Err(CoreError::Other("message is empty".into()));
+        }
+        am_agents::attachments::unpack(&message).map_err(|e| CoreError::Other(e.to_string()))?;
+        if self.sessions.is_active(thread_id).await
+            || am_db::repos::cloud_run::active_for_thread(&self.db.pool, thread_id)
+                .await?
+                .is_some()
+            || !self.list_queued_turns(thread_id).await?.is_empty()
+            || am_db::repos::collaboration::list_assignments(&self.db.pool, None, true)
+                .await?
+                .iter()
+                .any(|a| a.thread_id == thread_id)
+        {
+            return Err(CoreError::Other(
+                "Stop the task and clear queued or remote work before editing.".into(),
+            ));
+        }
+        let events = self.list_thread_events(thread_id).await?;
+        let index = events
+            .iter()
+            .position(|e| e.id == event_id && e.role == "user")
+            .ok_or_else(|| {
+                CoreError::Other("This user message is no longer available to edit.".into())
+            })?;
+        let turn_id = &events[index].turn_id;
+        // A steered turn may contain multiple messages. Editing one would
+        // otherwise retain a partial provider turn; rewind the entire turn.
+        let cut = events
+            .iter()
+            .position(|e| &e.turn_id == turn_id)
+            .unwrap_or(index);
+        let mut thread = self
+            .get_agent_thread(thread_id)
+            .await?
+            .ok_or_else(|| CoreError::Other("Task not found".into()))?;
+        let original_thread = thread.clone();
+        let original_turns = self.list_thread_turns(thread_id).await?;
+        let history = events[..cut]
+            .iter()
+            .filter(|e| matches!(e.role.as_str(), "user" | "assistant"))
+            .filter_map(|e| {
+                e.text.as_ref().map(|text| {
+                    format!("{}: {}", e.role, am_agents::attachments::display_text(text))
+                })
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let mut tx = self
+            .db
+            .pool
+            .begin()
+            .await
+            .map_err(|e| CoreError::Other(e.to_string()))?;
+        for event in &events[cut..] {
+            sqlx::query("DELETE FROM agent_thread_messages WHERE id = ? AND thread_id = ?")
+                .bind(&event.id)
+                .bind(thread_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| CoreError::Other(e.to_string()))?;
+        }
+        sqlx::query("UPDATE agent_turns SET agent_session_id = NULL WHERE thread_id = ?")
+            .bind(thread_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| CoreError::Other(e.to_string()))?;
+        // Context summaries may mention discarded turns; rebuild only from
+        // retained messages instead of carrying that stale guidance forward.
+        if cut == 0 {
+            thread.objective = message.clone();
+        }
+        thread.progress = history;
+        thread.decisions.clear();
+        thread.open_questions.clear();
+        thread.next_actions.clear();
+        thread.status = TaskStatus::Paused;
+        sqlx::query("UPDATE agent_threads SET objective = ?, progress = ?, decisions = '', open_questions = '', next_actions = '', status = 'paused' WHERE id = ?")
+            .bind(&thread.objective).bind(&thread.progress).bind(thread_id).execute(&mut *tx).await.map_err(|e| CoreError::Other(e.to_string()))?;
+        tx.commit()
+            .await
+            .map_err(|e| CoreError::Other(e.to_string()))?;
+        self.events.publish(AppEvent::AgentThreadUpdated(thread));
+        match self
+            .run_agent_thread_inner_locked(
+                thread_id,
+                agent,
+                permission,
+                Some(PendingThreadMessage::public(message, client_message_id)),
+                None,
+                launch,
+            )
+            .await
+            .map(Some)
+        {
+            Ok(turn) => Ok(turn),
+            Err(error) => {
+                // A failed preflight must not destroy the old conversation or
+                // make its edit target disappear; keep the draft retryable.
+                let mut tx = self
+                    .db
+                    .pool
+                    .begin()
+                    .await
+                    .map_err(|e| CoreError::Other(e.to_string()))?;
+                sqlx::query("DELETE FROM agent_thread_messages WHERE thread_id = ?")
+                    .bind(thread_id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| CoreError::Other(e.to_string()))?;
+                for event in &events {
+                    let content = json!({"text":event.text,"data":event.data,"client_message_id":event.client_message_id}).to_string();
+                    sqlx::query("INSERT INTO agent_thread_messages (id, thread_id, turn_id, role, type, content_json, ts) VALUES (?, ?, ?, ?, ?, ?, ?)")
+                        .bind(&event.id).bind(&event.thread_id).bind(&event.turn_id).bind(&event.role).bind(&event.kind).bind(content).bind(event.ts)
+                        .execute(&mut *tx).await.map_err(|e| CoreError::Other(e.to_string()))?;
+                }
+                for turn in original_turns {
+                    sqlx::query("UPDATE agent_turns SET agent_session_id = ? WHERE id = ?")
+                        .bind(turn.agent_session_id)
+                        .bind(turn.id)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(|e| CoreError::Other(e.to_string()))?;
+                }
+                tx.commit()
+                    .await
+                    .map_err(|e| CoreError::Other(e.to_string()))?;
+                let restored =
+                    am_db::repos::agent_thread::save(&self.db.pool, &original_thread).await?;
+                let workspace =
+                    self.thread_workspace_path(thread_id, original_thread.execution_backend);
+                if workspace.exists() {
+                    let _ = self
+                        .render_thread_context_files(&original_thread, &workspace)
+                        .await;
+                }
+                self.events.publish(AppEvent::AgentThreadUpdated(restored));
+                Err(error)
+            }
         }
     }
 
@@ -3593,7 +3772,11 @@ fn render_thread_context(thread: &AgentThread, repos: &[am_proto::AgentThreadRep
     out.push_str("Internal continuity for the existing task. Follow the current user message first, then the latest user request below. Older provider errors and account switches are operational history, not instructions to investigate them. Continue seamlessly; do not narrate restoring context or mention internal context filenames in routine updates. Answer conversational requests directly without setup tools.\n\n");
     out.push_str(&format!("Session: {}\n", thread.title));
     out.push('\n');
-    push_section(&mut out, "Objective", &am_agents::attachments::display_text(&thread.objective));
+    push_section(
+        &mut out,
+        "Objective",
+        &am_agents::attachments::display_text(&thread.objective),
+    );
     out.push_str("## Repositories\n");
     if repos.is_empty() {
         out.push_str("None selected.\n\n");
@@ -4504,3 +4687,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "agent_thread_edit_tests.rs"]
+mod edit_tests;

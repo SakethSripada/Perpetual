@@ -164,6 +164,7 @@ export interface DaemonApi {
     message: string,
     clientMessageId?: string | null
   ): Promise<string | null>;
+  editThreadMessage(threadId: string, eventId: string, agent: AgentKind, permission: PermissionPolicy, message: string, clientMessageId?: string | null): Promise<string | null>;
   stopAgentThread(threadId: string): Promise<void>;
   listPendingApprovals(): Promise<ApprovalRequest[]>;
   resolveApproval(id: string, decision: ApprovalDecision): Promise<void>;

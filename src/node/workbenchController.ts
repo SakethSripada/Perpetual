@@ -44,6 +44,7 @@ type SubmitMessage = {
   type: "submit";
   message: string;
   clientMessageId?: string | null;
+  editEventId?: string | null;
   threadId?: string | null;
   repoIds?: string[];
   agent?: AgentKind;
@@ -303,6 +304,7 @@ export class WorkbenchController implements vscode.Disposable {
           return;
         case "submit":
           await this.submit(message);
+          if (message.editEventId) reply?.({type: "transcriptReset", threadId: message.threadId});
           await this.refresh();
           return;
         case "stopThread":
@@ -992,6 +994,17 @@ export class WorkbenchController implements vscode.Disposable {
       (collaborationStatus.role === "member"
         ? collaborationStatus.deviceId
         : null);
+    if (message.editEventId) {
+      if (!message.threadId || targetDeviceId) throw new Error("Edit messages on the device running this task.");
+      await client.updateAgentThread(message.threadId, {
+        preferred_agent: agent, permission, execution_backend: executionBackend,
+        model, reasoning, local_provider: localProvider, local_base_url: localBaseUrl,
+        task_budget: message.taskBudget,
+      });
+      await client.editThreadMessage(message.threadId, message.editEventId, agent, permission, text, blankToNull(message.clientMessageId ?? null));
+      await this.selectThread(message.threadId);
+      return;
+    }
     if (message.threadId) {
       const currentRepos = await client
         .listThreadRepos(message.threadId)
@@ -2182,7 +2195,8 @@ async function requiredGitRoot(folder: string): Promise<string> {
 }
 
 function titleFromMessage(message: string): string {
-  const singleLine = message.replace(/\s+/g, " ").trim();
+  const clean = message.split("<perpetual-attachments>")[0].trim() || "Attached files";
+  const singleLine = clean.replace(/\s+/g, " ").trim();
   return singleLine.length > 56
     ? `${singleLine.slice(0, 53)}...`
     : singleLine || "New session";
