@@ -11,7 +11,7 @@ a task running instead of watching the quota and moving the work by hand.
 
 ![A task continues from Codex to Claude in the Perpetual workbench, with the same conversation and changed files](media/marketplace-workbench.png)
 
-*The current interface with an example task and accounts. Codex reaches its
+*The VS Code extension with an example task and accounts. Codex reaches its
 limit, Claude continues the work, and the result stays in the same conversation.*
 
 ## Use the accounts you already have
@@ -33,7 +33,7 @@ providers to give a task more places to continue.
 
 ![Perpetual account settings showing separate Codex and Claude accounts, usage remaining, and active, ready, and limited states](media/marketplace-accounts.png)
 
-*Example accounts in the current settings screen. Each account has its own
+*Example accounts in the extension’s VS Code settings panel. Each account has its own
 sign-in, usage state, and place in the rotation.*
 
 ## One task, from the first request to the final diff
