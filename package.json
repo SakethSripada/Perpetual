@@ -173,7 +173,12 @@
             "autonomous"
           ],
           "default": "workspace_write",
-          "description": "Default permission mode for new turns."
+          "description": "Default permission mode for new turns.",
+          "enumItemLabels": [
+            "Read only",
+            "Workspace",
+            "Full access"
+          ]
         },
         "perpetual.defaultExecutionBackend": {
           "type": "string",

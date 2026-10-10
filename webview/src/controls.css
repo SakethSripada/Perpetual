@@ -205,7 +205,18 @@ body.vscode-high-contrast .action-menu, body.vscode-high-contrast .account-list 
 .msg-body .md-h { margin-top: 14px; margin-bottom: 6px; }
 .msg-body .md-list { padding-left: 20px; }
 .ai-file-chip { border: 0; height: 26px; background: var(--am-surface); }
-.welcome-suggestions button { padding: 7px 12px; border: 0; min-height: 30px; background: var(--am-surface); border-radius: 6px; }
+/* Starter prompts remain readable in both the sidebar and editor panel. */
+.empty.welcome { grid-template-columns: minmax(0, 1fr); }
+.welcome-copy { width: min(100%, 560px); }
+.welcome-suggestions { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 10px; }
+.welcome-suggestions button { display: flex; align-items: flex-start; gap: 10px; padding: 14px; border: 1px solid var(--am-border-soft); min-height: 86px; background: var(--am-surface); border-radius: 10px; text-align: left; color: var(--vscode-foreground); transition: background 120ms ease, border-color 120ms ease; }
+.welcome-suggestions button:hover { background: var(--am-hover); border-color: var(--am-muted); }
+.welcome-suggestions button:focus-visible { outline: 2px solid var(--vscode-focusBorder); outline-offset: 3px; }
+.welcome-suggestions button > svg { flex: 0 0 auto; width: 18px; height: 18px; margin-top: 1px; color: var(--am-muted); }
+.welcome-suggestions strong { display: block; font-size: 12px; font-weight: 500; line-height: 1.5; }
+.welcome-suggestions small { display: block; margin-top: 4px; font-size: 11px; line-height: 1.5; color: var(--am-muted); }
+.composer .attach-trigger { width: 30px; padding: 0; justify-content: center; flex-shrink: 0; border-radius: 8px; }
+.composer .attach-trigger:disabled { opacity: .4; cursor: default; }
 
 /* Compact, quiet surfaces. Pending resources reserve space instead of flashing empty. */
 .resource-loading { display: flex; align-items: center; gap: 8px; min-height: 22px; animation: resource-reveal 120ms ease-out 120ms backwards; }

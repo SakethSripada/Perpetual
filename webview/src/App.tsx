@@ -2499,14 +2499,13 @@ function Composer(props: ComposerProps) {
         )}
         {props.editing && <div className="attachment-strip">Editing message · later replies will be replaced<button type="button" disabled={reading || props.submitting} onClick={props.onCancelEdit}>Cancel</button></div>}
         <input type="file" multiple hidden ref={picker} onChange={e => { void addFiles(Array.from(e.target.files || [])); e.target.value = ''; }} />
-        <div className="attachment-strip">
-          <button type="button" aria-label="Attach files" title="Attach images, PDFs, or files" disabled={reading || props.submitting} onClick={() => picker.current?.click()}>＋ Attach</button>
+        {(attachments.length > 0 || reading) && <div className="attachment-strip">
           {attachments.map(a => <span className="attachment-chip" key={a.id}>
             {a.mime.startsWith('image/') && <img src={`data:${a.mime};base64,${a.data}`} alt="" />}
             <span title={a.name}>{a.name}</span><button type="button" aria-label={`Remove ${a.name}`} onClick={() => setAttachments(old => old.filter(f => f.id !== a.id))}>×</button>
           </span>)}
           {reading && <span>Reading files…</span>}
-        </div>
+        </div>}
         <textarea
           onPaste={e => { const files = Array.from(e.clipboardData.files); if (files.length) { e.preventDefault(); void addFiles(files); } }}
           onDragOver={e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); }}
@@ -2562,6 +2561,7 @@ function Composer(props: ComposerProps) {
 
         <div className="toolbar">
           <div className="toolbar-chips">
+            <button type="button" className="chip-btn attach-trigger" aria-label="Attach files" title="Attach images, PDFs, or files" disabled={reading || props.submitting} onClick={() => picker.current?.click()}><Icon name="plus" /></button>
             <button type="button" className="chip-btn repository-trigger" title={reposTitle} aria-label="Choose repositories" aria-haspopup="dialog" aria-expanded={reposOpen} onClick={() => setReposOpen(true)}><Icon name="folder" /><span className="repository-name">{selectedRepos.length ? reposLabel : "Repos"}</span><span className="repository-short">Repos</span><Icon name="caret" /></button>
             {reposOpen && <RepositoryPicker repos={repos} selected={props.repoIds} state={reposState} locked={repoSelectionLocked} shared={sharedRepoMember} onSelect={props.setRepoIds} onClose={() => setReposOpen(false)} onLocal={props.onLocalRepo} onRemove={props.onRemoveRepo} />}
 
@@ -3597,19 +3597,12 @@ const PERMISSIONS: {
   icon: "eye" | "shield" | "bolt";
 }[] = [
   { value: "read_only", label: "Read only", icon: "eye" },
-  { value: "workspace_write", label: "Write", icon: "shield" },
-  { value: "autonomous", label: "Autonomous", icon: "bolt" },
+  { value: "workspace_write", label: "Workspace", icon: "shield" },
+  { value: "autonomous", label: "Full access", icon: "bolt" },
 ];
 
 function permissionComposerLabel(permission: PermissionPolicy): string {
-  switch (permission) {
-    case "read_only":
-      return "Read only";
-    case "autonomous":
-      return "Full access";
-    case "workspace_write":
-      return "Write access";
-  }
+  return PERMISSIONS.find((option) => option.value === permission)!.label;
 }
 
 function taskBudgetComposerLabel(budget: TaskBudget): string {
@@ -5140,7 +5133,26 @@ function EmptyState({
       <span className="empty-mark">
         <BrandMark size={52} />
       </span>
-      {!compact && <div className="welcome-copy"><h1>What are we building?</h1><p>A continuous workspace for your ideas.</p><div className="welcome-suggestions"><button onClick={() => onExample?.("Help me build a new feature in this codebase.")}>Build something new</button><button onClick={() => onExample?.("Find a bug in this codebase, explain it, and fix it.")}>Find and fix a bug</button><button onClick={() => onExample?.("Explore this codebase and explain how its main components work.")}>Explore this codebase</button></div></div>}
+      {!compact && (
+        <div className="welcome-copy">
+          <h1>What are we building?</h1>
+          <p>Start a task. Perpetual keeps it moving.</p>
+          <div className="welcome-suggestions">
+            <button type="button" onClick={() => onExample?.("Help me build a new feature in this codebase.")}>
+              <Icon name="plus" />
+              <span><strong>Build something new</strong><small>Turn an idea into working code</small></span>
+            </button>
+            <button type="button" onClick={() => onExample?.("Find a bug in this codebase, explain it, and fix it.")}>
+              <Icon name="alert" />
+              <span><strong>Find and fix a bug</strong><small>Track down the cause and test a fix</small></span>
+            </button>
+            <button type="button" onClick={() => onExample?.("Explore this codebase and explain how its main components work.")}>
+              <Icon name="search" />
+              <span><strong>Explore this codebase</strong><small>See how the pieces fit together</small></span>
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
